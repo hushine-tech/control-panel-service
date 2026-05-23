@@ -1,0 +1,484 @@
+syntax = "proto3";
+
+package controlpanel.marketdata.v1;
+option go_package = "github.com/hushine-tech/control-panel-service/gen/marketdatav1;marketdatav1";
+
+import "google/protobuf/timestamp.proto";
+
+// MarketDataControlPlaneService owns the demand-driven market-data control
+// plane: user-declared stream requests, aggregated physical-stream state,
+// session-scoped TTL leases, and finite historical backfill windows.
+//
+// Phase D2: this service was previously hosted by account-service. After
+// the D2 migration, control-panel-service is the sole owner of the
+// underlying tables (`market_data_*` in the `control_panel` database)
+// and the canonical caller for scraper, quant-handler, and strategy-service.
+//
+// Scope: kline only (v1). Field shapes preserved verbatim from the
+// original account.v1 definitions so the migration is wire-compatible —
+// callers only repoint their gRPC channel; their request / response
+// handling is unchanged.
+service MarketDataControlPlaneService {
+  // ── User-facing request RPCs ─────────────────────────────────────────
+
+  // CreateMarketDataRequest declares user demand for a kline stream
+  // (live or historical). Lazily creates the underlying stream row if
+  // the (exchange, market, kind, symbol, interval) tuple is new.
+  rpc CreateMarketDataRequest(CreateMarketDataRequestRequest) returns (CreateMarketDataRequestResponse);
+
+  // CancelMarketDataRequest soft-cancels a request the calling user owns.
+  rpc CancelMarketDataRequest(CancelMarketDataRequestRequest) returns (CancelMarketDataRequestResponse);
+
+  // ListMarketDataRequests lists the calling user's non-terminal requests
+  // joined with their underlying stream state.
+  rpc ListMarketDataRequests(ListMarketDataRequestsRequest) returns (ListMarketDataRequestsResponse);
+
+  // GetMarketDataStreamStatus is the lookup for stream state by id or key.
+  rpc GetMarketDataStreamStatus(GetMarketDataStreamStatusRequest) returns (GetMarketDataStreamStatusResponse);
+
+  // ── Scraper / strategy-service RPCs ───────────────────────────────────
+
+  // ListMarketDataStreams returns every stream row the scraper should be
+  // reconciling. scraper polls this on its reconcile interval and uses
+  // the result to start / stop local collectors.
+  rpc ListMarketDataStreams(ListMarketDataStreamsRequest) returns (ListMarketDataStreamsResponse);
+
+  // ListMarketDataHistoryRequests returns finite-window backfill demand.
+  // scraper consumes this for historical collection planning.
+  rpc ListMarketDataHistoryRequests(ListMarketDataHistoryRequestsRequest) returns (ListMarketDataHistoryRequestsResponse);
+
+  // ReportMarketDataStreamState is scraper's heartbeat-style report:
+  // "this stream is now in actual_state X with freshness Y".
+  rpc ReportMarketDataStreamState(ReportMarketDataStreamStateRequest) returns (ReportMarketDataStreamStateResponse);
+
+  // ReportMarketDataHistoryRequestState is scraper's status update for a
+  // historical request (running / verifying / ready / error).
+  rpc ReportMarketDataHistoryRequestState(ReportMarketDataHistoryRequestStateRequest) returns (ReportMarketDataHistoryRequestStateResponse);
+
+  // QueryMarketDataCoverage returns indexed historical coverage for one key.
+  rpc QueryMarketDataCoverage(QueryMarketDataCoverageRequest) returns (QueryMarketDataCoverageResponse);
+
+  // ReportMarketDataCoverageSegments merges scraper-confirmed historical coverage segments.
+  rpc ReportMarketDataCoverageSegments(ReportMarketDataCoverageSegmentsRequest) returns (ReportMarketDataCoverageSegmentsResponse);
+
+  // ValidateMarketDataCoverage reads raw K-lines and verifies count + continuity.
+  rpc ValidateMarketDataCoverage(ValidateMarketDataCoverageRequest) returns (ValidateMarketDataCoverageResponse);
+
+  // QueryMarketDataKlines returns raw historical K-line rows for inspection.
+  rpc QueryMarketDataKlines(QueryMarketDataKlinesRequest) returns (QueryMarketDataKlinesResponse);
+
+  // CreateOrRenewMarketDataLease creates or renews a TTL lease tied to a
+  // strategy session's live consumption of a stream.
+  rpc CreateOrRenewMarketDataLease(CreateOrRenewMarketDataLeaseRequest) returns (CreateOrRenewMarketDataLeaseResponse);
+
+  // ReleaseMarketDataLease releases the lease early (session stop).
+  rpc ReleaseMarketDataLease(ReleaseMarketDataLeaseRequest) returns (ReleaseMarketDataLeaseResponse);
+
+  // CreateSessionMarketDataSubscriptions records the authorized streams a
+  // runtime session may receive over RuntimeChannel data frames.
+  rpc CreateSessionMarketDataSubscriptions(CreateSessionMarketDataSubscriptionsRequest) returns (CreateSessionMarketDataSubscriptionsResponse);
+
+  // ReleaseSessionMarketDataSubscriptions releases all active subscriptions
+  // for the given session/runtime binding.
+  rpc ReleaseSessionMarketDataSubscriptions(ReleaseSessionMarketDataSubscriptionsRequest) returns (ReleaseSessionMarketDataSubscriptionsResponse);
+
+  // CreateOrRenewStreamDeliveryLease claims delivery ownership for one
+  // session subscription shard.
+  rpc CreateOrRenewStreamDeliveryLease(CreateOrRenewStreamDeliveryLeaseRequest) returns (CreateOrRenewStreamDeliveryLeaseResponse);
+
+  // ReleaseStreamDeliveryLease releases a delivery lease early.
+  rpc ReleaseStreamDeliveryLease(ReleaseStreamDeliveryLeaseRequest) returns (ReleaseStreamDeliveryLeaseResponse);
+
+  // ListSessionDeliveryHealth exposes RuntimeChannel live-delivery progress
+  // for user/session/runtime views.
+  rpc ListSessionDeliveryHealth(ListSessionDeliveryHealthRequest) returns (ListSessionDeliveryHealthResponse);
+
+  // CreateOrRenewMarketDataWriterLease claims writer ownership for one
+  // scraper write domain: (exchange, market, kind, symbol, interval, year).
+  rpc CreateOrRenewMarketDataWriterLease(CreateOrRenewMarketDataWriterLeaseRequest) returns (CreateOrRenewMarketDataWriterLeaseResponse);
+
+  // ReleaseMarketDataWriterLease releases a scraper writer lease early.
+  rpc ReleaseMarketDataWriterLease(ReleaseMarketDataWriterLeaseRequest) returns (ReleaseMarketDataWriterLeaseResponse);
+}
+
+// ── Common types ─────────────────────────────────────────────────────────
+
+message StreamKey {
+  string exchange = 1;  // "binance" / "okx"
+  string market   = 2;  // "spot" / "futures"
+  string kind     = 3;  // v1 only: "kline"
+  string symbol   = 4;  // canonical upper, e.g. "BTCUSDT"
+  string interval = 5;  // "1m" / "5m" / ...
+}
+
+message MarketDataStream {
+  int64     stream_id                = 1;
+  StreamKey key                      = 2;
+  string    desired_state            = 3;  // "running" | "stopped"
+  string    actual_state             = 4;  // pending/starting/running/draining/stopped/error
+  bool      effective_live_delivery  = 5;
+  google.protobuf.Timestamp last_data_at       = 6; // optional
+  string    last_error               = 7;
+  google.protobuf.Timestamp last_reconciled_at = 8; // optional
+  int32     active_lease_count       = 9;  // populated by List/Get (not by Report)
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message MarketDataRequest {
+  int64     request_id         = 1;
+  int64     user_id            = 2;
+  int64     account_id         = 3; // 0 == not bound to a specific account
+  int64     stream_id          = 4;
+  StreamKey key                = 5;
+  bool      needs_live_delivery = 6;
+  string    status             = 7; // "pending" | "active" | "cancelled"
+  google.protobuf.Timestamp created_at   = 8;
+  google.protobuf.Timestamp updated_at   = 9;
+  google.protobuf.Timestamp cancelled_at = 10; // optional
+  string    scope              = 11; // "live" | "historical" ; empty legacy values are treated as "live"
+  google.protobuf.Timestamp requested_start_at = 12; // historical only
+  google.protobuf.Timestamp requested_end_at   = 13; // historical only
+  google.protobuf.Timestamp covered_start_at   = 14; // historical only
+  google.protobuf.Timestamp covered_end_at     = 15; // historical only
+  string    last_error         = 16; // historical only
+  bool      ready              = 17; // historical-only summary bit
+}
+
+message MarketDataLease {
+  int64  lease_id           = 1;
+  string session_id         = 2;
+  int64  strategy_id        = 3; // 0 == unset
+  int64  account_id         = 4; // 0 == unset
+  int64  stream_id          = 5;
+  google.protobuf.Timestamp expires_at        = 6;
+  google.protobuf.Timestamp last_heartbeat_at = 7;
+  google.protobuf.Timestamp created_at        = 8;
+  google.protobuf.Timestamp released_at       = 9; // optional
+}
+
+message SessionMarketDataSubscription {
+  int64 subscription_id = 1;
+  int64 user_id = 2;
+  string session_id = 3;
+  string runtime_id = 4;
+  StreamKey key = 5;
+  int32 mode = 6;
+  string status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  google.protobuf.Timestamp released_at = 10;
+}
+
+message StreamDeliveryLease {
+  string lease_id = 1;
+  int64 subscription_id = 2;
+  string owner_instance_id = 3;
+  string status = 4;
+  google.protobuf.Timestamp acquired_at = 5;
+  google.protobuf.Timestamp last_heartbeat_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  google.protobuf.Timestamp released_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  google.protobuf.Timestamp last_delivery_at = 11;
+  string last_topic = 12;
+  int32 last_partition = 13;
+  int64 last_offset = 14;
+}
+
+message StreamDeliveryFailure {
+  int64 failure_id = 1;
+  int64 subscription_id = 2;
+  string owner_instance_id = 3;
+  string topic = 4;
+  string stream_key = 5;
+  string failure_code = 6;
+  string reason = 7;
+  google.protobuf.Timestamp first_seen_at = 8;
+  google.protobuf.Timestamp last_seen_at = 9;
+  int32 attempt_count = 10;
+}
+
+message SessionDeliveryHealth {
+  SessionMarketDataSubscription subscription = 1;
+  StreamDeliveryLease lease = 2;
+  StreamDeliveryFailure latest_failure = 3;
+  string health_status = 4; // delivering | warming_up | delivery_blocked
+  string blocked_reason = 5;
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+message MarketDataWriterLease {
+  string lease_id = 1;
+  StreamKey key = 2;
+  int32 year = 3;
+  string owner_instance_id = 4;
+  string scraper_instance_id = 5;
+  string collector_id = 6;
+  string status = 7;
+  google.protobuf.Timestamp acquired_at = 8;
+  google.protobuf.Timestamp last_heartbeat_at = 9;
+  google.protobuf.Timestamp expires_at = 10;
+  google.protobuf.Timestamp released_at = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+// ── User-facing request RPCs ─────────────────────────────────────────────
+
+message CreateMarketDataRequestRequest {
+  int64     user_id             = 1;
+  int64     account_id          = 2; // optional; 0 means unbound
+  StreamKey key                 = 3;
+  bool      needs_live_delivery = 4;
+  string    scope               = 5; // "live" | "historical"; empty means "live"
+  google.protobuf.Timestamp requested_start_at = 6; // historical only
+  google.protobuf.Timestamp requested_end_at   = 7; // historical only
+}
+
+message CreateMarketDataRequestResponse {
+  MarketDataRequest request = 1;
+  MarketDataStream  stream  = 2;
+}
+
+message CancelMarketDataRequestRequest {
+  int64 request_id = 1;
+  int64 user_id    = 2;
+}
+
+message CancelMarketDataRequestResponse {}
+
+message ListMarketDataRequestsRequest {
+  int64 user_id = 1;
+}
+
+message ListMarketDataRequestsResponse {
+  repeated MarketDataRequestWithStream entries = 1;
+}
+
+message MarketDataRequestWithStream {
+  MarketDataRequest request = 1;
+  MarketDataStream  stream  = 2;
+}
+
+message GetMarketDataStreamStatusRequest {
+  // Either stream_id OR key must be provided.
+  int64     stream_id = 1;
+  StreamKey key       = 2;
+}
+
+message GetMarketDataStreamStatusResponse {
+  MarketDataStream stream = 1;
+}
+
+// ── Scraper / strategy-service RPCs ──────────────────────────────────────
+
+message ListMarketDataStreamsRequest {}
+
+message ListMarketDataStreamsResponse {
+  repeated MarketDataStream streams = 1;
+}
+
+message ListMarketDataHistoryRequestsRequest {
+  bool include_terminal = 1;
+}
+
+message ListMarketDataHistoryRequestsResponse {
+  repeated MarketDataRequest requests = 1;
+}
+
+message ReportMarketDataStreamStateRequest {
+  int64                     stream_id    = 1;
+  string                    actual_state = 2;
+  google.protobuf.Timestamp last_data_at = 3; // optional
+  string                    last_error   = 4; // pass "" to leave unchanged
+}
+
+message ReportMarketDataStreamStateResponse {
+  MarketDataStream stream = 1;
+}
+
+message ReportMarketDataHistoryRequestStateRequest {
+  int64 request_id = 1;
+  string status = 2; // running / verifying / ready / error
+  google.protobuf.Timestamp covered_start_at = 3; // optional
+  google.protobuf.Timestamp covered_end_at = 4;   // optional
+  string last_error = 5;
+}
+
+message ReportMarketDataHistoryRequestStateResponse {
+  MarketDataRequest request = 1;
+}
+
+message MarketDataTimeRange {
+  google.protobuf.Timestamp start_at = 1;
+  google.protobuf.Timestamp end_at = 2;
+  int64 expected_count = 3;
+}
+
+message MarketDataCoverageSegment {
+  StreamKey key = 1;
+  int32 year = 2;
+  google.protobuf.Timestamp start_at = 3;
+  google.protobuf.Timestamp end_at = 4;
+  int64 row_count = 5;
+  string source = 6;
+}
+
+message QueryMarketDataCoverageRequest {
+  StreamKey key = 1;
+  google.protobuf.Timestamp start_at = 2;
+  google.protobuf.Timestamp end_at = 3;
+}
+
+message QueryMarketDataCoverageResponse {
+  StreamKey key = 1;
+  google.protobuf.Timestamp requested_start_at = 2;
+  google.protobuf.Timestamp requested_end_at = 3;
+  bool complete = 4;
+  int64 expected_count = 5;
+  int64 covered_count = 6;
+  repeated MarketDataCoverageSegment covered_segments = 7;
+  repeated MarketDataTimeRange missing_segments = 8;
+  string non_downloadable_reason = 9;
+}
+
+message ReportMarketDataCoverageSegmentsRequest {
+  repeated MarketDataCoverageSegment segments = 1;
+}
+
+message ReportMarketDataCoverageSegmentsResponse {
+  repeated MarketDataCoverageSegment merged_segments = 1;
+}
+
+message ValidateMarketDataCoverageRequest {
+  StreamKey key = 1;
+  google.protobuf.Timestamp start_at = 2;
+  google.protobuf.Timestamp end_at = 3;
+}
+
+message ValidateMarketDataCoverageResponse {
+  StreamKey key = 1;
+  google.protobuf.Timestamp requested_start_at = 2;
+  google.protobuf.Timestamp requested_end_at = 3;
+  bool ok = 4;
+  int64 expected_count = 5;
+  int64 actual_count = 6;
+  repeated MarketDataTimeRange missing_segments = 7;
+  string reason = 8;
+}
+
+message MarketDataKline {
+  google.protobuf.Timestamp open_time = 1;
+  google.protobuf.Timestamp close_time = 2;
+  double open = 3;
+  double high = 4;
+  double low = 5;
+  double close = 6;
+  double volume = 7;
+}
+
+message QueryMarketDataKlinesRequest {
+  StreamKey key = 1;
+  google.protobuf.Timestamp start_at = 2;
+  google.protobuf.Timestamp end_at = 3;
+  int32 limit = 4;
+}
+
+message QueryMarketDataKlinesResponse {
+  StreamKey key = 1;
+  google.protobuf.Timestamp requested_start_at = 2;
+  google.protobuf.Timestamp requested_end_at = 3;
+  repeated MarketDataKline rows = 4;
+  int64 row_count = 5;
+  bool truncated = 6;
+  int32 limit = 7;
+}
+
+message CreateOrRenewMarketDataLeaseRequest {
+  string session_id  = 1;
+  int64  strategy_id = 2; // optional (0)
+  int64  account_id  = 3; // optional (0)
+  int64  stream_id   = 4;
+  int64  ttl_seconds = 5;
+}
+
+message CreateOrRenewMarketDataLeaseResponse {
+  MarketDataLease lease = 1;
+}
+
+message ReleaseMarketDataLeaseRequest {
+  string session_id = 1;
+  int64  stream_id  = 2;
+}
+
+message ReleaseMarketDataLeaseResponse {}
+
+message CreateSessionMarketDataSubscriptionsRequest {
+  int64 user_id = 1;
+  string session_id = 2;
+  string runtime_id = 3;
+  int32 mode = 4;
+  repeated StreamKey keys = 5;
+}
+
+message CreateSessionMarketDataSubscriptionsResponse {
+  repeated SessionMarketDataSubscription subscriptions = 1;
+}
+
+message ReleaseSessionMarketDataSubscriptionsRequest {
+  string session_id = 1;
+  string runtime_id = 2;
+}
+
+message ReleaseSessionMarketDataSubscriptionsResponse {
+  int64 released_count = 1;
+}
+
+message CreateOrRenewStreamDeliveryLeaseRequest {
+  int64 subscription_id = 1;
+  string owner_instance_id = 2;
+  int64 ttl_seconds = 3;
+}
+
+message CreateOrRenewStreamDeliveryLeaseResponse {
+  StreamDeliveryLease lease = 1;
+}
+
+message ReleaseStreamDeliveryLeaseRequest {
+  string lease_id = 1;
+  string owner_instance_id = 2;
+}
+
+message ReleaseStreamDeliveryLeaseResponse {}
+
+message ListSessionDeliveryHealthRequest {
+  int64 user_id = 1;
+  string session_id = 2;
+  string runtime_id = 3;
+}
+
+message ListSessionDeliveryHealthResponse {
+  repeated SessionDeliveryHealth items = 1;
+}
+
+message CreateOrRenewMarketDataWriterLeaseRequest {
+  StreamKey key = 1;
+  int32 year = 2;
+  string owner_instance_id = 3;
+  string scraper_instance_id = 4;
+  string collector_id = 5;
+  int64 ttl_seconds = 6;
+}
+
+message CreateOrRenewMarketDataWriterLeaseResponse {
+  MarketDataWriterLease lease = 1;
+}
+
+message ReleaseMarketDataWriterLeaseRequest {
+  string lease_id = 1;
+  string owner_instance_id = 2;
+}
+
+message ReleaseMarketDataWriterLeaseResponse {}

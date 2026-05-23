@@ -1,0 +1,8 @@
+bin/
+logs/
+.run.pid
+config.local.yaml
+.claude/
+.cursor/
+.idea/
+.opencode/

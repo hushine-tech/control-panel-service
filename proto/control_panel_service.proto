@@ -1,0 +1,754 @@
+syntax = "proto3";
+
+package controlpanel.v1;
+option go_package = "github.com/hushine-tech/control-panel-service/gen/controlpanelv1;controlpanelv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+import "strategy_service.proto";
+
+// ControlPanelService owns runtime registry, route resolution, heartbeat,
+// runtime credentials, and per-user plan/quota for strategy-runtime instances.
+//
+// Current D3 boundary: this service owns runtime routing/provisioning,
+// self-hosted RuntimeChannel proxying, runtime credentials, and the D2
+// market-data control-plane tables (requests / streams / leases / history).
+service ControlPanelService {
+  // ── Runtime registry ──────────────────────────────────────────────────────
+
+  // RegisterRuntime is called by hosted strategy-runtime instances on startup.
+  // Self-hosted runtimes MUST use RuntimeChannel HELLO with a signed
+  // runtime credential instead; RegisterRuntime rejects source=self_hosted.
+  // The response returns a registration_token that the hosted runtime must
+  // present on subsequent Heartbeat calls.
+  rpc RegisterRuntime(RegisterRuntimeRequest) returns (RegisterRuntimeResponse);
+
+  // HeartbeatRuntime updates the runtime's heartbeat_at timestamp. Auth via
+  // registration_token in gRPC metadata. Stale heartbeats cause the route
+  // resolver to mark the runtime unhealthy (configurable deadline).
+  rpc HeartbeatRuntime(HeartbeatRuntimeRequest) returns (HeartbeatRuntimeResponse);
+
+  // ListRuntimes returns the runtimes visible to the authenticated caller.
+  // Filters: user_id (required for non-admin callers), status, source.
+  rpc ListRuntimes(ListRuntimesRequest) returns (ListRuntimesResponse);
+
+  // GetRuntime returns one runtime by runtime_id for the authenticated user.
+  // Cross-user runtime_id lookups fail closed with NotFound/PermissionDenied.
+  rpc GetRuntime(GetRuntimeRequest) returns (GetRuntimeResponse);
+
+  // EndRuntime marks a runtime as ended and, for hosted runtimes, asks the
+  // configured provisioner to remove the backing container. The operation is
+  // idempotent for already-ended rows. Cross-user runtime_id lookups fail
+  // closed.
+  rpc EndRuntime(EndRuntimeRequest) returns (EndRuntimeResponse);
+
+  // ── Route resolution ──────────────────────────────────────────────────────
+
+  // ResolveRuntimeRouteByID returns the route for a selected runtime_id.
+  // This is the runtime-selection/session-binding path.
+  //
+  // Fail-closed contract: returns a typed error (NOT_FOUND / FAILED_PRECONDITION /
+  // PERMISSION_DENIED / RESOURCE_EXHAUSTED) when the runtime is missing,
+  // unpaired, unhealthy, owned by a different user, or over quota. Callers
+  // (notably quant-handler) MUST surface the error and MUST NOT silently fall
+  // back to a shared strategy-service while user isolation is enabled.
+  rpc ResolveRuntimeRouteByID(ResolveRuntimeRouteByIDRequest) returns (ResolveRuntimeRouteResponse);
+
+  // EnsureHostedRuntime is the lazy-creation entry point quant-handler
+  // uses on the strategy-start path. Idempotent semantics:
+  //
+  //   * Resolve plan, check quota / profile, allocate a hosted runtime via
+  //     the configured provisioner backend, wait for the runtime to
+  //     self-register, then return it. Runtime routing is by runtime_id only;
+  //     name is display-only.
+  //
+  // Fail-closed: returns RESOURCE_EXHAUSTED when plan / quota / profile
+  // checks reject; FailedPrecondition when the provisioner backend is
+  // misconfigured or the runtime never self-registers within the
+  // configured timeout. NEVER silently returns a shared / different
+  // user's runtime.
+  //
+  // For D1 this RPC is gated by quant-handler's strategy session paths.
+  rpc EnsureHostedRuntime(EnsureHostedRuntimeRequest) returns (EnsureHostedRuntimeResponse);
+
+  // ValidateCallerToken is the runtime-side hook the strategy-runtime
+  // gRPC interceptor calls to verify an inbound `x-caller-token`
+  // metadata value. The caller_token was issued by control-panel-service
+  // on a previous Resolve / Ensure call; this RPC checks that the token
+  // is still valid and is bound to the inbound runtime_id.
+  //
+  // Phase D1 only — D3 will move handler↔runtime traffic through the
+  // control-panel proxy and the per-call attestation token disappears.
+  // Documented as D3-removable.
+  rpc ValidateCallerToken(ValidateCallerTokenRequest) returns (ValidateCallerTokenResponse);
+
+  // ── Runtime credentials (Phase D3) ────────────────────────────────────────
+
+  // IssueRuntimeCredential generates a fresh Ed25519 keypair server-side,
+  // persists the public key keyed by a server-generated key_id, and
+  // returns {key_id, private_key_pem} to the caller exactly once. The
+  // private key is NEVER stored on the platform. Used by the UI's
+  // "Settings → Runtime Credentials" page; the private key is downloaded
+  // by the user and mounted into their self-hosted runtime container.
+  //
+  // Fail-closed: if the requesting user does not exist (account-service
+  // GetUser miss), the RPC returns NotFound. user_id MUST be the
+  // authenticated user's id; quant-handler enforces that the JWT subject
+  // matches the request user_id.
+  rpc IssueRuntimeCredential(IssueRuntimeCredentialRequest) returns (IssueRuntimeCredentialResponse);
+
+  // ListRuntimeCredentials returns the active credentials owned by the
+  // calling user. Consumed credentials are returned by default so users can
+  // see which runtime consumed a bootstrap token. Revoked / expired inactive
+  // credentials are excluded unless include_inactive/include_revoked is set.
+  // Sensitive fields (private key) are never persisted and therefore
+  // never returned. Each entry includes audit metadata: created_at,
+  // last_used_at, revoked_at.
+  rpc ListRuntimeCredentials(ListRuntimeCredentialsRequest) returns (ListRuntimeCredentialsResponse);
+
+  // ListRuntimeAdmissionFailures returns recent failed RuntimeChannel
+  // admissions for the calling user so startup/auth failures are visible in
+  // Runtime Management without requiring Docker log inspection.
+  rpc ListRuntimeAdmissionFailures(ListRuntimeAdmissionFailuresRequest) returns (ListRuntimeAdmissionFailuresResponse);
+
+  // RevokeRuntimeCredential flips a credential's status to 'revoked',
+  // closes any open RuntimeChannel streams keyed by that key_id, and
+  // marks all runtime_registry rows associated with that key_id as
+  // 'ended'. Revocation is irreversible — recovery requires
+  // generating a new credential. Cross-checks user_id against the
+  // credential's owner; rejects PermissionDenied on mismatch.
+  rpc RevokeRuntimeCredential(RevokeRuntimeCredentialRequest) returns (RevokeRuntimeCredentialResponse);
+
+  // ── RuntimeChannel (Phase D3 self-hosted runtimes) ───────────────────────
+
+  // RuntimeChannel is the long-lived, runtime-initiated bidi stream used by
+  // self-hosted runtimes behind NAT. The first frame MUST be HELLO and MUST
+  // carry a valid Ed25519 signature over the canonical HELLO payload. After
+  // HELLO succeeds, control-panel-service may send multiplexed strategy
+  // REQUEST frames and the runtime responds on the same correlation_id.
+  rpc RuntimeChannel(stream RuntimeFrame) returns (stream RuntimeFrame);
+
+  // PrepareDebugWorkspace asks a connected self-hosted debugger runtime to
+  // prepare its mounted /workspace. The control-plane never writes to the
+  // user's local filesystem directly.
+  rpc PrepareDebugWorkspace(PrepareDebugWorkspaceRequest) returns (PrepareDebugWorkspaceResponse);
+
+  // LoadDebugDataset validates mode=0 historical data and sends it to the
+  // selected debugger runtime. This stores metadata only in control-plane DB.
+  rpc LoadDebugDataset(LoadDebugDatasetRequest) returns (LoadDebugDatasetResponse);
+
+  // GetRuntimeDebugDataset returns the latest active/lost/failed dataset
+  // metadata for one runtime. Full K-line rows are never returned.
+  rpc GetRuntimeDebugDataset(GetRuntimeDebugDatasetRequest) returns (GetRuntimeDebugDatasetResponse);
+
+  // ── Strategy session proxy (Phase D3 self-hosted runtimes) ───────────────
+
+  // PublishRuntimeNotification is the unified runtime/strategy notification
+  // ingress. Hosted and self-hosted runtimes both enter the same control-plane
+  // path before the event is published to Kafka notification.events.
+  rpc PublishRuntimeNotification(PublishRuntimeNotificationRequest) returns (PublishRuntimeNotificationResponse);
+
+  rpc RunStrategy(strategy.v1.RunStrategyRequest) returns (strategy.v1.RunStrategyResponse);
+  rpc PreviewRunStrategy(strategy.v1.PreviewRunStrategyRequest) returns (strategy.v1.PreviewRunStrategyResponse);
+  rpc StopStrategy(strategy.v1.StopStrategyRequest) returns (strategy.v1.StopStrategyResponse);
+  rpc GetStrategyStatus(strategy.v1.GetStrategyStatusRequest) returns (strategy.v1.GetStrategyStatusResponse);
+}
+
+// ── Common types ────────────────────────────────────────────────────────────
+
+// Runtime is the canonical view of a runtime registry record. Sensitive
+// fields (token_hash, credential private keys) are never exposed.
+message Runtime {
+  string runtime_id = 1;
+  // Authenticated owning user. 0 means unpaired.
+  int64 user_id = 2;
+  string name = 3;                    // user-visible label, e.g. "default"
+  string source = 4;                  // "hosted" | "self_hosted"
+  string endpoint_host = 5;
+  int32 grpc_port = 6;
+  int32 debug_port = 7;               // 0 means none
+  repeated string capabilities = 8;
+  string resource_profile = 9;        // "small" | "medium" | "large" | etc.
+  string version = 10;
+  string status = 11;                 // "unpaired" | "paired" | "active" | "unhealthy" | "ended"
+  google.protobuf.Timestamp paired_at = 12;
+  google.protobuf.Timestamp heartbeat_at = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+  // Public identifier for the credential that authenticated a self-hosted
+  // runtime. Empty for hosted runtimes. Private keys are never exposed.
+  string credential_key_id = 16;
+  google.protobuf.Timestamp started_at = 17;
+  google.protobuf.Timestamp ended_at = 18;
+  string ended_reason = 19;
+  string role = 20;                   // "executor" | "debugger"
+  string connection_owner_instance_id = 21;
+  google.protobuf.Timestamp connection_owner_acquired_at = 22;
+  google.protobuf.Timestamp connection_owner_heartbeat_at = 23;
+  string cleanup_status = 24;         // "" | "succeeded" | "failed" | "user_owned"
+  string cleanup_reason = 25;         // non-secret Docker/user-owned cleanup detail
+  google.protobuf.Timestamp cleanup_at = 26;
+  DebugWorkspaceState debug_workspace = 27;
+  DebugDatasetState debug_dataset = 28;
+}
+
+message DebugWorkspaceState {
+  string host_path = 1;
+  string container_path = 2;
+  string template_path = 3;
+  string archived_template_path = 4;
+  bool vscode_launch_created = 5;
+  bool vscode_launch_preserved = 6;
+  bool pycharm_doc_created = 7;
+  bool pycharm_doc_preserved = 8;
+  int64 prepared_at_ms = 9;
+  string last_error = 10;
+}
+
+message DebugDatasetState {
+  string dataset_id = 1;
+  int64 user_id = 2;
+  int64 account_id = 3;
+  string runtime_id = 4;
+  string market = 5;
+  string symbol = 6;
+  string interval = 7;
+  int64 start_time_ms = 8;
+  int64 end_time_ms = 9;
+  int64 bar_count = 10;
+  string coverage_status = 11;
+  int64 loaded_at_ms = 12;
+  string state = 13;
+  string last_error = 14;
+}
+
+message PrepareDebugWorkspaceRequest {
+  string runtime_id = 1;
+  string host_path = 2;
+  string container_path = 3;
+  int64 user_id = 100;
+}
+
+message PrepareDebugWorkspaceResponse {
+  bool ok = 1;
+  DebugWorkspaceState workspace = 2;
+}
+
+message LoadDebugDatasetRequest {
+  string runtime_id = 1;
+  int64 account_id = 2;
+  string market = 3;
+  string symbol = 4;
+  string interval = 5;
+  int64 start_time_ms = 6;
+  int64 end_time_ms = 7;
+  int64 user_id = 100;
+}
+
+message LoadDebugDatasetResponse {
+  bool ok = 1;
+  DebugDatasetState dataset = 2;
+}
+
+message GetRuntimeDebugDatasetRequest {
+  string runtime_id = 1;
+  int64 user_id = 100;
+}
+
+message GetRuntimeDebugDatasetResponse {
+  DebugDatasetState dataset = 1;
+}
+
+message StartDebugReplayRequest {
+  string runtime_id = 1;
+  int64 user_id = 2;
+  string dataset_id = 3;
+  string requested_name = 4;
+}
+
+message StartDebugReplayResponse {
+  string session_id = 1;
+  string session_name = 2;
+  DebugDatasetState dataset = 3;
+}
+
+// ── RegisterRuntime ─────────────────────────────────────────────────────────
+
+message RegisterRuntimeRequest {
+  // Optional caller-supplied id; control-plane generates one if empty.
+  string runtime_id = 1;
+  string source = 2;                  // must be "hosted"; self_hosted uses RuntimeChannel
+  // Required for hosted.
+  int64 bind_user_id = 3;
+  string name = 4;                    // default "default"
+  string endpoint_host = 5;
+  int32 grpc_port = 6;
+  int32 debug_port = 7;
+  repeated string capabilities = 8;
+  string resource_profile = 9;
+  string version = 10;
+}
+
+message RegisterRuntimeResponse {
+  Runtime runtime = 1;
+  // Returned to the runtime to present on subsequent Heartbeat calls.
+  // Caller should treat this as a secret.
+  string registration_token = 2;
+}
+
+// ── HeartbeatRuntime ────────────────────────────────────────────────────────
+
+message HeartbeatRuntimeRequest {
+  string runtime_id = 1;
+  // Status the runtime is reporting (typically "active").
+  string status = 2;
+  // Caller-side observation summary, for log/audit only. May be empty.
+  string note = 3;
+}
+
+message HeartbeatRuntimeResponse {
+  google.protobuf.Timestamp heartbeat_at = 1;
+  bool shutdown_requested = 2;
+  string terminal_reason = 3;
+}
+
+// ── ListRuntimes ────────────────────────────────────────────────────────────
+
+message ListRuntimesRequest {
+  int64 user_id = 1;                  // required (must equal auth user_id)
+  string status = 2;                  // optional filter; empty = no filter
+  string source = 3;                  // optional filter; empty = no filter
+  int32 limit = 4;                    // 0 = server default
+  int32 offset = 5;
+}
+
+message ListRuntimesResponse {
+  repeated Runtime runtimes = 1;
+  bool has_more = 2;
+  int64 total = 3;
+}
+
+message GetRuntimeRequest {
+  int64 user_id = 1;                  // required (must equal auth user_id)
+  string runtime_id = 2;              // required
+}
+
+message GetRuntimeResponse {
+  Runtime runtime = 1;
+}
+
+message EndRuntimeRequest {
+  int64 user_id = 1;                  // required (must equal auth user_id)
+  string runtime_id = 2;              // required
+}
+
+message EndRuntimeResponse {
+  Runtime runtime = 1;
+}
+
+// ── Runtime notification ingress ───────────────────────────────────────────
+
+message PublishRuntimeNotificationRequest {
+  int64 user_id = 1;
+  string runtime_id = 2;
+  string session_id = 3;
+  int64 account_id = 4;
+  int64 strategy_id = 5;
+  string category = 6;
+  string severity = 7;
+  string title = 8;
+  string message = 9;
+  string dedupe_key = 10;
+}
+
+message PublishRuntimeNotificationResponse {
+  bool accepted = 1;
+}
+
+// ── ResolveRuntimeRouteByID ─────────────────────────────────────────────────
+
+message ResolveRuntimeRouteByIDRequest {
+  int64 user_id = 1;                  // required (must equal auth user_id)
+  string runtime_id = 2;              // required
+  string role = 3;                    // optional: "executor" (default) | "debugger"
+  int32 mode = 4;                     // optional requested session mode; debugger only allows 0
+}
+
+message ResolveRuntimeRouteResponse {
+  Runtime runtime = 1;
+  // Concatenated "host:port" for direct gRPC dial, e.g. "10.0.0.5:50053".
+  string grpc_endpoint = 2;
+  // Optional debug endpoint when the runtime advertised a debug_port.
+  string debug_endpoint = 3;
+  // Caller token control-plane issues for handler→runtime calls. Short-lived;
+  // handler MUST present it in the gRPC metadata when calling the runtime.
+  string caller_token = 4;
+  google.protobuf.Timestamp caller_token_expires_at = 5;
+}
+
+// ── EnsureHostedRuntime ─────────────────────────────────────────────────────
+
+message EnsureHostedRuntimeRequest {
+  int64 user_id = 1;                  // required (must equal auth user_id)
+  // Display-only label. Empty lets control-panel generate a unique hosted-* name.
+  string name = 2;
+  // Resource profile the caller wants for newly-provisioned runtimes.
+  // MUST be allowed by the user's plan AND defined in
+  // provisioning.profiles. Empty defaults to "small".
+  // Ignored when an existing runtime is reused.
+  string resource_profile = 3;
+}
+
+message EnsureHostedRuntimeResponse {
+  Runtime runtime = 1;
+  // host:port for handler dial.
+  string grpc_endpoint = 2;
+  string debug_endpoint = 3;
+  string caller_token = 4;
+  google.protobuf.Timestamp caller_token_expires_at = 5;
+  // True when this call provisioned a new container; false when an
+  // existing healthy runtime was returned. Operators / observability
+  // distinguish lazy first-touch from steady-state reuse.
+  bool provisioned = 6;
+}
+
+// ── ValidateCallerToken ─────────────────────────────────────────────────────
+
+message ValidateCallerTokenRequest {
+  // Token presented by quant-handler in the inbound RPC's
+  // `x-caller-token` metadata. The runtime forwards it verbatim.
+  string caller_token = 1;
+  // The runtime's own runtime_id. control-panel-service checks the
+  // token was issued for this runtime; a token issued for runtime A
+  // MUST NOT validate when presented to runtime B.
+  string runtime_id = 2;
+}
+
+message ValidateCallerTokenResponse {
+  bool valid = 1;
+  // The user_id the token was bound to at issue time. Returned even
+  // for a valid token so the runtime can cross-check against the
+  // inbound RPC's UserId field.
+  int64 user_id = 2;
+  // Diagnostic; set when valid=false. Examples:
+  //   "expired"       — token TTL elapsed
+  //   "unknown"       — token not in the store (never issued / evicted)
+  //   "runtime_mismatch" — token issued for a different runtime
+  string reason = 3;
+}
+
+// ── Runtime credentials (Phase D3) ──────────────────────────────────────────
+
+message IssueRuntimeCredentialRequest {
+  // The user that will own the credential. quant-handler MUST set this
+  // to the authenticated JWT subject; control-panel-service validates
+  // that the user exists via account-service.GetUser.
+  int64 user_id = 1;
+  // Optional human-friendly label shown in the UI list view. Not used
+  // for routing or auth — purely for the user to remember "this is the
+  // key for my home VPS".
+  string label = 2;
+  // Runtime role authorized by this credential: "executor" or "debugger".
+  // The role is persisted at issue time and cannot be changed at runtime
+  // startup.
+  string role = 3;
+}
+
+message IssueRuntimeCredentialResponse {
+  // Server-generated opaque id (base64url, ~22 chars). The runtime
+  // sends this in every signed HELLO; the control-panel uses it to
+  // look up the public key.
+  string key_id = 1;
+  // Ed25519 private key in PEM. Returned exactly once — the platform
+  // does NOT persist this. The frontend is responsible for triggering
+  // a download and clearing it from memory.
+  string private_key_pem = 2;
+  // Public key in PEM. Returned alongside the private key for symmetry
+  // and for the frontend to display a fingerprint to the user.
+  string public_key_pem = 3;
+  // When the credential was created.
+  google.protobuf.Timestamp created_at = 4;
+  // Runtime role authorized by this credential: "executor" or "debugger".
+  string role = 5;
+}
+
+message ListRuntimeCredentialsRequest {
+  int64 user_id = 1;
+  // Deprecated compatibility flag. Prefer include_inactive.
+  // If true, include revoked/expired inactive credentials (audit view).
+  bool include_revoked = 2;
+  // If true, include inactive terminal credentials such as revoked/expired.
+  // Consumed credentials are returned regardless of this flag.
+  bool include_inactive = 3;
+}
+
+message ListRuntimeCredentialsResponse {
+  repeated RuntimeCredential credentials = 1;
+}
+
+message ListRuntimeAdmissionFailuresRequest {
+  int64 user_id = 1;
+  int32 limit = 2;                    // 0 = server default
+}
+
+message ListRuntimeAdmissionFailuresResponse {
+  repeated RuntimeAdmissionFailure failures = 1;
+}
+
+message RuntimeAdmissionFailure {
+  int64 admission_failure_id = 1;
+  int64 user_id = 2;
+  string credential_key_id = 3;
+  string requested_runtime_id = 4;
+  string requested_name = 5;
+  string source = 6;
+  string role = 7;
+  string failure_code = 8;
+  string reason = 9;
+  string consumed_runtime_id = 10;
+  google.protobuf.Timestamp first_seen_at = 11;
+  google.protobuf.Timestamp last_seen_at = 12;
+  int32 attempt_count = 13;
+}
+
+// RuntimeCredential is the safe, listable view. The private key is
+// never included — it was returned exactly once at issue time.
+message RuntimeCredential {
+  string key_id = 1;
+  int64 user_id = 2;
+  // Optional label set at issue time; may be empty.
+  string label = 3;
+  // 'active' | 'downloaded' | 'consumed' | 'revoked' | 'expired'.
+  string status = 4;
+  string public_key_pem = 5;
+  google.protobuf.Timestamp created_at = 6;
+  // Optional, set on the most recent successful HELLO verification.
+  google.protobuf.Timestamp last_used_at = 7;
+  // Optional, set when status flips to 'revoked'.
+  google.protobuf.Timestamp revoked_at = 8;
+  // Runtime role authorized by this credential: "executor" or "debugger".
+  string role = 9;
+  google.protobuf.Timestamp downloaded_at = 10;
+  google.protobuf.Timestamp consumed_at = 11;
+  string consumed_runtime_id = 12;
+  google.protobuf.Timestamp expires_at = 13;
+  bool hosted_internal = 14;
+}
+
+message RevokeRuntimeCredentialRequest {
+  // Cross-checked against the credential's owner; mismatch returns
+  // PermissionDenied.
+  int64 user_id = 1;
+  string key_id = 2;
+}
+
+message RevokeRuntimeCredentialResponse {
+  // The credential post-revocation, with status='revoked' and
+  // revoked_at set. Useful for the UI to refresh without a re-list.
+  RuntimeCredential credential = 1;
+  // Number of open RuntimeChannel streams that were closed as a side
+  // effect of this revocation. 0 if no runtimes were currently
+  // connected with this key.
+  int32 streams_closed = 2;
+  // Number of runtime_registry rows transitioned to 'ended' by
+  // this revocation. May exceed streams_closed if some runtimes were
+  // already disconnected at revoke time.
+  int32 runtimes_ended = 3;
+}
+
+// ── RuntimeChannel frame protocol (Phase D3) ───────────────────────────────
+
+enum FrameType {
+  FRAME_TYPE_UNSPECIFIED = 0;
+  FRAME_TYPE_HELLO = 1;
+  FRAME_TYPE_REQUEST = 2;
+  FRAME_TYPE_RESPONSE = 3;
+  FRAME_TYPE_PROGRESS = 4;
+  FRAME_TYPE_ABORT = 5;
+  FRAME_TYPE_HEARTBEAT = 6;
+  FRAME_TYPE_ERROR = 7;
+  FRAME_TYPE_COMMAND = 8;
+  FRAME_TYPE_COMMAND_ACK = 9;
+  FRAME_TYPE_COMMAND_RESULT = 10;
+  FRAME_TYPE_STATUS_PATCH = 11;
+  FRAME_TYPE_SHUTDOWN = 12;
+  FRAME_TYPE_DATASET_CHUNK = 13;
+  FRAME_TYPE_LIVE_KLINE_BATCH = 14;
+  FRAME_TYPE_DATA_ACK = 15;
+  FRAME_TYPE_DATA_BACKPRESSURE = 16;
+  FRAME_TYPE_DATA_END = 17;
+  FRAME_TYPE_HELLO_ACK = 18;
+  FRAME_TYPE_RESUME = 19;
+  FRAME_TYPE_HEARTBEAT_ACK = 20;
+}
+
+message RuntimeFrame {
+  // Matches REQUEST → RESPONSE / PROGRESS / ABORT / ERROR. Empty for HELLO
+  // and HEARTBEAT.
+  string correlation_id = 1;
+  FrameType frame_type = 2;
+  // REQUEST-only deadline expressed as Unix milliseconds. gRPC deadlines do
+  // not cross the multiplexed stream automatically, so the runtime MUST honor
+  // this field as the per-call deadline.
+  int64 deadline_unix_ms = 3;
+
+  oneof payload {
+    RuntimeHello hello = 10;
+    StrategyRequest request = 11;
+    StrategyResponse response = 12;
+    StrategyProgress progress = 13;
+    StrategyAbort abort = 14;
+    Heartbeat heartbeat = 15;
+    StreamError error = 16;
+    RuntimeCommandFrame command = 17;
+    RuntimeCommandAck command_ack = 18;
+    RuntimeCommandResult command_result = 19;
+    RuntimeStatusPatch status_patch = 20;
+    RuntimeShutdown shutdown = 21;
+    RuntimeDatasetChunk dataset_chunk = 22;
+    RuntimeLiveKlineBatch live_kline_batch = 23;
+    RuntimeDataAck data_ack = 24;
+    RuntimeDataBackpressure data_backpressure = 25;
+    RuntimeDataEnd data_end = 26;
+    RuntimeHelloAck hello_ack = 27;
+    RuntimeResume resume = 28;
+    RuntimeHeartbeatAck heartbeat_ack = 29;
+  }
+}
+
+message RuntimeHello {
+  string key_id = 1;
+  // Optional caller-supplied id; if empty, control-panel-service derives one
+  // from the key_id so reconnects remain stable enough for registry routing.
+  string runtime_id = 2;
+  string name = 3;
+  string endpoint_host = 4;
+  int32 grpc_port = 5;
+  int32 debug_port = 6;
+  repeated string capabilities = 7;
+  string resource_profile = 8;
+  string version = 9;
+  int64 issued_at_unix_ms = 10;
+  // Base64url-no-padding 16 random bytes.
+  string nonce = 11;
+  // Base64url-no-padding Ed25519 signature over the canonical HELLO payload
+  // excluding this field.
+  string signature = 12;
+}
+
+message RuntimeHelloAck {
+  string runtime_id = 1;
+  string resume_token = 2;
+  google.protobuf.Timestamp resume_token_expires_at = 3;
+  string fingerprint = 4;
+  google.protobuf.Timestamp fingerprint_expires_at = 5;
+}
+
+message RuntimeResume {
+  string runtime_id = 1;
+  string resume_token = 2;
+  string fingerprint = 3;
+}
+
+message StrategyRequest {
+  // Values are the StrategyService RPC names:
+  // RunStrategy, PreviewRunStrategy, StopStrategy, GetStrategyStatus.
+  string method = 1;
+  google.protobuf.Any request = 2;
+}
+
+message StrategyResponse {
+  google.protobuf.Any response = 1;
+}
+
+message StrategyProgress {
+  google.protobuf.Any event = 1;
+}
+
+message StrategyAbort {
+  string reason = 1;
+}
+
+message Heartbeat {
+  int64 sent_at_unix_ms = 1;
+  string fingerprint = 2;
+}
+
+message RuntimeHeartbeatAck {
+  string runtime_id = 1;
+  string fingerprint = 2;
+  google.protobuf.Timestamp fingerprint_expires_at = 3;
+}
+
+message StreamError {
+  string code = 1;
+  string message = 2;
+}
+
+message RuntimeCommandFrame {
+  string command_id = 1;
+  string command_type = 2;
+  string runtime_id = 3;
+  string session_id = 4;
+  google.protobuf.Any payload = 5;
+}
+
+message RuntimeCommandAck {
+  string command_id = 1;
+  string status = 2;       // acked | running
+  string message = 3;
+}
+
+message RuntimeCommandResult {
+  string command_id = 1;
+  string status = 2;       // succeeded | failed | cancelled | timed_out
+  google.protobuf.Any result = 3;
+  string failure_reason = 4;
+}
+
+message RuntimeStatusPatch {
+  string runtime_id = 1;
+  string session_id = 2;
+  string status = 3;
+  string reason = 4;
+  google.protobuf.Any payload = 5;
+}
+
+message RuntimeShutdown {
+  string reason = 1;
+  int64 deadline_unix_ms = 2;
+}
+
+message RuntimeDatasetChunk {
+  string dataset_id = 1;
+  string session_id = 2;
+  int64 sequence = 3;
+  bytes payload = 4;
+  bool end = 5;
+}
+
+message RuntimeLiveKlineBatch {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 sequence = 3;
+  repeated google.protobuf.Any klines = 4;
+}
+
+message RuntimeDataAck {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 sequence = 3;
+}
+
+message RuntimeDataBackpressure {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 resume_after_unix_ms = 3;
+  string reason = 4;
+}
+
+message RuntimeDataEnd {
+  string session_id = 1;
+  string stream_key = 2;
+  string reason = 3;
+}
