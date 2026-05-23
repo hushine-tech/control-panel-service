@@ -76,7 +76,7 @@ runtime_plans:
 #   backend: ""/"noop" → NoOpProvisioner (EnsureHostedRuntime fails closed)
 #           "docker"   → DockerProvisioner (real `docker run`)
 provisioning:
-  backend: "noop"
+  backend: "docker"
   image: "hushine/strategy-runtime:executor-dev"
   advertise_host: "127.0.0.1"
   port_range_base: 50100
@@ -105,13 +105,13 @@ provisioning:
     #          host port to the in-container 50053. Operator must set
     #          runtime_env addresses to be reachable from inside the
     #          container (host.docker.internal or service names).
-    network_mode: "host"
+    network_mode: "bridge"
     # What the runtime container should dial for self-registration. NOT
     # the same as server.grpc_addr (that is the BIND address, e.g.
     # ":50054"). Default for host networking is "127.0.0.1:<bind_port>".
     # Bridge / custom networks REQUIRE explicit value:
     # "host.docker.internal:50054" or routable LAN/service address.
-    control_panel_dial_addr: ""
+    control_panel_dial_addr: "host.docker.internal:50054"
     label_prefix: "hushine.runtime"
     runtime_user_grpc_port: 50053
     runtime_env:
