@@ -12,17 +12,13 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
-	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/logger"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
-)
-
-const (
-	runtimeSourceSelfHosted = "self_hosted"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 )
 
 type AccountPlatformClient interface {
@@ -152,7 +148,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "session runtime_id does not match authenticated runtime")
 		}
 		req.RuntimeId = rt.RuntimeID
-		req.RuntimeSource = runtimeSourceSelfHosted
+		req.RuntimeSource = runtimeSourceFromAuthenticated(rt)
 		req.RuntimeName = rt.Name
 		return p.requireAccount().SaveSession(ctx, req)
 
@@ -442,6 +438,13 @@ func unpackRuntimePayload(payload *anypb.Any, out proto.Message) error {
 		return status.Errorf(codes.InvalidArgument, "unpack runtime platform request: %v", err)
 	}
 	return nil
+}
+
+func runtimeSourceFromAuthenticated(rt AuthenticatedRuntime) string {
+	if strings.TrimSpace(rt.Source) != "" {
+		return rt.Source
+	}
+	return domain.RuntimeSourceSelfHosted
 }
 
 func canonicalPlatformMethod(method string) string {

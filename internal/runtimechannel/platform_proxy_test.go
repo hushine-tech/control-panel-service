@@ -12,9 +12,9 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
-	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 )
 
 func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
@@ -32,7 +32,7 @@ func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 
 	_, err = proxy.DispatchRuntimeRequest(
 		context.Background(),
-		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk", Source: "self_hosted"},
 		"account.SaveSession",
 		payload,
 	)
@@ -46,6 +46,36 @@ func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 	if account.saveReq.GetRuntimeId() != "runtime-1" ||
 		account.saveReq.GetRuntimeSource() != "self_hosted" ||
 		account.saveReq.GetRuntimeName() != "desk" {
+		t.Fatalf("SaveSession runtime binding = %+v", account.saveReq)
+	}
+}
+
+func TestPlatformProxySaveSessionPreservesHostedRuntimeSource(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.SaveSessionRequest{
+		SessionId:  "sess-1",
+		AccountId:  7,
+		StrategyId: 9,
+		Mode:       0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-hosted", Name: "hosted-test", Source: "hosted"},
+		"account.SaveSession",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if account.saveReq.GetRuntimeId() != "rt-hosted" ||
+		account.saveReq.GetRuntimeSource() != "hosted" ||
+		account.saveReq.GetRuntimeName() != "hosted-test" {
 		t.Fatalf("SaveSession runtime binding = %+v", account.saveReq)
 	}
 }
