@@ -1,5 +1,5 @@
 -- Phase D2: market-data control plane moves into control-panel-service.
--- Mirror of account-service 0009_create_market_data_control_plane.sql
+-- Mirror of core-service 0009_create_market_data_control_plane.sql
 -- (requests table portion). Cross-database FKs to users/accounts are
 -- dropped because Postgres cannot enforce FKs across databases.
 --
@@ -8,7 +8,7 @@
 --   user_id  REFERENCES users(id)            ON DELETE CASCADE
 --   account_id REFERENCES accounts(...)      ON DELETE SET NULL
 -- After D2, these constraints no longer exist. Consequences:
---   * Deleting a user/account in account-service does NOT cascade-delete
+--   * Deleting a user/account in core-service does NOT cascade-delete
 --     the user's market_data_* rows in control_panel; they ORPHAN.
 --   * No service-layer code currently runs the equivalent cleanup — the
 --     "validated at the service layer" framing is a future placeholder,
@@ -17,7 +17,7 @@
 -- not delete users or accounts in normal operation (single-tenant dev,
 -- multi-tenant later). If/when a real user-deletion path lands,
 -- control-panel-service must add an `OnUserDeleted` / `OnAccountDeleted`
--- RPC (called by account-service inside its own delete transaction) and
+-- RPC (called by core-service inside its own delete transaction) and
 -- this comment block must be revisited.
 --
 -- User-owned demand. Upsert key:

@@ -111,16 +111,16 @@ func main() {
 	defer repo.Close()
 	logger.Info(ctx, "system", "timescaledb connected (control_panel)")
 
-	// ── account-service client (for plan_code lookup) ────────────────────────
+	// ── core-service client (for plan_code lookup) ───────────────────────────
 	accClient, err := accountclient.New(
 		cfg.Dependencies.AccountServiceGRPC,
 		grpc.WithUnaryInterceptor(grpcclientmw.UnaryClientInterceptor(logger.Instance())),
 	)
 	if err != nil {
-		log.Fatalf("init account-service client: %v", err)
+		log.Fatalf("init core-service client: %v", err)
 	}
 	defer accClient.Close()
-	logger.Info(ctx, "system", fmt.Sprintf("account-service client → %s", cfg.Dependencies.AccountServiceGRPC))
+	logger.Info(ctx, "system", fmt.Sprintf("core-service client → %s", cfg.Dependencies.AccountServiceGRPC))
 
 	var orderClient orderv1.OrderServiceClient
 	var orderConn *grpc.ClientConn

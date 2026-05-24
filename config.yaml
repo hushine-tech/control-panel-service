@@ -115,6 +115,7 @@ provisioning:
     label_prefix: "hushine.runtime"
     runtime_user_grpc_port: 50053
     runtime_env:
+      CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
       ACCOUNT_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
       ORDER_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
       KAFKA_BROKERS: "127.0.0.1:19092"

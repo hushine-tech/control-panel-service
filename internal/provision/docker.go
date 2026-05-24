@@ -171,7 +171,7 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		args = append(args, "-e", "RUNTIME_CREDENTIAL_JSON="+string(credentialJSON))
 	}
 
-	// Operator-supplied static env (account-service / order-service /
+	// Operator-supplied static env (core-service / order-service /
 	// kafka / timescaledb addresses, etc.).
 	//
 	// Platform-controlled keys are intentionally rejected here so a

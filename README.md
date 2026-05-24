@@ -144,7 +144,8 @@ strategy-service → orphans):
        network_mode: "bridge"                  # Docker Desktop friendly
        control_panel_dial_addr: "host.docker.internal:50054"
        runtime_env:
-         ACCOUNT_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
+         CORE_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
+         ACCOUNT_SERVICE_GRPC_ADDR: "host.docker.internal:50051" # compatibility alias
          # ... etc
    ```
 4. **Restart control-panel-service** so the new backend takes effect.
@@ -169,11 +170,11 @@ until they're ended / restart out.
 ## D2 cutover rollout sequence (market-data control plane)
 
 Phase D2 (2026-05-06) moved the demand-driven market-data control plane
-(4 tables + 10 RPCs) out of `account-service` into this service.
+(4 tables + 10 RPCs) out of `core-service` into this service.
 control-panel-service now owns both the runtime control plane and the
 market-data control plane on `:50054`.
 
-Hard cut: same PR removes the source RPCs/tables from account-service
+Hard cut: same PR removes the source RPCs/tables from core-service
 and brings the destination online. Operator runs the migration script
 once between `pg_dump` backup and the rolling restart of the 3 callers
 (scraper / quant-handler / strategy-service).
@@ -210,8 +211,8 @@ once between `pg_dump` backup and the rolling restart of the 3 callers
    - `quant-handler`: reuses `dependencies.control_panel_service_grpc`.
    - `strategy-service`: `dependencies.market_data_control_panel_grpc`
      (defaults to `dependencies.control_panel_service_grpc` if unset).
-6. **Apply account-service migration 0012** to drop the now-orphaned
-   source tables: `cd account-service && make ensure-db` runs
+6. **Apply core-service migration 0012** to drop the now-orphaned
+   source tables: `cd core-service && make ensure-db` runs
    `0012_drop_market_data_control_plane.sql`.
 7. **Verify** the live path end-to-end: `quant-frontend` market-data
    CRUD; scraper reconcile loop; mode=2 strategy session preflight +
@@ -430,8 +431,8 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
 drops it.
 
 `users` and `users.plan_code` live in the `account` database owned by
-`account-service`; control-panel-service reads `plan_code` via the
-`account-service` `GetUser` gRPC.
+`core-service`; control-panel-service reads `plan_code` via the
+`core-service` `GetUser` gRPC.
 
 ## Tests
 

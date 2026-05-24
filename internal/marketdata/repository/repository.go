@@ -1,6 +1,6 @@
 // Package repository owns the persistence interface for the market-data
 // control plane. Phase D2 ported the methods verbatim from
-// account-service (the source `market_data_control_plane.go` /
+// core-service (the source `market_data_control_plane.go` /
 // `market_data_history.go` were deleted in the same change). Behaviour
 // is unchanged. The implementation lives in `timescale.go`.
 package repository

@@ -17,20 +17,20 @@ import (
 // Sentinel errors. Callers map these to gRPC codes through service-layer
 // sentinels so the fail-closed contract is honored.
 var (
-	// ErrUserNotFound: account-service returned NotFound for the supplied
+	// ErrUserNotFound: core-service returned NotFound for the supplied
 	// user_id. The control plane MUST refuse the request rather than
 	// silently fall back to a default plan.
-	ErrUserNotFound = errors.New("plan: user not found in account-service")
+	ErrUserNotFound = errors.New("plan: user not found in core-service")
 
-	// ErrPlanLookupUnavailable: the call to account-service failed for any
+	// ErrPlanLookupUnavailable: the call to core-service failed for any
 	// non-NotFound reason (Unavailable, DeadlineExceeded, network, etc.).
 	// Callers MUST treat this as a hard failure; allowing requests through
-	// during account-service downtime would break the plan / quota contract.
-	ErrPlanLookupUnavailable = errors.New("plan: account-service lookup unavailable")
+	// during core-service downtime would break the plan / quota contract.
+	ErrPlanLookupUnavailable = errors.New("plan: core-service lookup unavailable")
 )
 
 // PlanLookup retrieves a user's plan_code. The interface lets unit tests
-// substitute a deterministic fixture for the real account-service client.
+// substitute a deterministic fixture for the real core-service client.
 //
 // Implementations should return a gRPC status error so the resolver can
 // distinguish NotFound (user truly absent) from Unavailable / transient
@@ -61,7 +61,7 @@ type EffectiveLimits struct {
 //  2. The runtime_plans config tier matching that plan_code.
 //  3. The platform-wide caps in runtime_platform.
 //
-// The configured default plan is used ONLY when account-service returns
+// The configured default plan is used ONLY when core-service returns
 // the user successfully but the user's plan_code field is empty (legacy
 // row written before migration 0011 backfill). It is NOT a fallback for
 // missing users or transient failures.

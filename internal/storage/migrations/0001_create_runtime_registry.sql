@@ -1,6 +1,6 @@
 -- runtime_registry: every strategy-runtime instance the control plane knows about.
 -- D1 ownership boundary: this table lives in the control-panel-service database;
--- account-service owns users/accounts; control-panel-service owns runtime and
+-- core-service owns users/accounts; control-panel-service owns runtime and
 -- market-data control-plane state.
 --
 -- Lifecycle:

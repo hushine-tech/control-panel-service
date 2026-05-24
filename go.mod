@@ -55,7 +55,7 @@ require (
 )
 
 replace (
-	github.com/hushine-tech/core-service => ../account-service
+	github.com/hushine-tech/core-service => ../core-service
 	github.com/hushine-tech/golang-lib => ../golang-lib
 	github.com/hushine-tech/strategy-service => ../strategy-service
 )

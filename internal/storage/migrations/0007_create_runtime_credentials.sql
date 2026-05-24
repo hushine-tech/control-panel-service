@@ -19,7 +19,7 @@
 -- Same convention as Phase D2 market-data tables — Postgres does not
 -- enforce FKs across databases. Validation lives in the credential
 -- service layer (issue path checks the user exists via
--- `account-service.GetUser`).
+-- `core-service.GetUser`).
 CREATE TABLE IF NOT EXISTS runtime_credentials (
     -- key_id is the stable opaque identifier that the runtime sends in
     -- every signed HELLO. Generated server-side as base64url-encoded

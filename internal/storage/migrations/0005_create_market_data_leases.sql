@@ -1,10 +1,10 @@
 -- Phase D2: market-data control plane moves into control-panel-service.
--- Mirror of account-service 0009_create_market_data_control_plane.sql
+-- Mirror of core-service 0009_create_market_data_control_plane.sql
 -- (leases table portion). Cross-database FK to accounts dropped because
 -- Postgres cannot enforce FKs across databases.
 --
 -- See migration 0004 for the full discussion of the orphan-on-delete
--- behaviour change. Short version: deleting an account in account-service
+-- behaviour change. Short version: deleting an account in core-service
 -- no longer NULLs the account_id on this table; rows orphan instead.
 -- Acceptable because the platform does not delete accounts in normal
 -- operation. Revisit if/when an account-delete path lands.

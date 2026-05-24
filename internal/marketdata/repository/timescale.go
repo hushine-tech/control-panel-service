@@ -16,7 +16,7 @@ import (
 
 // TimescaleRepository implements Repository against the control_panel
 // database. Phase D2: SQL queries were ported verbatim from
-// account-service (sources `market_data_control_plane.go` and
+// core-service (sources `market_data_control_plane.go` and
 // `market_data_history.go` were deleted in the same change); behaviour
 // is unchanged. Schema lives in migrations 0003-0006.
 //

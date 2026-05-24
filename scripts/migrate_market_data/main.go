@@ -138,7 +138,7 @@ func main() {
 	fmt.Println("✔ Migration complete. All four tables verified; sequences resynced.")
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Apply account-service migration 0012 to drop source tables.")
+	fmt.Println("  1. Apply core-service migration 0012 to drop source tables.")
 	fmt.Println("  2. Restart scraper / quant-handler / strategy-service with the")
 	fmt.Println("     control-panel-service endpoints set.")
 }

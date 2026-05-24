@@ -1,11 +1,11 @@
 -- Phase D2: market-data control plane moves into control-panel-service.
--- Mirror of account-service 0010_create_market_data_history_requests.sql.
+-- Mirror of core-service 0010_create_market_data_history_requests.sql.
 -- Cross-database FKs to users/accounts dropped because Postgres cannot
 -- enforce FKs across databases.
 --
 -- See migration 0004 for the full discussion of the orphan-on-delete
 -- behaviour change. The same caveat applies here: deleting a user in
--- account-service no longer cascade-deletes their history requests.
+-- core-service no longer cascade-deletes their history requests.
 --
 -- The original migration shared the request_id sequence with
 -- market_data_requests. We preserve the same trick by using the

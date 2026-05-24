@@ -41,11 +41,11 @@ var (
 	ErrTokenMismatch    = errors.New("token mismatch")
 	ErrQuotaExceeded    = errors.New("quota exceeded")
 	ErrConflict         = errors.New("conflict")
-	// ErrPlanLookupUnavailable: account-service couldn't be reached (or
+	// ErrPlanLookupUnavailable: core-service couldn't be reached (or
 	// returned a non-NotFound error) when resolving the user's plan. Maps
 	// to gRPC Unavailable so callers can retry after backoff.
 	ErrPlanLookupUnavailable = errors.New("plan lookup unavailable")
-	// ErrSessionLookupUnavailable: account-service couldn't be reached when
+	// ErrSessionLookupUnavailable: core-service couldn't be reached when
 	// checking runtime-bound session blockers. Runtime end is fail-closed
 	// when this dependency is unavailable.
 	ErrSessionLookupUnavailable = errors.New("session lookup unavailable")
@@ -655,7 +655,7 @@ func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) 
 		return nil, nil
 	}
 	if s.sessionClient == nil {
-		return nil, fmt.Errorf("%w: account-service session client is not configured", ErrSessionLookupUnavailable)
+		return nil, fmt.Errorf("%w: core-service session client is not configured", ErrSessionLookupUnavailable)
 	}
 	resp, err := s.sessionClient.ListRunningSessions(ctx, &accountv1.ListRunningSessionsRequest{RuntimeId: runtimeID})
 	if err != nil {

@@ -640,7 +640,7 @@ func makeServiceWithProvisioner(repo *stubRepo, planCode string, prov provision.
 }
 
 // constLookup is the deterministic plan-lookup fixture for service tests.
-// Setting `err` simulates account-service failures (NotFound, Unavailable,
+// Setting `err` simulates core-service failures (NotFound, Unavailable,
 // etc.) so tests can exercise the fail-closed contract end-to-end.
 type constLookup struct {
 	code string

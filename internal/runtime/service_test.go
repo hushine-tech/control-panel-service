@@ -1096,7 +1096,7 @@ func TestList_RequiresUserID(t *testing.T) {
 // ── Fail-closed plan-lookup contract (#2) ───────────────────────────────────
 
 // makeServiceWithLookup builds a Service wired to a caller-controlled
-// PlanLookup, so tests can simulate account-service NotFound / Unavailable.
+// PlanLookup, so tests can simulate core-service NotFound / Unavailable.
 func makeServiceWithLookup(repo *stubRepo, lookup plan.PlanLookup) *Service {
 	plans := map[string]config.RuntimePlan{
 		"pro": {MaxHostedRuntimes: 5, MaxSelfHostedRuntimes: 5, MaxConcurrentSessionsTotal: 20, AllowedResourceProfiles: []string{"small", "medium", "large"}, AllowSelfHostedRuntime: true},
@@ -1127,7 +1127,7 @@ func (e errLookup) GetUserPlanCode(_ context.Context, _ int64) (string, error) {
 }
 
 // TestRegister_AccountServiceNotFound_FailsClosed: hosted RegisterRuntime
-// with bind_user_id=42 but account-service returns NotFound for that user
+// with bind_user_id=42 but core-service returns NotFound for that user
 // MUST refuse the request rather than silently allocate a default plan.
 func TestRegister_AccountServiceNotFound_FailsClosed(t *testing.T) {
 	repo := newStubRepo()
@@ -1146,11 +1146,11 @@ func TestRegister_AccountServiceNotFound_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestRegister_AccountServiceUnavailable_FailsClosed: account-service
+// TestRegister_AccountServiceUnavailable_FailsClosed: core-service
 // being unreachable MUST NOT result in a runtime being registered. The
 // pre-fix behavior was to silently fall back to default plan (pro), which
 // would let an arbitrary caller bind a hosted runtime to any user_id
-// while account-service was down.
+// while core-service was down.
 func TestRegister_AccountServiceUnavailable_FailsClosed(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeServiceWithLookup(repo, errLookup{err: status.Error(codes.Unavailable, "boom")})

@@ -1,7 +1,7 @@
 // Package marketdata is the Phase D2 owner of the market-data control
 // plane (`market_data_requests` / `_streams` / `_leases` /
 // `_history_requests`). The 10 RPCs were ported verbatim from
-// account-service (the source `grpc_market_data.go` was deleted in the
+// core-service (the source `grpc_market_data.go` was deleted in the
 // same change). This package is a sibling to the runtime control plane
 // in `control-panel-service/internal/runtime/`.
 package marketdata
@@ -226,7 +226,7 @@ func normalizeHistoryStatus(raw string) (domain.MarketDataHistoryRequestStatus, 
 // underlying DB is actually broken, the primary query before this call
 // will already have surfaced an Internal error to the caller.
 //
-// This matches the `account-service` behaviour pre-D2.
+// This matches the `core-service` behaviour pre-D2.
 func (s *Service) activeLeaseCount(ctx context.Context, streamID int64) int {
 	n, err := s.repo.CountActiveLeasesForStream(ctx, streamID)
 	if err != nil {

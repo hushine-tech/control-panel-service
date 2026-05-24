@@ -72,7 +72,7 @@ func TestResolve_LookupNotFoundFailsClosed(t *testing.T) {
 	}
 }
 
-// TestResolve_LookupUnavailableFailsClosed: account-service down /
+// TestResolve_LookupUnavailableFailsClosed: core-service down /
 // network blip / Internal error → fail closed. Don't grant default plan
 // access during a control-plane outage.
 func TestResolve_LookupUnavailableFailsClosed(t *testing.T) {
@@ -81,7 +81,7 @@ func TestResolve_LookupUnavailableFailsClosed(t *testing.T) {
 	}
 	platform := config.RuntimePlatformConfig{DefaultPlanCode: "free"}
 	r := makeResolver(plans, "", platform,
-		stubLookup{err: status.Error(codes.Unavailable, "account-service down")})
+		stubLookup{err: status.Error(codes.Unavailable, "core-service down")})
 
 	_, err := r.Resolve(context.Background(), 42)
 	if err == nil {

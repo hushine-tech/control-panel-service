@@ -4,13 +4,13 @@ import "time"
 
 // ── Market-data control plane (Phase D2) ────────────────────────────────
 //
-// These types were ported verbatim from account-service/internal/domain
+// These types were ported verbatim from core-service/internal/domain
 // when D2 moved control-plane ownership into control-panel-service. The
 // underlying tables live in the `control_panel` database
 // (migrations 0003–0006). Cross-database FK references to
 // `account.users(id)` / `account.accounts(account_id)` were dropped at
 // the schema level; UserID and AccountID are validated at the service
-// layer via account-service.GetUser when applicable.
+// layer via core-service.GetUser when applicable.
 //
 // v1 scope is `kline` only. The `Kind` field reserves space for future
 // `orderbook` / `funding` / `oi` extensions.

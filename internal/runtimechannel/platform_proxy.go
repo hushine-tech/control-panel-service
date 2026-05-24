@@ -889,25 +889,25 @@ func isRuntimeLogReservedKey(key string) bool {
 type unavailableAccountClient struct{}
 
 func (unavailableAccountClient) GetAccount(context.Context, *accountv1.GetAccountRequest, ...grpc.CallOption) (*accountv1.GetAccountResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetSession(context.Context, *accountv1.GetSessionRequest, ...grpc.CallOption) (*accountv1.GetSessionResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetOnlineAccountInfo(context.Context, *accountv1.GetOnlineAccountInfoRequest, ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetActiveStrategy(context.Context, *accountv1.GetActiveStrategyRequest, ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) SaveSession(context.Context, *accountv1.SaveSessionRequest, ...grpc.CallOption) (*accountv1.SaveSessionResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) UpdateSession(context.Context, *accountv1.UpdateSessionRequest, ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) UpdateAccountWalletState(context.Context, *accountv1.UpdateAccountWalletStateRequest, ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
-	return nil, status.Error(codes.Unavailable, "account-service platform client is not configured")
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 
 type unavailableOrderClient struct{}
