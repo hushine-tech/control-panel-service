@@ -231,6 +231,22 @@ func (s *stubRepo) ListMarketDataRequestsByUser(_ context.Context, userID int64)
 	return out, nil
 }
 
+func (s *stubRepo) ListMarketDataRequestsByUserPage(ctx context.Context, userID int64, limit, offset int) ([]domain.MarketDataRequest, int64, bool, error) {
+	out, err := s.ListMarketDataRequestsByUser(ctx, userID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	total := len(out)
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return out[offset:end], int64(total), end < total, nil
+}
+
 // ── leases ──────────────────────────────────────────────────────────────
 
 func (s *stubRepo) leaseKey(sessionID string, streamID int64) string {

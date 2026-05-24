@@ -31,6 +31,7 @@ type Repository interface {
 	CreateRuntimeCredential(ctx context.Context, c domain.RuntimeCredential) error
 	GetRuntimeCredential(ctx context.Context, keyID string) (domain.RuntimeCredential, error)
 	ListRuntimeCredentialsByUser(ctx context.Context, userID int64, includeInactive bool) ([]domain.RuntimeCredential, error)
+	ListRuntimeCredentialsByUserPage(ctx context.Context, userID int64, includeInactive bool, limit, offset int) ([]domain.RuntimeCredential, int64, bool, error)
 	RevokeRuntimeCredential(ctx context.Context, keyID string, userID int64) (domain.RuntimeCredential, error)
 }
 
@@ -183,6 +184,13 @@ func (s *Service) List(ctx context.Context, userID int64, includeInactive bool) 
 		return nil, fmt.Errorf("%w: user_id is required", ErrInvalidArgument)
 	}
 	return s.repo.ListRuntimeCredentialsByUser(ctx, userID, includeInactive)
+}
+
+func (s *Service) ListPage(ctx context.Context, userID int64, includeInactive bool, limit, offset int) ([]domain.RuntimeCredential, int64, bool, error) {
+	if userID <= 0 {
+		return nil, 0, false, fmt.Errorf("%w: user_id is required", ErrInvalidArgument)
+	}
+	return s.repo.ListRuntimeCredentialsByUserPage(ctx, userID, includeInactive, limit, offset)
 }
 
 // ── Revoke ──────────────────────────────────────────────────────────────────

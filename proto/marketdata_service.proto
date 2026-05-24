@@ -251,10 +251,14 @@ message CancelMarketDataRequestResponse {}
 
 message ListMarketDataRequestsRequest {
   int64 user_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
 }
 
 message ListMarketDataRequestsResponse {
   repeated MarketDataRequestWithStream entries = 1;
+  bool has_more = 2;
+  int64 total = 3;
 }
 
 message MarketDataRequestWithStream {

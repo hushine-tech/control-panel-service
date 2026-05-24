@@ -1031,6 +1031,59 @@ func TestList_Filters(t *testing.T) {
 	}
 }
 
+func TestList_SortsByStartedAtDesc(t *testing.T) {
+	repo := newStubRepo()
+	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
+	oldStarted := fixedNow.Add(-2 * time.Hour)
+	newStarted := fixedNow.Add(-30 * time.Minute)
+	newerCreated := fixedNow.Add(-10 * time.Minute)
+	repo.runtimes["rt-old-started"] = domain.Runtime{
+		RuntimeID: "rt-old-started",
+		UserID:    42,
+		Name:      "old-started",
+		Source:    domain.RuntimeSourceHosted,
+		Role:      domain.CredentialRoleExecutor,
+		Status:    domain.RuntimeStatusActive,
+		StartedAt: &oldStarted,
+		CreatedAt: fixedNow.Add(-3 * time.Hour),
+		UpdatedAt: fixedNow,
+	}
+	repo.runtimes["rt-new-started"] = domain.Runtime{
+		RuntimeID: "rt-new-started",
+		UserID:    42,
+		Name:      "new-started",
+		Source:    domain.RuntimeSourceSelfHosted,
+		Role:      domain.CredentialRoleDebugger,
+		Status:    domain.RuntimeStatusActive,
+		StartedAt: &newStarted,
+		CreatedAt: fixedNow.Add(-4 * time.Hour),
+		UpdatedAt: fixedNow.Add(-4 * time.Hour),
+	}
+	repo.runtimes["rt-no-started"] = domain.Runtime{
+		RuntimeID: "rt-no-started",
+		UserID:    42,
+		Name:      "no-started",
+		Source:    domain.RuntimeSourceSelfHosted,
+		Role:      domain.CredentialRoleDebugger,
+		Status:    domain.RuntimeStatusStarting,
+		CreatedAt: newerCreated,
+		UpdatedAt: fixedNow.Add(-5 * time.Hour),
+	}
+
+	res, err := svc.ListRuntimes(context.Background(), ListArgs{UserID: 42})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	got := []string{}
+	for _, rt := range res.Runtimes {
+		got = append(got, rt.RuntimeID)
+	}
+	want := []string{"rt-no-started", "rt-new-started", "rt-old-started"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
 func TestList_RequiresUserID(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)

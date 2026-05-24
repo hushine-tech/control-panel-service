@@ -460,7 +460,7 @@ func (r *TimescaleRepository) ListRuntimes(ctx context.Context, userID int64, st
 	// Page query: limit+1 sentinel, separate COUNT for pager total.
 	pageArgs := append(append([]any{}, args...), limit+1, offset)
 	q := fmt.Sprintf(
-		runtimeSelectColumns+` FROM runtime_registry WHERE %s ORDER BY updated_at DESC LIMIT $%d OFFSET $%d`,
+		runtimeSelectColumns+` FROM runtime_registry WHERE %s ORDER BY COALESCE(started_at, created_at) DESC, runtime_id DESC LIMIT $%d OFFSET $%d`,
 		where, len(args)+1, len(args)+2,
 	)
 	rows, err := r.db.QueryContext(ctx, q, pageArgs...)
@@ -1093,6 +1093,55 @@ func (r *TimescaleRepository) ListRuntimeCredentialsByUser(ctx context.Context, 
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (r *TimescaleRepository) ListRuntimeCredentialsByUserPage(ctx context.Context, userID int64, includeInactive bool, limit, offset int) ([]domain.RuntimeCredential, int64, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where := ` WHERE user_id = $1 AND hosted_internal = FALSE`
+	args := []any{userID}
+	if !includeInactive {
+		where += ` AND status IN ('active', 'downloaded', 'consumed')`
+	}
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runtime_credentials`+where, args...).Scan(&total); err != nil {
+		return nil, 0, false, err
+	}
+	listArgs := append([]any{}, args...)
+	listArgs = append(listArgs, limit+1, offset)
+	q := `SELECT key_id, user_id, public_key_pem, label, role, status,
+	             created_at, downloaded_at, consumed_at, consumed_runtime_id,
+	             expires_at, last_used_at, revoked_at, hosted_internal
+	      FROM runtime_credentials` + where +
+		fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, len(listArgs)-1, len(listArgs))
+	rows, err := r.db.QueryContext(ctx, q, listArgs...)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer rows.Close()
+	var out []domain.RuntimeCredential
+	for rows.Next() {
+		c, err := scanCredential(rows)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, total, hasMore, nil
 }
 
 func (r *TimescaleRepository) RevokeRuntimeCredential(ctx context.Context, keyID string, userID int64) (domain.RuntimeCredential, error) {

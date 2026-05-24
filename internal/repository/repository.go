@@ -119,6 +119,7 @@ type Repository interface {
 	// revoked/expired rows are hidden by default.
 	// Ordered by created_at DESC.
 	ListRuntimeCredentialsByUser(ctx context.Context, userID int64, includeInactive bool) ([]domain.RuntimeCredential, error)
+	ListRuntimeCredentialsByUserPage(ctx context.Context, userID int64, includeInactive bool, limit, offset int) (items []domain.RuntimeCredential, total int64, hasMore bool, err error)
 
 	// RevokeRuntimeCredential flips status to 'revoked' and stamps
 	// revoked_at=NOW(). userID is cross-checked against the credential's

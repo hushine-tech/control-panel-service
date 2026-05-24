@@ -273,10 +273,18 @@ func (s *stubRepo) ListRuntimes(_ context.Context, userID int64, statusFilter, s
 		matched = append(matched, e)
 	}
 	sort.Slice(matched, func(i, j int) bool {
-		if !matched[i].UpdatedAt.Equal(matched[j].UpdatedAt) {
-			return matched[i].UpdatedAt.After(matched[j].UpdatedAt)
+		left := matched[i].CreatedAt
+		if matched[i].StartedAt != nil {
+			left = *matched[i].StartedAt
 		}
-		return matched[i].RuntimeID < matched[j].RuntimeID
+		right := matched[j].CreatedAt
+		if matched[j].StartedAt != nil {
+			right = *matched[j].StartedAt
+		}
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return matched[i].RuntimeID > matched[j].RuntimeID
 	})
 	total := int64(len(matched))
 	if offset > len(matched) {
@@ -661,6 +669,10 @@ func (s *stubRepo) GetRuntimeCredential(_ context.Context, _ string) (domain.Run
 
 func (s *stubRepo) ListRuntimeCredentialsByUser(_ context.Context, _ int64, _ bool) ([]domain.RuntimeCredential, error) {
 	return nil, nil
+}
+
+func (s *stubRepo) ListRuntimeCredentialsByUserPage(_ context.Context, _ int64, _ bool, _, _ int) ([]domain.RuntimeCredential, int64, bool, error) {
+	return nil, 0, false, nil
 }
 
 func (s *stubRepo) RevokeRuntimeCredential(_ context.Context, _ string, _ int64) (domain.RuntimeCredential, error) {

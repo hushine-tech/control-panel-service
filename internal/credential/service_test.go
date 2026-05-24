@@ -55,6 +55,22 @@ func (s *stubRepo) ListRuntimeCredentialsByUser(_ context.Context, userID int64,
 	return out, nil
 }
 
+func (s *stubRepo) ListRuntimeCredentialsByUserPage(ctx context.Context, userID int64, includeInactive bool, limit, offset int) ([]domain.RuntimeCredential, int64, bool, error) {
+	out, err := s.ListRuntimeCredentialsByUser(ctx, userID, includeInactive)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	total := len(out)
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return out[offset:end], int64(total), end < total, nil
+}
+
 func (s *stubRepo) RevokeRuntimeCredential(_ context.Context, keyID string, userID int64) (domain.RuntimeCredential, error) {
 	c, ok := s.creds[keyID]
 	if !ok {

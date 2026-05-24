@@ -402,7 +402,19 @@ func (g *ControlPanelGRPCService) ListRuntimeCredentials(ctx context.Context, re
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	creds, err := g.credSvc.List(ctx, req.GetUserId(), req.GetIncludeRevoked() || req.GetIncludeInactive())
+	includeInactive := req.GetIncludeRevoked() || req.GetIncludeInactive()
+	if req.GetLimit() > 0 || req.GetOffset() > 0 {
+		creds, total, hasMore, err := g.credSvc.ListPage(ctx, req.GetUserId(), includeInactive, int(req.GetLimit()), int(req.GetOffset()))
+		if err != nil {
+			return nil, mapCredentialError(err)
+		}
+		out := make([]*cpv1.RuntimeCredential, 0, len(creds))
+		for _, c := range creds {
+			out = append(out, credentialToProto(c))
+		}
+		return &cpv1.ListRuntimeCredentialsResponse{Credentials: out, HasMore: hasMore, Total: total}, nil
+	}
+	creds, err := g.credSvc.List(ctx, req.GetUserId(), includeInactive)
 	if err != nil {
 		return nil, mapCredentialError(err)
 	}
@@ -410,7 +422,7 @@ func (g *ControlPanelGRPCService) ListRuntimeCredentials(ctx context.Context, re
 	for _, c := range creds {
 		out = append(out, credentialToProto(c))
 	}
-	return &cpv1.ListRuntimeCredentialsResponse{Credentials: out}, nil
+	return &cpv1.ListRuntimeCredentialsResponse{Credentials: out, Total: int64(len(out))}, nil
 }
 
 func (g *ControlPanelGRPCService) ListRuntimeAdmissionFailures(ctx context.Context, req *cpv1.ListRuntimeAdmissionFailuresRequest) (*cpv1.ListRuntimeAdmissionFailuresResponse, error) {

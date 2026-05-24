@@ -2523,7 +2523,9 @@ type ListRuntimeCredentialsRequest struct {
 	IncludeRevoked bool `protobuf:"varint,2,opt,name=include_revoked,json=includeRevoked,proto3" json:"include_revoked,omitempty"`
 	// If true, include inactive terminal credentials such as revoked/expired.
 	// Consumed credentials are returned regardless of this flag.
-	IncludeInactive bool `protobuf:"varint,3,opt,name=include_inactive,json=includeInactive,proto3" json:"include_inactive,omitempty"`
+	IncludeInactive bool  `protobuf:"varint,3,opt,name=include_inactive,json=includeInactive,proto3" json:"include_inactive,omitempty"`
+	Limit           int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset          int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2579,9 +2581,25 @@ func (x *ListRuntimeCredentialsRequest) GetIncludeInactive() bool {
 	return false
 }
 
+func (x *ListRuntimeCredentialsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListRuntimeCredentialsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
 type ListRuntimeCredentialsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Credentials   []*RuntimeCredential   `protobuf:"bytes,1,rep,name=credentials,proto3" json:"credentials,omitempty"`
+	HasMore       bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	Total         int64                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2621,6 +2639,20 @@ func (x *ListRuntimeCredentialsResponse) GetCredentials() []*RuntimeCredential {
 		return x.Credentials
 	}
 	return nil
+}
+
+func (x *ListRuntimeCredentialsResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
+func (x *ListRuntimeCredentialsResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
 }
 
 type ListRuntimeAdmissionFailuresRequest struct {
@@ -5048,13 +5080,17 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\x0epublic_key_pem\x18\x03 \x01(\tR\fpublicKeyPem\x129\n" +
 	"\n" +
 	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x12\n" +
-	"\x04role\x18\x05 \x01(\tR\x04role\"\x8c\x01\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\"\xba\x01\n" +
 	"\x1dListRuntimeCredentialsRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12'\n" +
 	"\x0finclude_revoked\x18\x02 \x01(\bR\x0eincludeRevoked\x12)\n" +
-	"\x10include_inactive\x18\x03 \x01(\bR\x0fincludeInactive\"f\n" +
+	"\x10include_inactive\x18\x03 \x01(\bR\x0fincludeInactive\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x05 \x01(\x05R\x06offset\"\x97\x01\n" +
 	"\x1eListRuntimeCredentialsResponse\x12D\n" +
-	"\vcredentials\x18\x01 \x03(\v2\".controlpanel.v1.RuntimeCredentialR\vcredentials\"T\n" +
+	"\vcredentials\x18\x01 \x03(\v2\".controlpanel.v1.RuntimeCredentialR\vcredentials\x12\x19\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\"T\n" +
 	"#ListRuntimeAdmissionFailuresRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\"l\n" +

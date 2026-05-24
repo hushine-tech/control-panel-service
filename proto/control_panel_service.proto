@@ -480,10 +480,14 @@ message ListRuntimeCredentialsRequest {
   // If true, include inactive terminal credentials such as revoked/expired.
   // Consumed credentials are returned regardless of this flag.
   bool include_inactive = 3;
+  int32 limit = 4;
+  int32 offset = 5;
 }
 
 message ListRuntimeCredentialsResponse {
   repeated RuntimeCredential credentials = 1;
+  bool has_more = 2;
+  int64 total = 3;
 }
 
 message ListRuntimeAdmissionFailuresRequest {

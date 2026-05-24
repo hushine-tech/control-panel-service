@@ -349,6 +349,58 @@ func (r *TimescaleRepository) ListMarketDataRequestsByUser(ctx context.Context, 
 	return out, rows.Err()
 }
 
+func (r *TimescaleRepository) ListMarketDataRequestsByUserPage(ctx context.Context, userID int64, limit, offset int) ([]domain.MarketDataRequest, int64, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM market_data_requests
+		WHERE user_id = $1
+		  AND status != 'cancelled'`,
+		userID,
+	).Scan(&total); err != nil {
+		return nil, 0, false, err
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT request_id, user_id, account_id, stream_id,
+			exchange, market, kind, symbol, interval,
+			needs_live_delivery, status, created_at, updated_at, cancelled_at
+		FROM market_data_requests
+		WHERE user_id = $1
+		  AND status != 'cancelled'
+		ORDER BY request_id DESC
+		LIMIT $2 OFFSET $3`,
+		userID, limit+1, offset,
+	)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer rows.Close()
+	var out []domain.MarketDataRequest
+	for rows.Next() {
+		req, err := scanRequest(rows)
+		if err != nil {
+			return nil, 0, false, err
+		}
+		out = append(out, req)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, total, hasMore, nil
+}
+
 // ── market_data_leases ──────────────────────────────────────────────────
 
 func (r *TimescaleRepository) CreateOrRenewLease(

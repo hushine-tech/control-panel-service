@@ -1341,6 +1341,8 @@ func (*CancelMarketDataRequestResponse) Descriptor() ([]byte, []int) {
 type ListMarketDataRequestsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1382,9 +1384,25 @@ func (x *ListMarketDataRequestsRequest) GetUserId() int64 {
 	return 0
 }
 
+func (x *ListMarketDataRequestsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListMarketDataRequestsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
 type ListMarketDataRequestsResponse struct {
 	state         protoimpl.MessageState         `protogen:"open.v1"`
 	Entries       []*MarketDataRequestWithStream `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	HasMore       bool                           `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	Total         int64                          `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1424,6 +1442,20 @@ func (x *ListMarketDataRequestsResponse) GetEntries() []*MarketDataRequestWithSt
 		return x.Entries
 	}
 	return nil
+}
+
+func (x *ListMarketDataRequestsResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
+func (x *ListMarketDataRequestsResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
 }
 
 type MarketDataRequestWithStream struct {
@@ -3890,11 +3922,15 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x03R\trequestId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\"!\n" +
-	"\x1fCancelMarketDataRequestResponse\"8\n" +
+	"\x1fCancelMarketDataRequestResponse\"f\n" +
 	"\x1dListMarketDataRequestsRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\"s\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\"\xa4\x01\n" +
 	"\x1eListMarketDataRequestsResponse\x12Q\n" +
-	"\aentries\x18\x01 \x03(\v27.controlpanel.marketdata.v1.MarketDataRequestWithStreamR\aentries\"\xac\x01\n" +
+	"\aentries\x18\x01 \x03(\v27.controlpanel.marketdata.v1.MarketDataRequestWithStreamR\aentries\x12\x19\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\"\xac\x01\n" +
 	"\x1bMarketDataRequestWithStream\x12G\n" +
 	"\arequest\x18\x01 \x01(\v2-.controlpanel.marketdata.v1.MarketDataRequestR\arequest\x12D\n" +
 	"\x06stream\x18\x02 \x01(\v2,.controlpanel.marketdata.v1.MarketDataStreamR\x06stream\"x\n" +

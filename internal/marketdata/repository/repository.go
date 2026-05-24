@@ -54,6 +54,7 @@ type Repository interface {
 	CancelMarketDataRequest(ctx context.Context, requestID, userID int64) error
 	GetMarketDataRequest(ctx context.Context, requestID, userID int64) (domain.MarketDataRequest, error)
 	ListMarketDataRequestsByUser(ctx context.Context, userID int64) ([]domain.MarketDataRequest, error)
+	ListMarketDataRequestsByUserPage(ctx context.Context, userID int64, limit, offset int) (items []domain.MarketDataRequest, total int64, hasMore bool, err error)
 
 	// ── Leases ──────────────────────────────────────────────────────────
 

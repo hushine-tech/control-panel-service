@@ -631,7 +631,32 @@ func (s *Service) ListMarketDataRequests(ctx context.Context, req *mdv1.ListMark
 	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].GetRequest().GetRequestId() > out[j].GetRequest().GetRequestId()
 	})
-	return &mdv1.ListMarketDataRequestsResponse{Entries: out}, nil
+	if req.GetLimit() <= 0 && req.GetOffset() <= 0 {
+		return &mdv1.ListMarketDataRequestsResponse{Entries: out, Total: int64(len(out))}, nil
+	}
+	limit := int(req.GetLimit())
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := int(req.GetOffset())
+	if offset < 0 {
+		offset = 0
+	}
+	total := int64(len(out))
+	hasMore := offset+limit < len(out)
+	if offset >= len(out) {
+		out = nil
+	} else {
+		end := offset + limit
+		if end > len(out) {
+			end = len(out)
+		}
+		out = out[offset:end]
+	}
+	return &mdv1.ListMarketDataRequestsResponse{Entries: out, HasMore: hasMore, Total: total}, nil
 }
 
 func (s *Service) GetMarketDataStreamStatus(ctx context.Context, req *mdv1.GetMarketDataStreamStatusRequest) (*mdv1.GetMarketDataStreamStatusResponse, error) {
