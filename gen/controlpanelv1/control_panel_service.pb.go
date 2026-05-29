@@ -2364,7 +2364,7 @@ type IssueRuntimeCredentialRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The user that will own the credential. quant-handler MUST set this
 	// to the authenticated JWT subject; control-panel-service validates
-	// that the user exists via account-service.GetUser.
+	// that the user exists via core-service.GetUser.
 	UserId int64 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	// Optional human-friendly label shown in the UI list view. Not used
 	// for routing or auth — purely for the user to remember "this is the
@@ -3844,8 +3844,11 @@ type StrategyRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Values are the StrategyService RPC names:
 	// RunStrategy, PreviewRunStrategy, StopStrategy, GetStrategyStatus.
-	Method        string     `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
-	Request       *anypb.Any `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	Method  string     `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`
+	Request *anypb.Any `protobuf:"bytes,2,opt,name=request,proto3" json:"request,omitempty"`
+	// W3C propagation carrier for RuntimeChannel RPCs. This keeps hosted and
+	// self-hosted runtime calls in the same trace as the control-plane request.
+	TraceContext  map[string]string `protobuf:"bytes,3,rep,name=trace_context,json=traceContext,proto3" json:"trace_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3890,6 +3893,13 @@ func (x *StrategyRequest) GetMethod() string {
 func (x *StrategyRequest) GetRequest() *anypb.Any {
 	if x != nil {
 		return x.Request
+	}
+	return nil
+}
+
+func (x *StrategyRequest) GetTraceContext() map[string]string {
+	if x != nil {
+		return x.TraceContext
 	}
 	return nil
 }
@@ -5197,10 +5207,14 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\n" +
 	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12!\n" +
 	"\fresume_token\x18\x02 \x01(\tR\vresumeToken\x12 \n" +
-	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"Y\n" +
+	"\vfingerprint\x18\x03 \x01(\tR\vfingerprint\"\xf3\x01\n" +
 	"\x0fStrategyRequest\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12.\n" +
-	"\arequest\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\arequest\"D\n" +
+	"\arequest\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\arequest\x12W\n" +
+	"\rtrace_context\x18\x03 \x03(\v22.controlpanel.v1.StrategyRequest.TraceContextEntryR\ftraceContext\x1a?\n" +
+	"\x11TraceContextEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"D\n" +
 	"\x10StrategyResponse\x120\n" +
 	"\bresponse\x18\x01 \x01(\v2\x14.google.protobuf.AnyR\bresponse\">\n" +
 	"\x10StrategyProgress\x12*\n" +
@@ -5344,7 +5358,7 @@ func file_control_panel_service_proto_rawDescGZIP() []byte {
 }
 
 var file_control_panel_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_control_panel_service_proto_msgTypes = make([]protoimpl.MessageInfo, 60)
+var file_control_panel_service_proto_msgTypes = make([]protoimpl.MessageInfo, 61)
 var file_control_panel_service_proto_goTypes = []any{
 	(FrameType)(0),                                // 0: controlpanel.v1.FrameType
 	(*Runtime)(nil),                               // 1: controlpanel.v1.Runtime
@@ -5407,27 +5421,28 @@ var file_control_panel_service_proto_goTypes = []any{
 	(*RuntimeDataAck)(nil),                        // 58: controlpanel.v1.RuntimeDataAck
 	(*RuntimeDataBackpressure)(nil),               // 59: controlpanel.v1.RuntimeDataBackpressure
 	(*RuntimeDataEnd)(nil),                        // 60: controlpanel.v1.RuntimeDataEnd
-	(*timestamppb.Timestamp)(nil),                 // 61: google.protobuf.Timestamp
-	(*anypb.Any)(nil),                             // 62: google.protobuf.Any
-	(*strategyv1.RunStrategyRequest)(nil),         // 63: strategy.v1.RunStrategyRequest
-	(*strategyv1.PreviewRunStrategyRequest)(nil),  // 64: strategy.v1.PreviewRunStrategyRequest
-	(*strategyv1.StopStrategyRequest)(nil),        // 65: strategy.v1.StopStrategyRequest
-	(*strategyv1.GetStrategyStatusRequest)(nil),   // 66: strategy.v1.GetStrategyStatusRequest
-	(*strategyv1.RunStrategyResponse)(nil),        // 67: strategy.v1.RunStrategyResponse
-	(*strategyv1.PreviewRunStrategyResponse)(nil), // 68: strategy.v1.PreviewRunStrategyResponse
-	(*strategyv1.StopStrategyResponse)(nil),       // 69: strategy.v1.StopStrategyResponse
-	(*strategyv1.GetStrategyStatusResponse)(nil),  // 70: strategy.v1.GetStrategyStatusResponse
+	nil,                                           // 61: controlpanel.v1.StrategyRequest.TraceContextEntry
+	(*timestamppb.Timestamp)(nil),                 // 62: google.protobuf.Timestamp
+	(*anypb.Any)(nil),                             // 63: google.protobuf.Any
+	(*strategyv1.RunStrategyRequest)(nil),         // 64: strategy.v1.RunStrategyRequest
+	(*strategyv1.PreviewRunStrategyRequest)(nil),  // 65: strategy.v1.PreviewRunStrategyRequest
+	(*strategyv1.StopStrategyRequest)(nil),        // 66: strategy.v1.StopStrategyRequest
+	(*strategyv1.GetStrategyStatusRequest)(nil),   // 67: strategy.v1.GetStrategyStatusRequest
+	(*strategyv1.RunStrategyResponse)(nil),        // 68: strategy.v1.RunStrategyResponse
+	(*strategyv1.PreviewRunStrategyResponse)(nil), // 69: strategy.v1.PreviewRunStrategyResponse
+	(*strategyv1.StopStrategyResponse)(nil),       // 70: strategy.v1.StopStrategyResponse
+	(*strategyv1.GetStrategyStatusResponse)(nil),  // 71: strategy.v1.GetStrategyStatusResponse
 }
 var file_control_panel_service_proto_depIdxs = []int32{
-	61, // 0: controlpanel.v1.Runtime.paired_at:type_name -> google.protobuf.Timestamp
-	61, // 1: controlpanel.v1.Runtime.heartbeat_at:type_name -> google.protobuf.Timestamp
-	61, // 2: controlpanel.v1.Runtime.created_at:type_name -> google.protobuf.Timestamp
-	61, // 3: controlpanel.v1.Runtime.updated_at:type_name -> google.protobuf.Timestamp
-	61, // 4: controlpanel.v1.Runtime.started_at:type_name -> google.protobuf.Timestamp
-	61, // 5: controlpanel.v1.Runtime.ended_at:type_name -> google.protobuf.Timestamp
-	61, // 6: controlpanel.v1.Runtime.connection_owner_acquired_at:type_name -> google.protobuf.Timestamp
-	61, // 7: controlpanel.v1.Runtime.connection_owner_heartbeat_at:type_name -> google.protobuf.Timestamp
-	61, // 8: controlpanel.v1.Runtime.cleanup_at:type_name -> google.protobuf.Timestamp
+	62, // 0: controlpanel.v1.Runtime.paired_at:type_name -> google.protobuf.Timestamp
+	62, // 1: controlpanel.v1.Runtime.heartbeat_at:type_name -> google.protobuf.Timestamp
+	62, // 2: controlpanel.v1.Runtime.created_at:type_name -> google.protobuf.Timestamp
+	62, // 3: controlpanel.v1.Runtime.updated_at:type_name -> google.protobuf.Timestamp
+	62, // 4: controlpanel.v1.Runtime.started_at:type_name -> google.protobuf.Timestamp
+	62, // 5: controlpanel.v1.Runtime.ended_at:type_name -> google.protobuf.Timestamp
+	62, // 6: controlpanel.v1.Runtime.connection_owner_acquired_at:type_name -> google.protobuf.Timestamp
+	62, // 7: controlpanel.v1.Runtime.connection_owner_heartbeat_at:type_name -> google.protobuf.Timestamp
+	62, // 8: controlpanel.v1.Runtime.cleanup_at:type_name -> google.protobuf.Timestamp
 	2,  // 9: controlpanel.v1.Runtime.debug_workspace:type_name -> controlpanel.v1.DebugWorkspaceState
 	3,  // 10: controlpanel.v1.Runtime.debug_dataset:type_name -> controlpanel.v1.DebugDatasetState
 	2,  // 11: controlpanel.v1.PrepareDebugWorkspaceResponse.workspace:type_name -> controlpanel.v1.DebugWorkspaceState
@@ -5435,25 +5450,25 @@ var file_control_panel_service_proto_depIdxs = []int32{
 	3,  // 13: controlpanel.v1.GetRuntimeDebugDatasetResponse.dataset:type_name -> controlpanel.v1.DebugDatasetState
 	3,  // 14: controlpanel.v1.StartDebugReplayResponse.dataset:type_name -> controlpanel.v1.DebugDatasetState
 	1,  // 15: controlpanel.v1.RegisterRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	61, // 16: controlpanel.v1.HeartbeatRuntimeResponse.heartbeat_at:type_name -> google.protobuf.Timestamp
+	62, // 16: controlpanel.v1.HeartbeatRuntimeResponse.heartbeat_at:type_name -> google.protobuf.Timestamp
 	1,  // 17: controlpanel.v1.ListRuntimesResponse.runtimes:type_name -> controlpanel.v1.Runtime
 	1,  // 18: controlpanel.v1.GetRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
 	1,  // 19: controlpanel.v1.EndRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
 	1,  // 20: controlpanel.v1.ResolveRuntimeRouteResponse.runtime:type_name -> controlpanel.v1.Runtime
-	61, // 21: controlpanel.v1.ResolveRuntimeRouteResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
+	62, // 21: controlpanel.v1.ResolveRuntimeRouteResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
 	1,  // 22: controlpanel.v1.EnsureHostedRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	61, // 23: controlpanel.v1.EnsureHostedRuntimeResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
-	61, // 24: controlpanel.v1.IssueRuntimeCredentialResponse.created_at:type_name -> google.protobuf.Timestamp
+	62, // 23: controlpanel.v1.EnsureHostedRuntimeResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
+	62, // 24: controlpanel.v1.IssueRuntimeCredentialResponse.created_at:type_name -> google.protobuf.Timestamp
 	37, // 25: controlpanel.v1.ListRuntimeCredentialsResponse.credentials:type_name -> controlpanel.v1.RuntimeCredential
 	36, // 26: controlpanel.v1.ListRuntimeAdmissionFailuresResponse.failures:type_name -> controlpanel.v1.RuntimeAdmissionFailure
-	61, // 27: controlpanel.v1.RuntimeAdmissionFailure.first_seen_at:type_name -> google.protobuf.Timestamp
-	61, // 28: controlpanel.v1.RuntimeAdmissionFailure.last_seen_at:type_name -> google.protobuf.Timestamp
-	61, // 29: controlpanel.v1.RuntimeCredential.created_at:type_name -> google.protobuf.Timestamp
-	61, // 30: controlpanel.v1.RuntimeCredential.last_used_at:type_name -> google.protobuf.Timestamp
-	61, // 31: controlpanel.v1.RuntimeCredential.revoked_at:type_name -> google.protobuf.Timestamp
-	61, // 32: controlpanel.v1.RuntimeCredential.downloaded_at:type_name -> google.protobuf.Timestamp
-	61, // 33: controlpanel.v1.RuntimeCredential.consumed_at:type_name -> google.protobuf.Timestamp
-	61, // 34: controlpanel.v1.RuntimeCredential.expires_at:type_name -> google.protobuf.Timestamp
+	62, // 27: controlpanel.v1.RuntimeAdmissionFailure.first_seen_at:type_name -> google.protobuf.Timestamp
+	62, // 28: controlpanel.v1.RuntimeAdmissionFailure.last_seen_at:type_name -> google.protobuf.Timestamp
+	62, // 29: controlpanel.v1.RuntimeCredential.created_at:type_name -> google.protobuf.Timestamp
+	62, // 30: controlpanel.v1.RuntimeCredential.last_used_at:type_name -> google.protobuf.Timestamp
+	62, // 31: controlpanel.v1.RuntimeCredential.revoked_at:type_name -> google.protobuf.Timestamp
+	62, // 32: controlpanel.v1.RuntimeCredential.downloaded_at:type_name -> google.protobuf.Timestamp
+	62, // 33: controlpanel.v1.RuntimeCredential.consumed_at:type_name -> google.protobuf.Timestamp
+	62, // 34: controlpanel.v1.RuntimeCredential.expires_at:type_name -> google.protobuf.Timestamp
 	37, // 35: controlpanel.v1.RevokeRuntimeCredentialResponse.credential:type_name -> controlpanel.v1.RuntimeCredential
 	0,  // 36: controlpanel.v1.RuntimeFrame.frame_type:type_name -> controlpanel.v1.FrameType
 	41, // 37: controlpanel.v1.RuntimeFrame.hello:type_name -> controlpanel.v1.RuntimeHello
@@ -5476,63 +5491,64 @@ var file_control_panel_service_proto_depIdxs = []int32{
 	42, // 54: controlpanel.v1.RuntimeFrame.hello_ack:type_name -> controlpanel.v1.RuntimeHelloAck
 	43, // 55: controlpanel.v1.RuntimeFrame.resume:type_name -> controlpanel.v1.RuntimeResume
 	49, // 56: controlpanel.v1.RuntimeFrame.heartbeat_ack:type_name -> controlpanel.v1.RuntimeHeartbeatAck
-	61, // 57: controlpanel.v1.RuntimeHelloAck.resume_token_expires_at:type_name -> google.protobuf.Timestamp
-	61, // 58: controlpanel.v1.RuntimeHelloAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
-	62, // 59: controlpanel.v1.StrategyRequest.request:type_name -> google.protobuf.Any
-	62, // 60: controlpanel.v1.StrategyResponse.response:type_name -> google.protobuf.Any
-	62, // 61: controlpanel.v1.StrategyProgress.event:type_name -> google.protobuf.Any
-	61, // 62: controlpanel.v1.RuntimeHeartbeatAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
-	62, // 63: controlpanel.v1.RuntimeCommandFrame.payload:type_name -> google.protobuf.Any
-	62, // 64: controlpanel.v1.RuntimeCommandResult.result:type_name -> google.protobuf.Any
-	62, // 65: controlpanel.v1.RuntimeStatusPatch.payload:type_name -> google.protobuf.Any
-	62, // 66: controlpanel.v1.RuntimeLiveKlineBatch.klines:type_name -> google.protobuf.Any
-	12, // 67: controlpanel.v1.ControlPanelService.RegisterRuntime:input_type -> controlpanel.v1.RegisterRuntimeRequest
-	14, // 68: controlpanel.v1.ControlPanelService.HeartbeatRuntime:input_type -> controlpanel.v1.HeartbeatRuntimeRequest
-	16, // 69: controlpanel.v1.ControlPanelService.ListRuntimes:input_type -> controlpanel.v1.ListRuntimesRequest
-	18, // 70: controlpanel.v1.ControlPanelService.GetRuntime:input_type -> controlpanel.v1.GetRuntimeRequest
-	20, // 71: controlpanel.v1.ControlPanelService.EndRuntime:input_type -> controlpanel.v1.EndRuntimeRequest
-	24, // 72: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:input_type -> controlpanel.v1.ResolveRuntimeRouteByIDRequest
-	26, // 73: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:input_type -> controlpanel.v1.EnsureHostedRuntimeRequest
-	28, // 74: controlpanel.v1.ControlPanelService.ValidateCallerToken:input_type -> controlpanel.v1.ValidateCallerTokenRequest
-	30, // 75: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:input_type -> controlpanel.v1.IssueRuntimeCredentialRequest
-	32, // 76: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:input_type -> controlpanel.v1.ListRuntimeCredentialsRequest
-	34, // 77: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:input_type -> controlpanel.v1.ListRuntimeAdmissionFailuresRequest
-	38, // 78: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:input_type -> controlpanel.v1.RevokeRuntimeCredentialRequest
-	40, // 79: controlpanel.v1.ControlPanelService.RuntimeChannel:input_type -> controlpanel.v1.RuntimeFrame
-	4,  // 80: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:input_type -> controlpanel.v1.PrepareDebugWorkspaceRequest
-	6,  // 81: controlpanel.v1.ControlPanelService.LoadDebugDataset:input_type -> controlpanel.v1.LoadDebugDatasetRequest
-	8,  // 82: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:input_type -> controlpanel.v1.GetRuntimeDebugDatasetRequest
-	22, // 83: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:input_type -> controlpanel.v1.PublishRuntimeNotificationRequest
-	63, // 84: controlpanel.v1.ControlPanelService.RunStrategy:input_type -> strategy.v1.RunStrategyRequest
-	64, // 85: controlpanel.v1.ControlPanelService.PreviewRunStrategy:input_type -> strategy.v1.PreviewRunStrategyRequest
-	65, // 86: controlpanel.v1.ControlPanelService.StopStrategy:input_type -> strategy.v1.StopStrategyRequest
-	66, // 87: controlpanel.v1.ControlPanelService.GetStrategyStatus:input_type -> strategy.v1.GetStrategyStatusRequest
-	13, // 88: controlpanel.v1.ControlPanelService.RegisterRuntime:output_type -> controlpanel.v1.RegisterRuntimeResponse
-	15, // 89: controlpanel.v1.ControlPanelService.HeartbeatRuntime:output_type -> controlpanel.v1.HeartbeatRuntimeResponse
-	17, // 90: controlpanel.v1.ControlPanelService.ListRuntimes:output_type -> controlpanel.v1.ListRuntimesResponse
-	19, // 91: controlpanel.v1.ControlPanelService.GetRuntime:output_type -> controlpanel.v1.GetRuntimeResponse
-	21, // 92: controlpanel.v1.ControlPanelService.EndRuntime:output_type -> controlpanel.v1.EndRuntimeResponse
-	25, // 93: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:output_type -> controlpanel.v1.ResolveRuntimeRouteResponse
-	27, // 94: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:output_type -> controlpanel.v1.EnsureHostedRuntimeResponse
-	29, // 95: controlpanel.v1.ControlPanelService.ValidateCallerToken:output_type -> controlpanel.v1.ValidateCallerTokenResponse
-	31, // 96: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:output_type -> controlpanel.v1.IssueRuntimeCredentialResponse
-	33, // 97: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:output_type -> controlpanel.v1.ListRuntimeCredentialsResponse
-	35, // 98: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:output_type -> controlpanel.v1.ListRuntimeAdmissionFailuresResponse
-	39, // 99: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:output_type -> controlpanel.v1.RevokeRuntimeCredentialResponse
-	40, // 100: controlpanel.v1.ControlPanelService.RuntimeChannel:output_type -> controlpanel.v1.RuntimeFrame
-	5,  // 101: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:output_type -> controlpanel.v1.PrepareDebugWorkspaceResponse
-	7,  // 102: controlpanel.v1.ControlPanelService.LoadDebugDataset:output_type -> controlpanel.v1.LoadDebugDatasetResponse
-	9,  // 103: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:output_type -> controlpanel.v1.GetRuntimeDebugDatasetResponse
-	23, // 104: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:output_type -> controlpanel.v1.PublishRuntimeNotificationResponse
-	67, // 105: controlpanel.v1.ControlPanelService.RunStrategy:output_type -> strategy.v1.RunStrategyResponse
-	68, // 106: controlpanel.v1.ControlPanelService.PreviewRunStrategy:output_type -> strategy.v1.PreviewRunStrategyResponse
-	69, // 107: controlpanel.v1.ControlPanelService.StopStrategy:output_type -> strategy.v1.StopStrategyResponse
-	70, // 108: controlpanel.v1.ControlPanelService.GetStrategyStatus:output_type -> strategy.v1.GetStrategyStatusResponse
-	88, // [88:109] is the sub-list for method output_type
-	67, // [67:88] is the sub-list for method input_type
-	67, // [67:67] is the sub-list for extension type_name
-	67, // [67:67] is the sub-list for extension extendee
-	0,  // [0:67] is the sub-list for field type_name
+	62, // 57: controlpanel.v1.RuntimeHelloAck.resume_token_expires_at:type_name -> google.protobuf.Timestamp
+	62, // 58: controlpanel.v1.RuntimeHelloAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
+	63, // 59: controlpanel.v1.StrategyRequest.request:type_name -> google.protobuf.Any
+	61, // 60: controlpanel.v1.StrategyRequest.trace_context:type_name -> controlpanel.v1.StrategyRequest.TraceContextEntry
+	63, // 61: controlpanel.v1.StrategyResponse.response:type_name -> google.protobuf.Any
+	63, // 62: controlpanel.v1.StrategyProgress.event:type_name -> google.protobuf.Any
+	62, // 63: controlpanel.v1.RuntimeHeartbeatAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
+	63, // 64: controlpanel.v1.RuntimeCommandFrame.payload:type_name -> google.protobuf.Any
+	63, // 65: controlpanel.v1.RuntimeCommandResult.result:type_name -> google.protobuf.Any
+	63, // 66: controlpanel.v1.RuntimeStatusPatch.payload:type_name -> google.protobuf.Any
+	63, // 67: controlpanel.v1.RuntimeLiveKlineBatch.klines:type_name -> google.protobuf.Any
+	12, // 68: controlpanel.v1.ControlPanelService.RegisterRuntime:input_type -> controlpanel.v1.RegisterRuntimeRequest
+	14, // 69: controlpanel.v1.ControlPanelService.HeartbeatRuntime:input_type -> controlpanel.v1.HeartbeatRuntimeRequest
+	16, // 70: controlpanel.v1.ControlPanelService.ListRuntimes:input_type -> controlpanel.v1.ListRuntimesRequest
+	18, // 71: controlpanel.v1.ControlPanelService.GetRuntime:input_type -> controlpanel.v1.GetRuntimeRequest
+	20, // 72: controlpanel.v1.ControlPanelService.EndRuntime:input_type -> controlpanel.v1.EndRuntimeRequest
+	24, // 73: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:input_type -> controlpanel.v1.ResolveRuntimeRouteByIDRequest
+	26, // 74: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:input_type -> controlpanel.v1.EnsureHostedRuntimeRequest
+	28, // 75: controlpanel.v1.ControlPanelService.ValidateCallerToken:input_type -> controlpanel.v1.ValidateCallerTokenRequest
+	30, // 76: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:input_type -> controlpanel.v1.IssueRuntimeCredentialRequest
+	32, // 77: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:input_type -> controlpanel.v1.ListRuntimeCredentialsRequest
+	34, // 78: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:input_type -> controlpanel.v1.ListRuntimeAdmissionFailuresRequest
+	38, // 79: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:input_type -> controlpanel.v1.RevokeRuntimeCredentialRequest
+	40, // 80: controlpanel.v1.ControlPanelService.RuntimeChannel:input_type -> controlpanel.v1.RuntimeFrame
+	4,  // 81: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:input_type -> controlpanel.v1.PrepareDebugWorkspaceRequest
+	6,  // 82: controlpanel.v1.ControlPanelService.LoadDebugDataset:input_type -> controlpanel.v1.LoadDebugDatasetRequest
+	8,  // 83: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:input_type -> controlpanel.v1.GetRuntimeDebugDatasetRequest
+	22, // 84: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:input_type -> controlpanel.v1.PublishRuntimeNotificationRequest
+	64, // 85: controlpanel.v1.ControlPanelService.RunStrategy:input_type -> strategy.v1.RunStrategyRequest
+	65, // 86: controlpanel.v1.ControlPanelService.PreviewRunStrategy:input_type -> strategy.v1.PreviewRunStrategyRequest
+	66, // 87: controlpanel.v1.ControlPanelService.StopStrategy:input_type -> strategy.v1.StopStrategyRequest
+	67, // 88: controlpanel.v1.ControlPanelService.GetStrategyStatus:input_type -> strategy.v1.GetStrategyStatusRequest
+	13, // 89: controlpanel.v1.ControlPanelService.RegisterRuntime:output_type -> controlpanel.v1.RegisterRuntimeResponse
+	15, // 90: controlpanel.v1.ControlPanelService.HeartbeatRuntime:output_type -> controlpanel.v1.HeartbeatRuntimeResponse
+	17, // 91: controlpanel.v1.ControlPanelService.ListRuntimes:output_type -> controlpanel.v1.ListRuntimesResponse
+	19, // 92: controlpanel.v1.ControlPanelService.GetRuntime:output_type -> controlpanel.v1.GetRuntimeResponse
+	21, // 93: controlpanel.v1.ControlPanelService.EndRuntime:output_type -> controlpanel.v1.EndRuntimeResponse
+	25, // 94: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:output_type -> controlpanel.v1.ResolveRuntimeRouteResponse
+	27, // 95: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:output_type -> controlpanel.v1.EnsureHostedRuntimeResponse
+	29, // 96: controlpanel.v1.ControlPanelService.ValidateCallerToken:output_type -> controlpanel.v1.ValidateCallerTokenResponse
+	31, // 97: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:output_type -> controlpanel.v1.IssueRuntimeCredentialResponse
+	33, // 98: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:output_type -> controlpanel.v1.ListRuntimeCredentialsResponse
+	35, // 99: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:output_type -> controlpanel.v1.ListRuntimeAdmissionFailuresResponse
+	39, // 100: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:output_type -> controlpanel.v1.RevokeRuntimeCredentialResponse
+	40, // 101: controlpanel.v1.ControlPanelService.RuntimeChannel:output_type -> controlpanel.v1.RuntimeFrame
+	5,  // 102: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:output_type -> controlpanel.v1.PrepareDebugWorkspaceResponse
+	7,  // 103: controlpanel.v1.ControlPanelService.LoadDebugDataset:output_type -> controlpanel.v1.LoadDebugDatasetResponse
+	9,  // 104: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:output_type -> controlpanel.v1.GetRuntimeDebugDatasetResponse
+	23, // 105: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:output_type -> controlpanel.v1.PublishRuntimeNotificationResponse
+	68, // 106: controlpanel.v1.ControlPanelService.RunStrategy:output_type -> strategy.v1.RunStrategyResponse
+	69, // 107: controlpanel.v1.ControlPanelService.PreviewRunStrategy:output_type -> strategy.v1.PreviewRunStrategyResponse
+	70, // 108: controlpanel.v1.ControlPanelService.StopStrategy:output_type -> strategy.v1.StopStrategyResponse
+	71, // 109: controlpanel.v1.ControlPanelService.GetStrategyStatus:output_type -> strategy.v1.GetStrategyStatusResponse
+	89, // [89:110] is the sub-list for method output_type
+	68, // [68:89] is the sub-list for method input_type
+	68, // [68:68] is the sub-list for extension type_name
+	68, // [68:68] is the sub-list for extension extendee
+	0,  // [0:68] is the sub-list for field type_name
 }
 
 func init() { file_control_panel_service_proto_init() }
@@ -5568,7 +5584,7 @@ func file_control_panel_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_control_panel_service_proto_rawDesc), len(file_control_panel_service_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   60,
+			NumMessages:   61,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

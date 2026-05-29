@@ -34,6 +34,7 @@ func (s *Service) handleRuntimeRequest(parent context.Context, stream *runtimeSt
 		ctx, cancel = context.WithDeadline(parent, deadline)
 	}
 	defer cancel()
+	ctx = extractTraceContext(ctx, req.GetTraceContext())
 
 	resp, err := s.platform.DispatchRuntimeRequest(ctx, stream.Runtime, req.GetMethod(), req.GetRequest())
 	if err != nil {

@@ -659,6 +659,9 @@ message StrategyRequest {
   // RunStrategy, PreviewRunStrategy, StopStrategy, GetStrategyStatus.
   string method = 1;
   google.protobuf.Any request = 2;
+  // W3C propagation carrier for RuntimeChannel RPCs. This keeps hosted and
+  // self-hosted runtime calls in the same trace as the control-plane request.
+  map<string, string> trace_context = 3;
 }
 
 message StrategyResponse {

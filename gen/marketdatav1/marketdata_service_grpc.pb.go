@@ -50,7 +50,7 @@ const (
 // plane: user-declared stream requests, aggregated physical-stream state,
 // session-scoped TTL leases, and finite historical backfill windows.
 //
-// Phase D2: this service was previously hosted by account-service. After
+// Phase D2: this service was previously hosted by core-service. After
 // the D2 migration, control-panel-service is the sole owner of the
 // underlying tables (`market_data_*` in the `control_panel` database)
 // and the canonical caller for scraper, quant-handler, and strategy-service.
@@ -344,7 +344,7 @@ func (c *marketDataControlPlaneServiceClient) ReleaseMarketDataWriterLease(ctx c
 // plane: user-declared stream requests, aggregated physical-stream state,
 // session-scoped TTL leases, and finite historical backfill windows.
 //
-// Phase D2: this service was previously hosted by account-service. After
+// Phase D2: this service was previously hosted by core-service. After
 // the D2 migration, control-panel-service is the sole owner of the
 // underlying tables (`market_data_*` in the `control_panel` database)
 // and the canonical caller for scraper, quant-handler, and strategy-service.

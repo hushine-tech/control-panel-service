@@ -14,16 +14,20 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
 
@@ -819,6 +823,76 @@ func TestInvokeStrategyUnaryByRuntimeIDTargetsSelectedStream(t *testing.T) {
 	}
 }
 
+func TestInvokeStrategyUnaryByRuntimeIDInjectsTraceContext(t *testing.T) {
+	oldProvider := otel.GetTracerProvider()
+	oldPropagator := otel.GetTextMapPropagator()
+	provider := sdktrace.NewTracerProvider()
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	defer func() {
+		otel.SetTracerProvider(oldProvider)
+		otel.SetTextMapPropagator(oldPropagator)
+		_ = provider.Shutdown(context.Background())
+	}()
+
+	svc := New(&stubRepo{cred: domain.RuntimeCredential{KeyID: "key-1"}})
+	now := time.Unix(1_700_000_000, 0)
+	stream := mustRegister(t, svc.registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-trace",
+		Name:      "default",
+	}, now)
+	sent := make(chan *cpv1.RuntimeFrame, 1)
+	stream.setSender(func(frame *cpv1.RuntimeFrame) error {
+		sent <- frame
+		return nil
+	})
+
+	ctx, span := provider.Tracer("runtimechannel-test").Start(context.Background(), "parent")
+	defer span.End()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.InvokeStrategyUnaryByRuntimeID(
+			ctx,
+			42,
+			"runtime-trace",
+			"RunStrategy",
+			&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42, RuntimeId: "runtime-trace"},
+			&strategyv1.RunStrategyResponse{},
+		)
+	}()
+
+	var req *cpv1.RuntimeFrame
+	select {
+	case req = <-sent:
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not receive request")
+	}
+	traceparent := req.GetRequest().GetTraceContext()["traceparent"]
+	if traceparent == "" {
+		t.Fatalf("trace_context = %+v, want traceparent", req.GetRequest().GetTraceContext())
+	}
+	if !strings.Contains(traceparent, span.SpanContext().TraceID().String()) {
+		t.Fatalf("traceparent = %q, want trace id %s", traceparent, span.SpanContext().TraceID())
+	}
+
+	packedResp, err := anypb.New(&strategyv1.RunStrategyResponse{SessionId: "sess-trace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.deliver(&cpv1.RuntimeFrame{
+		CorrelationId: req.GetCorrelationId(),
+		FrameType:     cpv1.FrameType_FRAME_TYPE_RESPONSE,
+		Payload: &cpv1.RuntimeFrame_Response{
+			Response: &cpv1.StrategyResponse{Response: packedResp},
+		},
+	})
+	if err := <-done; err != nil {
+		t.Fatalf("InvokeStrategyUnaryByRuntimeID: %v", err)
+	}
+}
+
 func TestInvokeStrategyUnaryByRuntimeIDSupportsGetStrategyStatus(t *testing.T) {
 	svc := New(&stubRepo{cred: domain.RuntimeCredential{KeyID: "key-1"}})
 	now := time.Unix(1_700_000_000, 0)
@@ -1171,13 +1245,68 @@ func TestRuntimeChannelNoFrameTimeoutDeclaresStreamDead(t *testing.T) {
 	}
 }
 
+func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequestWithTraceContext(t *testing.T) {
+	oldPropagator := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	defer otel.SetTextMapPropagator(oldPropagator)
+
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
+	svc := New(repo)
+	dispatcher := &fakePlatformDispatcher{
+		resp: &accountv1.SaveSessionResponse{},
+	}
+	svc.SetPlatformDispatcher(dispatcher)
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+	waitForHelloAck(t, stream)
+	payload, err := anypb.New(&accountv1.SaveSessionRequest{SessionId: "sess-1", AccountId: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	stream.recv <- &cpv1.RuntimeFrame{
+		CorrelationId: "corr-platform",
+		FrameType:     cpv1.FrameType_FRAME_TYPE_REQUEST,
+		Payload: &cpv1.RuntimeFrame_Request{
+			Request: &cpv1.StrategyRequest{
+				Method:       "account.SaveSession",
+				Request:      payload,
+				TraceContext: map[string]string{"traceparent": traceparent},
+			},
+		},
+	}
+
+	select {
+	case <-stream.sent:
+	case <-time.After(time.Second):
+		t.Fatal("runtime platform response not sent")
+	}
+	got := trace.SpanContextFromContext(dispatcher.ctx).TraceID().String()
+	if got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("dispatcher trace id = %q, want propagated trace id", got)
+	}
+	stream.cancel()
+	if err := <-done; status.Code(err) != codes.Unavailable {
+		t.Fatalf("Handle err = %v, want Unavailable after cancel", err)
+	}
+}
+
 type fakePlatformDispatcher struct {
 	rt     AuthenticatedRuntime
 	method string
 	resp   proto.Message
+	ctx    context.Context
 }
 
-func (f *fakePlatformDispatcher) DispatchRuntimeRequest(_ context.Context, rt AuthenticatedRuntime, method string, payload *anypb.Any) (proto.Message, error) {
+func (f *fakePlatformDispatcher) DispatchRuntimeRequest(ctx context.Context, rt AuthenticatedRuntime, method string, payload *anypb.Any) (proto.Message, error) {
+	f.ctx = ctx
 	f.rt = rt
 	f.method = method
 	if payload == nil {

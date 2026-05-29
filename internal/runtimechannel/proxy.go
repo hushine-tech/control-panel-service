@@ -65,8 +65,9 @@ func (s *Service) invokeStrategyUnaryOnStream(
 		DeadlineUnixMs: deadlineMS,
 		Payload: &cpv1.RuntimeFrame_Request{
 			Request: &cpv1.StrategyRequest{
-				Method:  method,
-				Request: requestAny,
+				Method:       method,
+				Request:      requestAny,
+				TraceContext: injectTraceContext(ctx),
 			},
 		},
 	}); err != nil {
