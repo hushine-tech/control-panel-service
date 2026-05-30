@@ -201,6 +201,39 @@ func TestPlatformProxyGetPortfolioSnapshotRejectsDifferentUser(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyPreflightStrategySessionInjectsAuthenticatedUser(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.PreflightStrategySessionRequest{
+		AccountId: 7,
+		RequiredRoutes: []*accountv1.RequiredRoute{
+			{Exchange: 1, Market: 2},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.PreflightStrategySession",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if _, ok := resp.(*accountv1.PreflightStrategySessionResponse); !ok {
+		t.Fatalf("response = %T, want PreflightStrategySessionResponse", resp)
+	}
+	if account.preflightReq.GetUserId() != 42 ||
+		account.preflightReq.GetAccountId() != 7 ||
+		len(account.preflightReq.GetRequiredRoutes()) != 1 {
+		t.Fatalf("PreflightStrategySession req = %+v", account.preflightReq)
+	}
+}
+
 func TestPlatformProxyUpdatePortfolioSnapshotChecksSessionAndInjectsUser(t *testing.T) {
 	account := &fakeAccountPlatformClient{
 		session: &accountv1.StrategySessionEntry{
@@ -646,6 +679,7 @@ type fakeAccountPlatformClient struct {
 	walletReq          *accountv1.UpdateAccountWalletStateRequest
 	portfolioGetReq    *accountv1.GetPortfolioSnapshotRequest
 	portfolioUpdateReq *accountv1.UpdatePortfolioSnapshotRequest
+	preflightReq       *accountv1.PreflightStrategySessionRequest
 	session            *accountv1.StrategySessionEntry
 }
 
@@ -687,6 +721,21 @@ func (f *fakeAccountPlatformClient) UpdatePortfolioSnapshot(_ context.Context, r
 	f.portfolioUpdateReq = req
 	return &accountv1.UpdatePortfolioSnapshotResponse{
 		Snapshot: &accountv1.PortfolioSnapshot{AccountId: req.GetAccountId(), UserId: req.GetUserId()},
+	}, nil
+}
+
+func (f *fakeAccountPlatformClient) PreflightStrategySession(_ context.Context, req *accountv1.PreflightStrategySessionRequest, _ ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error) {
+	f.preflightReq = req
+	return &accountv1.PreflightStrategySessionResponse{
+		Ok: true,
+		ResolvedVenues: []*accountv1.VenueEntry{
+			{
+				AccountId: req.GetAccountId(),
+				UserId:    req.GetUserId(),
+				Exchange:  1,
+				Market:    2,
+			},
+		},
 	}, nil
 }
 

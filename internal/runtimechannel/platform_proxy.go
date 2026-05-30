@@ -27,6 +27,7 @@ type AccountPlatformClient interface {
 	GetOnlineAccountInfo(ctx context.Context, in *accountv1.GetOnlineAccountInfoRequest, opts ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *accountv1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error)
 	UpdatePortfolioSnapshot(ctx context.Context, in *accountv1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error)
+	PreflightStrategySession(ctx context.Context, in *accountv1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error)
 	GetActiveStrategy(ctx context.Context, in *accountv1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error)
 	SaveSession(ctx context.Context, in *accountv1.SaveSessionRequest, opts ...grpc.CallOption) (*accountv1.SaveSessionResponse, error)
 	UpdateSession(ctx context.Context, in *accountv1.UpdateSessionRequest, opts ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error)
@@ -161,6 +162,20 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		return p.requireAccount().UpdatePortfolioSnapshot(ctx, req)
+
+	case "account.PreflightStrategySession":
+		req := &accountv1.PreflightStrategySessionRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.UserId = rt.UserID
+		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+			return nil, err
+		}
+		return p.requireAccount().PreflightStrategySession(ctx, req)
 
 	case "account.GetActiveStrategy":
 		req := &accountv1.GetActiveStrategyRequest{}
@@ -493,6 +508,8 @@ func canonicalPlatformMethod(method string) string {
 		return "account.GetPortfolioSnapshot"
 	case "UpdatePortfolioSnapshot", "account.v1.AccountService/UpdatePortfolioSnapshot":
 		return "account.UpdatePortfolioSnapshot"
+	case "PreflightStrategySession", "account.v1.AccountService/PreflightStrategySession":
+		return "account.PreflightStrategySession"
 	case "GetActiveStrategy", "account.v1.AccountService/GetActiveStrategy":
 		return "account.GetActiveStrategy"
 	case "SaveSession", "account.v1.AccountService/SaveSession":
@@ -944,6 +961,9 @@ func (unavailableAccountClient) GetPortfolioSnapshot(context.Context, *accountv1
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) UpdatePortfolioSnapshot(context.Context, *accountv1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailableAccountClient) PreflightStrategySession(context.Context, *accountv1.PreflightStrategySessionRequest, ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetActiveStrategy(context.Context, *accountv1.GetActiveStrategyRequest, ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error) {
