@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -14,16 +15,19 @@ import (
 
 const defaultKlineFetchLimit = 1000
 const maxKlineFetchLimit = 5000
+const defaultKlineConnectTimeoutSeconds = 5
+const defaultKlineQueryAttempts = 3
 
 var safeIdent = regexp.MustCompile(`^[a-z0-9_]+$`)
 
 type MarketDataQueryConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	Database string
-	SSLMode  string
+	Host                  string
+	Port                  int
+	User                  string
+	Password              string
+	Database              string
+	SSLMode               string
+	ConnectTimeoutSeconds int
 }
 
 type MarketDataQuery struct {
@@ -65,6 +69,9 @@ func NewMarketDataQuery(cfg MarketDataQueryConfig) *MarketDataQuery {
 	if cfg.SSLMode == "" {
 		cfg.SSLMode = "disable"
 	}
+	if cfg.ConnectTimeoutSeconds <= 0 {
+		cfg.ConnectTimeoutSeconds = defaultKlineConnectTimeoutSeconds
+	}
 	return &MarketDataQuery{cfg: cfg}
 }
 
@@ -98,7 +105,7 @@ func (q *MarketDataQuery) FetchKlines(ctx context.Context, req KlineQuery) ([]Kl
 		if err != nil {
 			return nil, fmt.Errorf("open market-data db: %w", err)
 		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf(`
+		rows, err := queryRowsWithRetry(ctx, db, fmt.Sprintf(`
 			SELECT symbol, open_time, close_time, open, high, low, close, volume
 			FROM %s
 			WHERE symbol = $1
@@ -167,19 +174,65 @@ func isMissingMarketDataStorageError(err error) bool {
 	}
 }
 
+func queryRowsWithRetry(ctx context.Context, db *sql.DB, query string, args ...any) (*sql.Rows, error) {
+	var err error
+	for attempt := 1; attempt <= defaultKlineQueryAttempts; attempt++ {
+		var rows *sql.Rows
+		rows, err = db.QueryContext(ctx, query, args...)
+		if err == nil {
+			return rows, nil
+		}
+		if ctx.Err() != nil || isMissingMarketDataStorageError(err) || !isTransientMarketDataQueryError(err) || attempt == defaultKlineQueryAttempts {
+			return nil, err
+		}
+		timer := time.NewTimer(time.Duration(attempt) * 200 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		}
+	}
+	return nil, err
+}
+
+func isTransientMarketDataQueryError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"dial tcp",
+		"i/o timeout",
+		"operation timed out",
+		"connection refused",
+		"connection reset",
+		"server closed the connection unexpectedly",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (q *MarketDataQuery) dsnForYear(exchange string, year int) (string, error) {
 	dbName, err := databaseNameForYear(q.cfg.Database, exchange, year)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=%d",
 		q.cfg.Host,
 		q.cfg.Port,
 		q.cfg.User,
 		q.cfg.Password,
 		dbName,
 		q.cfg.SSLMode,
+		q.cfg.ConnectTimeoutSeconds,
 	), nil
 }
 

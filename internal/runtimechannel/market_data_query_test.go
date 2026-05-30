@@ -35,6 +35,22 @@ func TestIsMissingMarketDataStorageError(t *testing.T) {
 	}
 }
 
+func TestIsTransientMarketDataQueryError(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{fmt.Errorf("query klines futures/ETHUSDT/1m: dial tcp 192.168.88.10:5432: connect: operation timed out"), true},
+		{fmt.Errorf("query klines: pq: relation does not exist"), false},
+		{fmt.Errorf("invalid symbol"), false},
+	}
+	for _, tc := range cases {
+		if got := isTransientMarketDataQueryError(tc.err); got != tc.want {
+			t.Fatalf("isTransientMarketDataQueryError(%q) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
 func TestYearsInRangeUsesEndExclusiveBoundary(t *testing.T) {
 	start := time.Date(2026, 12, 31, 23, 59, 0, 0, time.UTC).UnixMilli()
 	end := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
