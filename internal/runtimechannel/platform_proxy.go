@@ -25,6 +25,8 @@ type AccountPlatformClient interface {
 	GetAccount(ctx context.Context, in *accountv1.GetAccountRequest, opts ...grpc.CallOption) (*accountv1.GetAccountResponse, error)
 	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
 	GetOnlineAccountInfo(ctx context.Context, in *accountv1.GetOnlineAccountInfoRequest, opts ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error)
+	GetPortfolioSnapshot(ctx context.Context, in *accountv1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error)
+	UpdatePortfolioSnapshot(ctx context.Context, in *accountv1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error)
 	GetActiveStrategy(ctx context.Context, in *accountv1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error)
 	SaveSession(ctx context.Context, in *accountv1.SaveSessionRequest, opts ...grpc.CallOption) (*accountv1.SaveSessionResponse, error)
 	UpdateSession(ctx context.Context, in *accountv1.UpdateSessionRequest, opts ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error)
@@ -125,6 +127,39 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		return p.requireAccount().GetOnlineAccountInfo(ctx, req)
+
+	case "account.GetPortfolioSnapshot":
+		req := &accountv1.GetPortfolioSnapshotRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.UserId = rt.UserID
+		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+			return nil, err
+		}
+		return p.requireAccount().GetPortfolioSnapshot(ctx, req)
+
+	case "account.UpdatePortfolioSnapshot":
+		req := &accountv1.UpdatePortfolioSnapshotRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.UserId = rt.UserID
+		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(req.GetSessionId()) != "" {
+			if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+				return nil, err
+			}
+		}
+		return p.requireAccount().UpdatePortfolioSnapshot(ctx, req)
 
 	case "account.GetActiveStrategy":
 		req := &accountv1.GetActiveStrategyRequest{}
@@ -453,6 +488,10 @@ func canonicalPlatformMethod(method string) string {
 	switch method {
 	case "GetOnlineAccountInfo", "account.v1.AccountService/GetOnlineAccountInfo":
 		return "account.GetOnlineAccountInfo"
+	case "GetPortfolioSnapshot", "account.v1.AccountService/GetPortfolioSnapshot":
+		return "account.GetPortfolioSnapshot"
+	case "UpdatePortfolioSnapshot", "account.v1.AccountService/UpdatePortfolioSnapshot":
+		return "account.UpdatePortfolioSnapshot"
 	case "GetActiveStrategy", "account.v1.AccountService/GetActiveStrategy":
 		return "account.GetActiveStrategy"
 	case "SaveSession", "account.v1.AccountService/SaveSession":
@@ -898,6 +937,12 @@ func (unavailableAccountClient) GetSession(context.Context, *accountv1.GetSessio
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetOnlineAccountInfo(context.Context, *accountv1.GetOnlineAccountInfoRequest, ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailableAccountClient) GetPortfolioSnapshot(context.Context, *accountv1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailableAccountClient) UpdatePortfolioSnapshot(context.Context, *accountv1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) GetActiveStrategy(context.Context, *accountv1.GetActiveStrategyRequest, ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error) {

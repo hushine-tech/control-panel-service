@@ -148,6 +148,131 @@ func TestPlatformProxyRejectsWalletUpdateForTerminalSession(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyGetPortfolioSnapshotInjectsAuthenticatedUser(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.GetPortfolioSnapshotRequest{
+		AccountId: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.v1.AccountService/GetPortfolioSnapshot",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if _, ok := resp.(*accountv1.GetPortfolioSnapshotResponse); !ok {
+		t.Fatalf("response = %T, want GetPortfolioSnapshotResponse", resp)
+	}
+	if account.portfolioGetReq.GetUserId() != 42 || account.portfolioGetReq.GetAccountId() != 7 {
+		t.Fatalf("GetPortfolioSnapshot req = %+v", account.portfolioGetReq)
+	}
+}
+
+func TestPlatformProxyGetPortfolioSnapshotRejectsDifferentUser(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.GetPortfolioSnapshotRequest{
+		AccountId: 7,
+		UserId:    99,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"GetPortfolioSnapshot",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+	if account.portfolioGetReq != nil {
+		t.Fatalf("GetPortfolioSnapshot should not be called: %+v", account.portfolioGetReq)
+	}
+}
+
+func TestPlatformProxyUpdatePortfolioSnapshotChecksSessionAndInjectsUser(t *testing.T) {
+	account := &fakeAccountPlatformClient{
+		session: &accountv1.StrategySessionEntry{
+			SessionId: "sess-1",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.UpdatePortfolioSnapshotRequest{
+		AccountId:      7,
+		SnapshotReason: 2,
+		StrategyId:     9,
+		SessionId:      "sess-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.UpdatePortfolioSnapshot",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if _, ok := resp.(*accountv1.UpdatePortfolioSnapshotResponse); !ok {
+		t.Fatalf("response = %T, want UpdatePortfolioSnapshotResponse", resp)
+	}
+	if account.portfolioUpdateReq.GetUserId() != 42 ||
+		account.portfolioUpdateReq.GetAccountId() != 7 ||
+		account.portfolioUpdateReq.GetSessionId() != "sess-1" {
+		t.Fatalf("UpdatePortfolioSnapshot req = %+v", account.portfolioUpdateReq)
+	}
+}
+
+func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *testing.T) {
+	account := &fakeAccountPlatformClient{
+		session: &accountv1.StrategySessionEntry{
+			SessionId: "sess-1",
+			UserId:    42,
+			RuntimeId: "runtime-other",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.UpdatePortfolioSnapshotRequest{
+		AccountId: 7,
+		SessionId: "sess-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.v1.AccountService/UpdatePortfolioSnapshot",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+	if account.portfolioUpdateReq != nil {
+		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", account.portfolioUpdateReq)
+	}
+}
+
 func TestPlatformProxyFetchKlinesReturnsStructPayload(t *testing.T) {
 	resp, err := klineRowsToStruct([]KlineRow{{
 		Exchange:  "binance",
@@ -490,11 +615,13 @@ func mustStruct(t *testing.T, fields map[string]any) *structpb.Struct {
 }
 
 type fakeAccountPlatformClient struct {
-	getAccountReq *accountv1.GetAccountRequest
-	saveReq       *accountv1.SaveSessionRequest
-	updateReq     *accountv1.UpdateSessionRequest
-	walletReq     *accountv1.UpdateAccountWalletStateRequest
-	session       *accountv1.StrategySessionEntry
+	getAccountReq      *accountv1.GetAccountRequest
+	saveReq            *accountv1.SaveSessionRequest
+	updateReq          *accountv1.UpdateSessionRequest
+	walletReq          *accountv1.UpdateAccountWalletStateRequest
+	portfolioGetReq    *accountv1.GetPortfolioSnapshotRequest
+	portfolioUpdateReq *accountv1.UpdatePortfolioSnapshotRequest
+	session            *accountv1.StrategySessionEntry
 }
 
 func (f *fakeAccountPlatformClient) GetAccount(_ context.Context, req *accountv1.GetAccountRequest, _ ...grpc.CallOption) (*accountv1.GetAccountResponse, error) {
@@ -522,6 +649,20 @@ func (f *fakeAccountPlatformClient) GetSession(_ context.Context, req *accountv1
 
 func (f *fakeAccountPlatformClient) GetOnlineAccountInfo(context.Context, *accountv1.GetOnlineAccountInfoRequest, ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error) {
 	return &accountv1.GetOnlineAccountInfoResponse{}, nil
+}
+
+func (f *fakeAccountPlatformClient) GetPortfolioSnapshot(_ context.Context, req *accountv1.GetPortfolioSnapshotRequest, _ ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error) {
+	f.portfolioGetReq = req
+	return &accountv1.GetPortfolioSnapshotResponse{
+		Snapshot: &accountv1.PortfolioSnapshot{AccountId: req.GetAccountId(), UserId: req.GetUserId()},
+	}, nil
+}
+
+func (f *fakeAccountPlatformClient) UpdatePortfolioSnapshot(_ context.Context, req *accountv1.UpdatePortfolioSnapshotRequest, _ ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error) {
+	f.portfolioUpdateReq = req
+	return &accountv1.UpdatePortfolioSnapshotResponse{
+		Snapshot: &accountv1.PortfolioSnapshot{AccountId: req.GetAccountId(), UserId: req.GetUserId()},
+	}, nil
 }
 
 func (f *fakeAccountPlatformClient) GetActiveStrategy(context.Context, *accountv1.GetActiveStrategyRequest, ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error) {
