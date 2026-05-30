@@ -273,6 +273,31 @@ func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *t
 	}
 }
 
+func TestPlatformProxyUpdatePortfolioSnapshotRejectsEmptySessionID(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.UpdatePortfolioSnapshotRequest{
+		AccountId: 7,
+		UserId:    42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.UpdatePortfolioSnapshot",
+		payload,
+	)
+	if code := status.Code(err); code != codes.InvalidArgument && code != codes.PermissionDenied {
+		t.Fatalf("code = %v, want InvalidArgument or PermissionDenied (err=%v)", code, err)
+	}
+	if account.portfolioUpdateReq != nil {
+		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", account.portfolioUpdateReq)
+	}
+}
+
 func TestPlatformProxyFetchKlinesReturnsStructPayload(t *testing.T) {
 	resp, err := klineRowsToStruct([]KlineRow{{
 		Exchange:  "binance",

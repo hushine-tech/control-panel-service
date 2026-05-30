@@ -154,10 +154,11 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(req.GetSessionId()) != "" {
-			if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
-				return nil, err
-			}
+		if strings.TrimSpace(req.GetSessionId()) == "" {
+			return nil, status.Error(codes.InvalidArgument, "session_id is required")
+		}
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+			return nil, err
 		}
 		return p.requireAccount().UpdatePortfolioSnapshot(ctx, req)
 
