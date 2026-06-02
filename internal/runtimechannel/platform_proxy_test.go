@@ -21,10 +21,10 @@ func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 	account := &fakeAccountPlatformClient{}
 	proxy := NewPlatformProxy(account, nil, nil)
 	payload, err := anypb.New(&accountv1.SaveSessionRequest{
-		SessionId:  "sess-1",
-		AccountId:  7,
-		StrategyId: 9,
-		Mode:       2,
+		SessionId:   "sess-1",
+		AccountId:   7,
+		StrategyId:  9,
+		Environment: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,10 +54,10 @@ func TestPlatformProxySaveSessionPreservesHostedRuntimeSource(t *testing.T) {
 	account := &fakeAccountPlatformClient{}
 	proxy := NewPlatformProxy(account, nil, nil)
 	payload, err := anypb.New(&accountv1.SaveSessionRequest{
-		SessionId:  "sess-1",
-		AccountId:  7,
-		StrategyId: 9,
-		Mode:       0,
+		SessionId:   "sess-1",
+		AccountId:   7,
+		StrategyId:  9,
+		Environment: 0,
 	})
 	if err != nil {
 		t.Fatal(err)

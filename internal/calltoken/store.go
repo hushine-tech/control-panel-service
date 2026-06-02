@@ -44,10 +44,10 @@ const (
 // window even if all are immediately expired; with default 60s TTL
 // and reasonable issue rate this stays bounded.
 type Store struct {
-	mu       sync.Mutex
-	entries  map[string]Binding
-	now      func() time.Time
-	issueCnt int
+	mu         sync.Mutex
+	entries    map[string]Binding
+	now        func() time.Time
+	issueCnt   int
 	sweepEvery int
 }
 

@@ -133,7 +133,7 @@ service ControlPanelService {
   // user's local filesystem directly.
   rpc PrepareDebugWorkspace(PrepareDebugWorkspaceRequest) returns (PrepareDebugWorkspaceResponse);
 
-  // LoadDebugDataset validates mode=0 historical data and sends it to the
+  // LoadDebugDataset validates backtest historical data and sends it to the
   // selected debugger runtime. This stores metadata only in control-plane DB.
   rpc LoadDebugDataset(LoadDebugDatasetRequest) returns (LoadDebugDatasetResponse);
 
@@ -371,7 +371,7 @@ message ResolveRuntimeRouteByIDRequest {
   int64 user_id = 1;                  // required (must equal auth user_id)
   string runtime_id = 2;              // required
   string role = 3;                    // optional: "executor" (default) | "debugger"
-  int32 mode = 4;                     // optional requested session mode; debugger only allows 0
+  int32 environment = 4;              // optional requested session environment; debugger only allows backtest
 }
 
 message ResolveRuntimeRouteResponse {

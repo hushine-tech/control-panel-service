@@ -11,13 +11,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/credential"
 	"github.com/hushine-tech/control-panel-service/internal/debugger"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
 
@@ -167,10 +167,10 @@ func (g *ControlPanelGRPCService) ResolveRuntimeRouteByID(ctx context.Context, r
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 	result, err := g.svc.ResolveRuntimeRouteByID(ctx, ResolveByIDArgs{
-		UserID:    req.GetUserId(),
-		RuntimeID: req.GetRuntimeId(),
-		Role:      req.GetRole(),
-		Mode:      int(req.GetMode()),
+		UserID:      req.GetUserId(),
+		RuntimeID:   req.GetRuntimeId(),
+		Role:        req.GetRole(),
+		Environment: int(req.GetEnvironment()),
 	})
 	if err != nil {
 		return nil, mapErrorToStatus(err)

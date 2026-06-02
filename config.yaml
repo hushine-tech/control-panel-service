@@ -17,6 +17,8 @@ market_data:
   password: "postgres"
   database: "binance_{year}"
   sslmode: "disable"
+  live_delivery_enabled: true
+  kafka_brokers: ["192.168.88.10:19092"]
 
 dependencies:
   account_service_grpc: "127.0.0.1:50051"

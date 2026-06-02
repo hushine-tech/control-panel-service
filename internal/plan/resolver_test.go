@@ -203,9 +203,9 @@ func TestResolve_AppliesPlatformCap(t *testing.T) {
 // should produce 0, NOT the platform's 100. This was the #3 bug.
 func TestApplyPlatformCap_ZeroIsHardCap(t *testing.T) {
 	cases := []struct {
-		name              string
-		plan, platform    int
-		want              int
+		name           string
+		plan, platform int
+		want           int
 	}{
 		{"plan zero forbids", 0, 100, 0},
 		{"platform zero forbids", 100, 0, 0},

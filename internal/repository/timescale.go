@@ -11,8 +11,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	elog "github.com/hushine-tech/golang-lib/pkg/log"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
+	elog "github.com/hushine-tech/golang-lib/pkg/log"
 )
 
 // TimescaleRepository implements Repository against PostgreSQL/TimescaleDB.

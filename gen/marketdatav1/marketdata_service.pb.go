@@ -509,7 +509,7 @@ type SessionMarketDataSubscription struct {
 	SessionId      string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	RuntimeId      string                 `protobuf:"bytes,4,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
 	Key            *StreamKey             `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
-	Mode           int32                  `protobuf:"varint,6,opt,name=mode,proto3" json:"mode,omitempty"`
+	Environment    int32                  `protobuf:"varint,6,opt,name=environment,proto3" json:"environment,omitempty"`
 	Status         string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
 	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt      *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
@@ -583,9 +583,9 @@ func (x *SessionMarketDataSubscription) GetKey() *StreamKey {
 	return nil
 }
 
-func (x *SessionMarketDataSubscription) GetMode() int32 {
+func (x *SessionMarketDataSubscription) GetEnvironment() int32 {
 	if x != nil {
-		return x.Mode
+		return x.Environment
 	}
 	return 0
 }
@@ -3032,7 +3032,7 @@ type CreateSessionMarketDataSubscriptionsRequest struct {
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	RuntimeId     string                 `protobuf:"bytes,3,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	Mode          int32                  `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"`
+	Environment   int32                  `protobuf:"varint,4,opt,name=environment,proto3" json:"environment,omitempty"`
 	Keys          []*StreamKey           `protobuf:"bytes,5,rep,name=keys,proto3" json:"keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3089,9 +3089,9 @@ func (x *CreateSessionMarketDataSubscriptionsRequest) GetRuntimeId() string {
 	return ""
 }
 
-func (x *CreateSessionMarketDataSubscriptionsRequest) GetMode() int32 {
+func (x *CreateSessionMarketDataSubscriptionsRequest) GetEnvironment() int32 {
 	if x != nil {
-		return x.Mode
+		return x.Environment
 	}
 	return 0
 }
@@ -3822,7 +3822,7 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
 	"\vreleased_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"releasedAt\"\xb7\x03\n" +
+	"releasedAt\"\xc5\x03\n" +
 	"\x1dSessionMarketDataSubscription\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x03R\x0esubscriptionId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1d\n" +
@@ -3830,8 +3830,8 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x04 \x01(\tR\truntimeId\x127\n" +
-	"\x03key\x18\x05 \x01(\v2%.controlpanel.marketdata.v1.StreamKeyR\x03key\x12\x12\n" +
-	"\x04mode\x18\x06 \x01(\x05R\x04mode\x12\x16\n" +
+	"\x03key\x18\x05 \x01(\v2%.controlpanel.marketdata.v1.StreamKeyR\x03key\x12 \n" +
+	"\venvironment\x18\x06 \x01(\x05R\venvironment\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x129\n" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
@@ -4045,14 +4045,14 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\x03R\bstreamId\" \n" +
-	"\x1eReleaseMarketDataLeaseResponse\"\xd3\x01\n" +
+	"\x1eReleaseMarketDataLeaseResponse\"\xe1\x01\n" +
 	"+CreateSessionMarketDataSubscriptionsRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1d\n" +
 	"\n" +
-	"runtime_id\x18\x03 \x01(\tR\truntimeId\x12\x12\n" +
-	"\x04mode\x18\x04 \x01(\x05R\x04mode\x129\n" +
+	"runtime_id\x18\x03 \x01(\tR\truntimeId\x12 \n" +
+	"\venvironment\x18\x04 \x01(\x05R\venvironment\x129\n" +
 	"\x04keys\x18\x05 \x03(\v2%.controlpanel.marketdata.v1.StreamKeyR\x04keys\"\x8f\x01\n" +
 	",CreateSessionMarketDataSubscriptionsResponse\x12_\n" +
 	"\rsubscriptions\x18\x01 \x03(\v29.controlpanel.marketdata.v1.SessionMarketDataSubscriptionR\rsubscriptions\"l\n" +

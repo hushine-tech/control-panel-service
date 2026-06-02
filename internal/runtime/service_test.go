@@ -11,10 +11,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 )
 
 var fixedNow = time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
@@ -247,13 +247,13 @@ func TestResolveRuntimeRouteByID_DebuggerModeAndCapacityPolicy(t *testing.T) {
 	attachRuntimeOwner(t, repo, "rt-debugger", fixedNow)
 
 	_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{
-		UserID:    42,
-		RuntimeID: "rt-debugger",
-		Role:      string(domain.CredentialRoleDebugger),
-		Mode:      2,
+		UserID:      42,
+		RuntimeID:   "rt-debugger",
+		Role:        string(domain.CredentialRoleDebugger),
+		Environment: 1,
 	})
 	if !errors.Is(err, ErrPermissionDenied) {
-		t.Fatalf("mode=2 debugger err = %v, want ErrPermissionDenied", err)
+		t.Fatalf("environment=1 debugger err = %v, want ErrPermissionDenied", err)
 	}
 
 	blockers := &fakeSessionClient{listResp: []*accountv1.StrategySessionEntry{{
@@ -263,10 +263,10 @@ func TestResolveRuntimeRouteByID_DebuggerModeAndCapacityPolicy(t *testing.T) {
 	}}}
 	svc.sessionClient = blockers
 	_, err = svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{
-		UserID:    42,
-		RuntimeID: "rt-debugger",
-		Role:      string(domain.CredentialRoleDebugger),
-		Mode:      0,
+		UserID:      42,
+		RuntimeID:   "rt-debugger",
+		Role:        string(domain.CredentialRoleDebugger),
+		Environment: 0,
 	})
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("active debugger session err = %v, want ErrConflict", err)
@@ -274,13 +274,13 @@ func TestResolveRuntimeRouteByID_DebuggerModeAndCapacityPolicy(t *testing.T) {
 
 	svc.sessionClient = &fakeSessionClient{}
 	res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{
-		UserID:    42,
-		RuntimeID: "rt-debugger",
-		Role:      string(domain.CredentialRoleDebugger),
-		Mode:      0,
+		UserID:      42,
+		RuntimeID:   "rt-debugger",
+		Role:        string(domain.CredentialRoleDebugger),
+		Environment: 0,
 	})
 	if err != nil {
-		t.Fatalf("mode=0 debugger route: %v", err)
+		t.Fatalf("environment=0 debugger route: %v", err)
 	}
 	if res.Runtime.RuntimeID != "rt-debugger" {
 		t.Fatalf("resolved runtime = %+v", res.Runtime)
@@ -326,13 +326,13 @@ func TestResolveRuntimeRouteByID_ExecutorModeTwoSharedAcrossSources(t *testing.T
 	}
 	for _, runtimeID := range []string{"rt-hosted", "rt-self"} {
 		res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{
-			UserID:    42,
-			RuntimeID: runtimeID,
-			Role:      string(domain.CredentialRoleExecutor),
-			Mode:      2,
+			UserID:      42,
+			RuntimeID:   runtimeID,
+			Role:        string(domain.CredentialRoleExecutor),
+			Environment: 1,
 		})
 		if err != nil {
-			t.Fatalf("ResolveRuntimeRouteByID(%s mode=2): %v", runtimeID, err)
+			t.Fatalf("ResolveRuntimeRouteByID(%s environment=1): %v", runtimeID, err)
 		}
 		if res.Runtime.RuntimeID != runtimeID {
 			t.Fatalf("resolved runtime = %+v, want %s", res.Runtime, runtimeID)

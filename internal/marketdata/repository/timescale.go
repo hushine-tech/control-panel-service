@@ -578,7 +578,7 @@ func (r *TimescaleRepository) UpsertSessionMarketDataSubscriptions(
 	userID int64,
 	sessionID string,
 	runtimeID string,
-	mode int32,
+	environment int32,
 	keys []domain.StreamKey,
 ) ([]domain.SessionMarketDataSubscription, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -591,16 +591,16 @@ func (r *TimescaleRepository) UpsertSessionMarketDataSubscriptions(
 	for _, key := range keys {
 		row := tx.QueryRowContext(ctx, `
 			INSERT INTO session_market_data_subscriptions
-				(user_id, session_id, runtime_id, exchange, market, kind, symbol, interval, mode, status)
+				(user_id, session_id, runtime_id, exchange, market, kind, symbol, interval, environment, status)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')
-			ON CONFLICT (session_id, exchange, market, kind, symbol, interval, mode)
+			ON CONFLICT (session_id, exchange, market, kind, symbol, interval, environment)
 				WHERE status = 'active'
 			DO UPDATE SET
 				user_id = EXCLUDED.user_id,
 				runtime_id = EXCLUDED.runtime_id,
 				updated_at = NOW()
 			RETURNING subscription_id, user_id, session_id, runtime_id,
-				exchange, market, kind, symbol, interval, mode, status,
+				exchange, market, kind, symbol, interval, environment, status,
 				created_at, updated_at, released_at`,
 			userID,
 			sessionID,
@@ -610,7 +610,7 @@ func (r *TimescaleRepository) UpsertSessionMarketDataSubscriptions(
 			key.Kind,
 			key.Symbol,
 			key.Interval,
-			mode,
+			environment,
 		)
 		sub, err := scanSessionSubscription(row)
 		if err != nil {
@@ -646,7 +646,7 @@ func (r *TimescaleRepository) ReleaseSessionMarketDataSubscriptions(ctx context.
 func (r *TimescaleRepository) ListActiveSessionMarketDataSubscriptions(ctx context.Context) ([]domain.SessionMarketDataSubscription, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT s.subscription_id, s.user_id, s.session_id, s.runtime_id,
-			s.exchange, s.market, s.kind, s.symbol, s.interval, s.mode, s.status,
+			s.exchange, s.market, s.kind, s.symbol, s.interval, s.environment, s.status,
 			s.created_at, s.updated_at, s.released_at
 		FROM session_market_data_subscriptions s
 		JOIN runtime_registry r ON r.runtime_id = s.runtime_id
@@ -782,7 +782,7 @@ func (r *TimescaleRepository) ListSessionDeliveryHealth(ctx context.Context, use
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
 			sub.subscription_id, sub.user_id, sub.session_id, sub.runtime_id,
-			sub.exchange, sub.market, sub.kind, sub.symbol, sub.interval, sub.mode, sub.status,
+			sub.exchange, sub.market, sub.kind, sub.symbol, sub.interval, sub.environment, sub.status,
 			sub.created_at, sub.updated_at, sub.released_at,
 			l.lease_id, l.subscription_id, l.owner_instance_id, l.status,
 			l.acquired_at, l.last_heartbeat_at, l.expires_at,
@@ -1447,7 +1447,7 @@ func scanSessionSubscription(row rowScanner) (domain.SessionMarketDataSubscripti
 		&s.SessionID,
 		&s.RuntimeID,
 		&s.Key.Exchange, &s.Key.Market, &s.Key.Kind, &s.Key.Symbol, &s.Key.Interval,
-		&s.Mode,
+		&s.Environment,
 		&s.Status,
 		&s.CreatedAt,
 		&s.UpdatedAt,
@@ -1511,7 +1511,7 @@ func scanSessionDeliveryHealth(row rowScanner) (domain.SessionDeliveryHealth, er
 		&h.Subscription.SessionID,
 		&h.Subscription.RuntimeID,
 		&h.Subscription.Key.Exchange, &h.Subscription.Key.Market, &h.Subscription.Key.Kind, &h.Subscription.Key.Symbol, &h.Subscription.Key.Interval,
-		&h.Subscription.Mode,
+		&h.Subscription.Environment,
 		&h.Subscription.Status,
 		&h.Subscription.CreatedAt,
 		&h.Subscription.UpdatedAt,

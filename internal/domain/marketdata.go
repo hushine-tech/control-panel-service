@@ -140,7 +140,7 @@ type SessionMarketDataSubscription struct {
 	SessionID      string
 	RuntimeID      string
 	Key            StreamKey
-	Mode           int32
+	Environment    int32
 	Status         string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time

@@ -476,11 +476,11 @@ func TestReportMarketDataHistoryRequestState_RejectsBadStatus(t *testing.T) {
 func TestCreateSessionMarketDataSubscriptions(t *testing.T) {
 	svc := newSvc()
 	resp, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
-		UserId:    42,
-		SessionId: "sess-1",
-		RuntimeId: "rt-1",
-		Mode:      2,
-		Keys:      []*mdv1.StreamKey{liveKey()},
+		UserId:      42,
+		SessionId:   "sess-1",
+		RuntimeId:   "rt-1",
+		Environment: 1,
+		Keys:        []*mdv1.StreamKey{liveKey()},
 	})
 	if err != nil {
 		t.Fatalf("CreateSessionMarketDataSubscriptions: %v", err)
@@ -492,19 +492,19 @@ func TestCreateSessionMarketDataSubscriptions(t *testing.T) {
 	if sub.GetUserId() != 42 || sub.GetSessionId() != "sess-1" || sub.GetRuntimeId() != "rt-1" {
 		t.Fatalf("subscription owner fields = %+v", sub)
 	}
-	if sub.GetKey().GetSymbol() != "BTCUSDT" || sub.GetMode() != 2 || sub.GetStatus() != "active" {
-		t.Fatalf("subscription key/mode/status = %+v", sub)
+	if sub.GetKey().GetSymbol() != "BTCUSDT" || sub.GetEnvironment() != 1 || sub.GetStatus() != "active" {
+		t.Fatalf("subscription key/environment/status = %+v", sub)
 	}
 }
 
 func TestCreateSessionMarketDataSubscriptionsRejectsWrongMode(t *testing.T) {
 	svc := newSvc()
 	_, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
-		UserId:    42,
-		SessionId: "sess-1",
-		RuntimeId: "rt-1",
-		Mode:      0,
-		Keys:      []*mdv1.StreamKey{liveKey()},
+		UserId:      42,
+		SessionId:   "sess-1",
+		RuntimeId:   "rt-1",
+		Environment: 0,
+		Keys:        []*mdv1.StreamKey{liveKey()},
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
@@ -514,11 +514,11 @@ func TestCreateSessionMarketDataSubscriptionsRejectsWrongMode(t *testing.T) {
 func TestCreateOrRenewStreamDeliveryLease(t *testing.T) {
 	svc := newSvc()
 	subs, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
-		UserId:    42,
-		SessionId: "sess-1",
-		RuntimeId: "rt-1",
-		Mode:      2,
-		Keys:      []*mdv1.StreamKey{liveKey()},
+		UserId:      42,
+		SessionId:   "sess-1",
+		RuntimeId:   "rt-1",
+		Environment: 1,
+		Keys:        []*mdv1.StreamKey{liveKey()},
 	})
 	if err != nil {
 		t.Fatalf("create subscription: %v", err)
@@ -540,11 +540,11 @@ func TestListSessionDeliveryHealthMarksBlockedWithoutProgress(t *testing.T) {
 	repo := newStubRepo()
 	svc := NewService(repo)
 	subs, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
-		UserId:    42,
-		SessionId: "sess-1",
-		RuntimeId: "rt-1",
-		Mode:      2,
-		Keys:      []*mdv1.StreamKey{liveKey()},
+		UserId:      42,
+		SessionId:   "sess-1",
+		RuntimeId:   "rt-1",
+		Environment: 1,
+		Keys:        []*mdv1.StreamKey{liveKey()},
 	})
 	if err != nil {
 		t.Fatalf("create subscription: %v", err)
@@ -584,11 +584,11 @@ func TestListSessionDeliveryHealthShowsDeliveryProgress(t *testing.T) {
 	repo := newStubRepo()
 	svc := NewService(repo)
 	subs, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
-		UserId:    42,
-		SessionId: "sess-1",
-		RuntimeId: "rt-1",
-		Mode:      2,
-		Keys:      []*mdv1.StreamKey{liveKey()},
+		UserId:      42,
+		SessionId:   "sess-1",
+		RuntimeId:   "rt-1",
+		Environment: 1,
+		Keys:        []*mdv1.StreamKey{liveKey()},
 	})
 	if err != nil {
 		t.Fatalf("create subscription: %v", err)

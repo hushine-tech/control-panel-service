@@ -1939,7 +1939,7 @@ type ResolveRuntimeRouteByIDRequest struct {
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`         // required (must equal auth user_id)
 	RuntimeId     string                 `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"` // required
 	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`                            // optional: "executor" (default) | "debugger"
-	Mode          int32                  `protobuf:"varint,4,opt,name=mode,proto3" json:"mode,omitempty"`                           // optional requested session mode; debugger only allows 0
+	Environment   int32                  `protobuf:"varint,4,opt,name=environment,proto3" json:"environment,omitempty"`             // optional requested session environment; debugger only allows backtest
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1995,9 +1995,9 @@ func (x *ResolveRuntimeRouteByIDRequest) GetRole() string {
 	return ""
 }
 
-func (x *ResolveRuntimeRouteByIDRequest) GetMode() int32 {
+func (x *ResolveRuntimeRouteByIDRequest) GetEnvironment() int32 {
 	if x != nil {
-		return x.Mode
+		return x.Environment
 	}
 	return 0
 }
@@ -5048,13 +5048,13 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"dedupe_key\x18\n" +
 	" \x01(\tR\tdedupeKey\"@\n" +
 	"\"PublishRuntimeNotificationResponse\x12\x1a\n" +
-	"\baccepted\x18\x01 \x01(\bR\baccepted\"\x80\x01\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\"\x8e\x01\n" +
 	"\x1eResolveRuntimeRouteByIDRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x02 \x01(\tR\truntimeId\x12\x12\n" +
-	"\x04role\x18\x03 \x01(\tR\x04role\x12\x12\n" +
-	"\x04mode\x18\x04 \x01(\x05R\x04mode\"\x93\x02\n" +
+	"\x04role\x18\x03 \x01(\tR\x04role\x12 \n" +
+	"\venvironment\x18\x04 \x01(\x05R\venvironment\"\x93\x02\n" +
 	"\x1bResolveRuntimeRouteResponse\x122\n" +
 	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\x12#\n" +
 	"\rgrpc_endpoint\x18\x02 \x01(\tR\fgrpcEndpoint\x12%\n" +

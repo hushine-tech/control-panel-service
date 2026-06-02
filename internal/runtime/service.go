@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	"github.com/hushine-tech/control-panel-service/internal/auth"
 	"github.com/hushine-tech/control-panel-service/internal/calltoken"
 	"github.com/hushine-tech/control-panel-service/internal/config"
@@ -26,6 +25,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	"google.golang.org/grpc"
 )
 
@@ -730,9 +730,9 @@ type ResolveByIDArgs struct {
 	// Role is the intended session role. Empty means executor for backward
 	// compatibility with existing strategy launch paths.
 	Role string
-	// Mode is the requested account/session mode when the caller has it.
-	// Debugger routes require mode 0; executor routes support mode 0/2.
-	Mode int
+	// Environment is the requested account/session environment when the caller has it.
+	// Debugger routes require backtest; executor routes support backtest/demo.
+	Environment int
 }
 
 type ResolveResult struct {
@@ -748,14 +748,14 @@ func (s *Service) ResolveRuntimeRouteByID(ctx context.Context, args ResolveByIDA
 	if err != nil {
 		return ResolveResult{}, err
 	}
-	return s.resolveRuntimeRouteForRuntimeWithPolicy(ctx, args.UserID, rt, args.Role, args.Mode)
+	return s.resolveRuntimeRouteForRuntimeWithPolicy(ctx, args.UserID, rt, args.Role, args.Environment)
 }
 
 func (s *Service) resolveRuntimeRouteForRuntime(ctx context.Context, userID int64, rt domain.Runtime) (ResolveResult, error) {
 	return s.resolveRuntimeRouteForRuntimeWithPolicy(ctx, userID, rt, string(domain.CredentialRoleExecutor), 0)
 }
 
-func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, userID int64, rt domain.Runtime, role string, mode int) (ResolveResult, error) {
+func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, userID int64, rt domain.Runtime, role string, environment int) (ResolveResult, error) {
 	switch rt.Status {
 	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed:
 		s.markRuntimeSessionsRecoverable(ctx, rt.RuntimeID, fmt.Sprintf("runtime %s is terminal (%s); session marked recoverable during route resolution", rt.RuntimeID, rt.Status))
@@ -772,15 +772,15 @@ func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, u
 		if rt.Role != "" && rt.Role != domain.CredentialRoleExecutor {
 			return ResolveResult{}, fmt.Errorf("%w: runtime role %q is not eligible for executor sessions", ErrPermissionDenied, rt.Role)
 		}
-		if mode != 0 && mode != 2 {
-			return ResolveResult{}, fmt.Errorf("%w: executor runtime mode %d is not supported", ErrPermissionDenied, mode)
+		if environment != 0 && environment != 1 {
+			return ResolveResult{}, fmt.Errorf("%w: executor runtime environment %d is not supported", ErrPermissionDenied, environment)
 		}
 	case domain.CredentialRoleDebugger:
 		if rt.Role != domain.CredentialRoleDebugger {
 			return ResolveResult{}, fmt.Errorf("%w: runtime role %q is not eligible for debugger sessions", ErrPermissionDenied, rt.Role)
 		}
-		if mode != 0 {
-			return ResolveResult{}, fmt.Errorf("%w: debugger runtime only supports mode=0", ErrPermissionDenied)
+		if environment != 0 {
+			return ResolveResult{}, fmt.Errorf("%w: debugger runtime only supports backtest environment", ErrPermissionDenied)
 		}
 		blockers, err := s.listRuntimeEndBlockers(ctx, rt.RuntimeID)
 		if err != nil {

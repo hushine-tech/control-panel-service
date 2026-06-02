@@ -349,7 +349,7 @@ func toProtoSessionSubscription(s domain.SessionMarketDataSubscription) *mdv1.Se
 		SessionId:      s.SessionID,
 		RuntimeId:      s.RuntimeID,
 		Key:            toProtoStreamKey(s.Key),
-		Mode:           s.Mode,
+		Environment:    s.Environment,
 		Status:         s.Status,
 		CreatedAt:      timestamppb.New(s.CreatedAt),
 		UpdatedAt:      timestamppb.New(s.UpdatedAt),
@@ -1161,8 +1161,8 @@ func (s *Service) CreateSessionMarketDataSubscriptions(ctx context.Context, req 
 	if runtimeID == "" {
 		return nil, status.Error(codes.InvalidArgument, "runtime_id is required")
 	}
-	if req.GetMode() != 2 {
-		return nil, status.Errorf(codes.InvalidArgument, "session market-data subscriptions are only supported for mode=2, got %d", req.GetMode())
+	if req.GetEnvironment() != 1 {
+		return nil, status.Errorf(codes.InvalidArgument, "session market-data subscriptions are only supported for demo environment, got %d", req.GetEnvironment())
 	}
 	if len(req.GetKeys()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "at least one stream key is required")
@@ -1180,7 +1180,7 @@ func (s *Service) CreateSessionMarketDataSubscriptions(ctx context.Context, req 
 		req.GetUserId(),
 		sessionID,
 		runtimeID,
-		req.GetMode(),
+		req.GetEnvironment(),
 		keys,
 	)
 	if err != nil {

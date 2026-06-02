@@ -78,7 +78,7 @@ type Repository interface {
 		userID int64,
 		sessionID string,
 		runtimeID string,
-		mode int32,
+		environment int32,
 		keys []domain.StreamKey,
 	) ([]domain.SessionMarketDataSubscription, error)
 	ListActiveSessionMarketDataSubscriptions(ctx context.Context) ([]domain.SessionMarketDataSubscription, error)

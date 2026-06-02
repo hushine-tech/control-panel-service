@@ -421,7 +421,7 @@ func (s *stubRepo) UpsertSessionMarketDataSubscriptions(
 			SessionID:      sessionID,
 			RuntimeID:      runtimeID,
 			Key:            key,
-			Mode:           mode,
+			Environment:    mode,
 			Status:         "active",
 			CreatedAt:      now,
 			UpdatedAt:      now,

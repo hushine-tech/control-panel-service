@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	"google.golang.org/grpc"
 )
 

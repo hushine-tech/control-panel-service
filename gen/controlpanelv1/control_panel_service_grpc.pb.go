@@ -151,7 +151,7 @@ type ControlPanelServiceClient interface {
 	// prepare its mounted /workspace. The control-plane never writes to the
 	// user's local filesystem directly.
 	PrepareDebugWorkspace(ctx context.Context, in *PrepareDebugWorkspaceRequest, opts ...grpc.CallOption) (*PrepareDebugWorkspaceResponse, error)
-	// LoadDebugDataset validates mode=0 historical data and sends it to the
+	// LoadDebugDataset validates backtest historical data and sends it to the
 	// selected debugger runtime. This stores metadata only in control-plane DB.
 	LoadDebugDataset(ctx context.Context, in *LoadDebugDatasetRequest, opts ...grpc.CallOption) (*LoadDebugDatasetResponse, error)
 	// GetRuntimeDebugDataset returns the latest active/lost/failed dataset
@@ -496,7 +496,7 @@ type ControlPanelServiceServer interface {
 	// prepare its mounted /workspace. The control-plane never writes to the
 	// user's local filesystem directly.
 	PrepareDebugWorkspace(context.Context, *PrepareDebugWorkspaceRequest) (*PrepareDebugWorkspaceResponse, error)
-	// LoadDebugDataset validates mode=0 historical data and sends it to the
+	// LoadDebugDataset validates backtest historical data and sends it to the
 	// selected debugger runtime. This stores metadata only in control-plane DB.
 	LoadDebugDataset(context.Context, *LoadDebugDatasetRequest) (*LoadDebugDatasetResponse, error)
 	// GetRuntimeDebugDataset returns the latest active/lost/failed dataset

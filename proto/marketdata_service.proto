@@ -163,7 +163,7 @@ message SessionMarketDataSubscription {
   string session_id = 3;
   string runtime_id = 4;
   StreamKey key = 5;
-  int32 mode = 6;
+  int32 environment = 6;
   string status = 7;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
@@ -423,7 +423,7 @@ message CreateSessionMarketDataSubscriptionsRequest {
   int64 user_id = 1;
   string session_id = 2;
   string runtime_id = 3;
-  int32 mode = 4;
+  int32 environment = 4;
   repeated StreamKey keys = 5;
 }
 
