@@ -386,8 +386,8 @@ func (s *stubRepo) ListActiveLeasesForStream(_ context.Context, streamID int64) 
 
 // ── RuntimeChannel delivery subscriptions ──────────────────────────────
 
-func subscriptionKey(sessionID string, key domain.StreamKey, mode int32) string {
-	return sessionID + "|" + key.Exchange + "|" + key.Market + "|" + key.Kind + "|" + key.Symbol + "|" + key.Interval + "|" + itoa64(int64(mode))
+func subscriptionKey(sessionID string, key domain.StreamKey, environment int32) string {
+	return sessionID + "|" + key.Exchange + "|" + key.Market + "|" + key.Kind + "|" + key.Symbol + "|" + key.Interval + "|" + itoa64(int64(environment))
 }
 
 func (s *stubRepo) UpsertSessionMarketDataSubscriptions(
@@ -395,7 +395,7 @@ func (s *stubRepo) UpsertSessionMarketDataSubscriptions(
 	userID int64,
 	sessionID string,
 	runtimeID string,
-	mode int32,
+	environment int32,
 	keys []domain.StreamKey,
 ) ([]domain.SessionMarketDataSubscription, error) {
 	s.mu.Lock()
@@ -403,7 +403,7 @@ func (s *stubRepo) UpsertSessionMarketDataSubscriptions(
 	now := time.Now()
 	out := make([]domain.SessionMarketDataSubscription, 0, len(keys))
 	for _, key := range keys {
-		k := subscriptionKey(sessionID, key, mode)
+		k := subscriptionKey(sessionID, key, environment)
 		if id, ok := s.subByKey[k]; ok {
 			sub := s.subs[id]
 			sub.UserID = userID
@@ -421,7 +421,7 @@ func (s *stubRepo) UpsertSessionMarketDataSubscriptions(
 			SessionID:      sessionID,
 			RuntimeID:      runtimeID,
 			Key:            key,
-			Environment:    mode,
+			Environment:    environment,
 			Status:         "active",
 			CreatedAt:      now,
 			UpdatedAt:      now,

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS session_market_data_subscriptions (
     kind            TEXT        NOT NULL DEFAULT 'kline',
     symbol          TEXT        NOT NULL,
     interval        TEXT        NOT NULL DEFAULT '',
-    mode            INTEGER     NOT NULL,
+    environment     INTEGER     NOT NULL,
     status          TEXT        NOT NULL DEFAULT 'active',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS session_market_data_subscriptions (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_session_market_data_subscriptions_active
     ON session_market_data_subscriptions (
-        session_id, exchange, market, kind, symbol, interval, mode
+        session_id, exchange, market, kind, symbol, interval, environment
     )
     WHERE status = 'active';
 

@@ -1,7 +1,7 @@
 -- RuntimeChannel live-delivery diagnostics.
 --
 -- Stores non-secret delivery worker failures so Runtime Management/session
--- detail can explain why a mode=2 session is not receiving live bars.
+-- detail can explain why a demo session is not receiving live bars.
 
 CREATE TABLE IF NOT EXISTS stream_delivery_failures (
     failure_id        BIGSERIAL   PRIMARY KEY,

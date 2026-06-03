@@ -164,7 +164,7 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 		"market",
 		"symbol",
 		"interval",
-		"mode",
+		"environment",
 		"status",
 	}
 	for _, column := range requiredSubscriptionColumns {

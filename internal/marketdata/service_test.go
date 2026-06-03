@@ -497,7 +497,7 @@ func TestCreateSessionMarketDataSubscriptions(t *testing.T) {
 	}
 }
 
-func TestCreateSessionMarketDataSubscriptionsRejectsWrongMode(t *testing.T) {
+func TestCreateSessionMarketDataSubscriptionsRejectsWrongEnvironment(t *testing.T) {
 	svc := newSvc()
 	_, err := svc.CreateSessionMarketDataSubscriptions(context.Background(), &mdv1.CreateSessionMarketDataSubscriptionsRequest{
 		UserId:      42,

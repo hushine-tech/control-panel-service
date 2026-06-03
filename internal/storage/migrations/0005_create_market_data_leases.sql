@@ -10,7 +10,7 @@
 -- operation. Revisit if/when an account-delete path lands.
 --
 -- Session-scoped expiring claims. One row per (session_id, stream_id).
--- Created by strategy-service when a mode=2 session enters live
+-- Created by strategy-service when a demo session enters live data delivery
 -- execution; renewed on heartbeat; expires automatically if heartbeat
 -- stops. Scraper treats an unexpired lease as effective demand even if
 -- the owning request was cancelled.

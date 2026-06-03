@@ -226,7 +226,7 @@ func TestResolveRuntimeRouteByID_RejectsDebuggerRuntimeForExecutorRoute(t *testi
 	}
 }
 
-func TestResolveRuntimeRouteByID_DebuggerModeAndCapacityPolicy(t *testing.T) {
+func TestResolveRuntimeRouteByID_DebuggerEnvironmentAndCapacityPolicy(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
 	heartbeat := fixedNow
@@ -287,7 +287,7 @@ func TestResolveRuntimeRouteByID_DebuggerModeAndCapacityPolicy(t *testing.T) {
 	}
 }
 
-func TestResolveRuntimeRouteByID_ExecutorModeTwoSharedAcrossSources(t *testing.T) {
+func TestResolveRuntimeRouteByID_ExecutorDemoSharedAcrossSources(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
 	heartbeat := fixedNow
