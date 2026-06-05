@@ -170,7 +170,7 @@ type DockerProvisioningConfig struct {
 
 	// RuntimeEnv is a static map of env vars forwarded to every runtime
 	// container as `-e KEY=VALUE`. Used for upstream service addresses
-	// (CORE_SERVICE_GRPC_ADDR / ACCOUNT_SERVICE_GRPC_ADDR, ORDER_SERVICE_GRPC_ADDR, KAFKA_BROKERS,
+	// (CORE_SERVICE_GRPC_ADDR, ORDER_SERVICE_GRPC_ADDR, KAFKA_BROKERS,
 	// TIMESCALEDB_DSN, etc.) that the runtime needs but the platform
 	// doesn't generate per-runtime.
 	RuntimeEnv map[string]string `yaml:"runtime_env"`
@@ -394,10 +394,6 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("DEPENDENCIES_CORE_SERVICE_GRPC"); v != "" {
 		c.Dependencies.AccountServiceGRPC = v
 	} else if v := os.Getenv("CORE_SERVICE_GRPC_ADDR"); v != "" {
-		c.Dependencies.AccountServiceGRPC = v
-	} else if v := os.Getenv("DEPENDENCIES_ACCOUNT_SERVICE_GRPC"); v != "" {
-		c.Dependencies.AccountServiceGRPC = v
-	} else if v := os.Getenv("ACCOUNT_SERVICE_GRPC_ADDR"); v != "" {
 		c.Dependencies.AccountServiceGRPC = v
 	}
 	if v := os.Getenv("DEPENDENCIES_ORDER_SERVICE_GRPC"); v != "" {

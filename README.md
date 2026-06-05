@@ -145,7 +145,6 @@ strategy-service → orphans):
        control_panel_dial_addr: "host.docker.internal:50054"
        runtime_env:
          CORE_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
-         ACCOUNT_SERVICE_GRPC_ADDR: "host.docker.internal:50051" # compatibility alias
          # ... etc
    ```
 4. **Restart control-panel-service** so the new backend takes effect.
@@ -177,7 +176,7 @@ once between `pg_dump` backup and the rolling restart of the 3 callers
 (scraper / quant-handler / strategy-service).
 
 1. **Pause writes to the source tables** (or accept a small data window
-   loss — strategy-service mode=2 lease renewals during the cutover are
+   loss — strategy-service demo/live lease renewals during the cutover are
    not catastrophic since leases auto-expire and are renewed every
    30s).
 2. **Backup the source tables**:
@@ -212,7 +211,7 @@ once between `pg_dump` backup and the rolling restart of the 3 callers
    source tables: `cd core-service && make ensure-db` runs
    `0012_drop_market_data_control_plane.sql`.
 7. **Verify** the live path end-to-end: `quant-frontend` market-data
-   CRUD; scraper reconcile loop; mode=2 strategy session preflight +
+   CRUD; scraper reconcile loop; demo/live strategy session preflight +
    lease renewal.
 
 Roll back: there is no in-product rollback after step 6. Restore from
@@ -267,7 +266,7 @@ Recommended smoke/onboarding sequence:
    Operator signals to watch are stream uptime, last-frame latency,
    in-flight calls, and dropped-command counters/log lines from
    `internal/runtimechannel`.
-7. **Run a mode=0 strategy/backtest from the frontend** with the handler
+7. **Run a backtest strategy from the frontend** with the handler
    cutover flag enabled. Hosted users should still route through direct
    dial; self-hosted users should route through the control-panel proxy.
 
@@ -408,7 +407,7 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
   ack/completion timestamps, payload/result JSON, and failure reason.
 - `session_market_data_subscriptions` — session-scoped data delivery
   authorization derived from the strategy input universe and bound to
-  `(session_id, runtime_id, market, symbol, interval, mode)`.
+  `(session_id, runtime_id, market, symbol, interval, environment)`.
 - `stream_delivery_leases` — delivery worker ownership/heartbeat/expiry for
   RuntimeChannel live-data transfer.
 - `market_data_writer_leases` — scraper write ownership for
@@ -417,7 +416,7 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
 - `market_data_streams` — physical kline stream aggregate state
   (`desired_state`, `actual_state`, freshness, delivery).
 - `market_data_requests` — user-owned demand for live market-data streams.
-- `market_data_leases` — mode=2 session TTL claims that keep a stream alive
+- `market_data_leases` — live-session TTL claims that keep a stream alive
   while a strategy is consuming it.
 - `market_data_history_requests` — finite historical backfill / coverage
   requests.

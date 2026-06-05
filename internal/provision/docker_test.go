@@ -62,8 +62,8 @@ func defaultCfg() config.ProvisioningConfig {
 			LabelPrefix:         "hushine.runtime",
 			RuntimeUserGRPCPort: 50053,
 			RuntimeEnv: map[string]string{
-				"ACCOUNT_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-				"KAFKA_BROKERS":             "127.0.0.1:19092",
+				"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
+				"KAFKA_BROKERS":          "127.0.0.1:19092",
 			},
 		},
 	}
@@ -122,7 +122,7 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 		t.Error("outbound hosted runtime should not receive SERVER_GRPC_ADDR")
 	}
 	// Operator-supplied static env forwarded.
-	assertHasEnv(t, args, "ACCOUNT_SERVICE_GRPC_ADDR=127.0.0.1:50051")
+	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
 	assertHasEnv(t, args, "KAFKA_BROKERS=127.0.0.1:19092")
 	// Labels for traceability.
 	assertHasLabel(t, args, "hushine.runtime.runtime_id=rt_abc123")
@@ -199,8 +199,8 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 		"CONTROL_PANEL_SERVICE_GRPC_ADDR": "evil:50054",
 		"SERVER_GRPC_ADDR":                ":1",
 		// Allowed — legit operator env.
-		"ACCOUNT_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-		"MY_CUSTOM_VAR":             "hello",
+		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
+		"MY_CUSTOM_VAR":          "hello",
 	}
 	runner := &fakeRunner{output: []byte("container_xyz\n")}
 	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50054")
@@ -229,7 +229,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 		}
 	}
 	// Allowed entries DO appear.
-	assertHasEnv(t, args, "ACCOUNT_SERVICE_GRPC_ADDR=127.0.0.1:50051")
+	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
 	assertHasEnv(t, args, "MY_CUSTOM_VAR=hello")
 }
 
