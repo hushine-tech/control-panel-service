@@ -48,9 +48,8 @@ type MarketDataConfig struct {
 }
 
 type DependenciesConfig struct {
-	AccountServiceGRPC        string `yaml:"account_service_grpc"`
-	OrderServiceGRPC          string `yaml:"order_service_grpc"`
-	LegacyStrategyServiceGRPC string `yaml:"legacy_strategy_service_grpc"`
+	AccountServiceGRPC string `yaml:"account_service_grpc"`
+	OrderServiceGRPC   string `yaml:"order_service_grpc"`
 }
 
 type NotificationConfig struct {
@@ -224,9 +223,8 @@ func Default() *Config {
 			KafkaBrokers:        []string{"192.168.88.10:19092"},
 		},
 		Dependencies: DependenciesConfig{
-			AccountServiceGRPC:        "127.0.0.1:50051",
-			OrderServiceGRPC:          "127.0.0.1:50051",
-			LegacyStrategyServiceGRPC: "127.0.0.1:50053",
+			AccountServiceGRPC: "127.0.0.1:50051",
+			OrderServiceGRPC:   "127.0.0.1:50051",
 		},
 		RuntimePlatform: RuntimePlatformConfig{
 			MaxTotalHostedRuntimes:     50,
@@ -406,11 +404,6 @@ func (c *Config) ApplyEnvOverrides() {
 		c.Dependencies.OrderServiceGRPC = v
 	} else if v := os.Getenv("ORDER_SERVICE_GRPC_ADDR"); v != "" {
 		c.Dependencies.OrderServiceGRPC = v
-	}
-	if v := os.Getenv("DEPENDENCIES_LEGACY_STRATEGY_SERVICE_GRPC"); v != "" {
-		c.Dependencies.LegacyStrategyServiceGRPC = v
-	} else if v := os.Getenv("STRATEGY_SERVICE_GRPC_ADDR"); v != "" {
-		c.Dependencies.LegacyStrategyServiceGRPC = v
 	}
 
 	if v := os.Getenv("RUNTIME_PLATFORM_DEFAULT_PLAN_CODE"); v != "" {

@@ -111,40 +111,42 @@ func TestPlatformProxyRejectsSessionMutationFromDifferentRuntime(t *testing.T) {
 	}
 }
 
-func TestPlatformProxyRejectsWalletUpdateForTerminalSession(t *testing.T) {
-	account := &fakeAccountPlatformClient{
-		session: &accountv1.StrategySessionEntry{
-			SessionId: "sess-terminal",
-			UserId:    42,
-			RuntimeId: "runtime-1",
-			Status:    "recoverable",
-		},
-	}
+func TestPlatformProxyRejectsUnknownAccountWalletMethods(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
 	proxy := NewPlatformProxy(account, nil, nil)
-	payload, err := anypb.New(&accountv1.UpdateAccountWalletStateRequest{
-		AccountId:      7,
-		StrategyId:     9,
-		SessionId:      "sess-terminal",
-		SnapshotReason: 6,
-		Futures: &accountv1.FuturesWallet{
-			WalletBalance: 1000,
-		},
-	})
+
+	getPayload, err := anypb.New(&accountv1.GetPortfolioSnapshotRequest{AccountId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	_, err = proxy.DispatchRuntimeRequest(
-		context.Background(),
-		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
-		"account.UpdateAccountWalletState",
-		payload,
-	)
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	updatePayload, err := anypb.New(&accountv1.UpdatePortfolioSnapshotRequest{AccountId: 7})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if account.walletReq != nil {
-		t.Fatalf("UpdateAccountWalletState should not be called: %+v", account.walletReq)
+	cases := []struct {
+		name    string
+		method  string
+		payload *anypb.Any
+	}{
+		{name: "unknown wallet read", method: "account.RemovedWalletRead", payload: getPayload},
+		{name: "unknown wallet write", method: "account.RemovedWalletWrite", payload: updatePayload},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := proxy.DispatchRuntimeRequest(
+				context.Background(),
+				AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+				tc.method,
+				tc.payload,
+			)
+			if status.Code(err) != codes.Unimplemented {
+				t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
+			}
+			if account.getAccountReq != nil || account.portfolioGetReq != nil || account.portfolioUpdateReq != nil {
+				t.Fatalf("removed method touched account client: get=%+v portfolio_get=%+v portfolio_update=%+v", account.getAccountReq, account.portfolioGetReq, account.portfolioUpdateReq)
+			}
+		})
 	}
 }
 
@@ -676,7 +678,6 @@ type fakeAccountPlatformClient struct {
 	getAccountReq      *accountv1.GetAccountRequest
 	saveReq            *accountv1.SaveSessionRequest
 	updateReq          *accountv1.UpdateSessionRequest
-	walletReq          *accountv1.UpdateAccountWalletStateRequest
 	portfolioGetReq    *accountv1.GetPortfolioSnapshotRequest
 	portfolioUpdateReq *accountv1.UpdatePortfolioSnapshotRequest
 	preflightReq       *accountv1.PreflightStrategySessionRequest
@@ -704,10 +705,6 @@ func (f *fakeAccountPlatformClient) GetSession(_ context.Context, req *accountv1
 		}
 	}
 	return &accountv1.GetSessionResponse{Session: session}, nil
-}
-
-func (f *fakeAccountPlatformClient) GetOnlineAccountInfo(context.Context, *accountv1.GetOnlineAccountInfoRequest, ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error) {
-	return &accountv1.GetOnlineAccountInfoResponse{}, nil
 }
 
 func (f *fakeAccountPlatformClient) GetPortfolioSnapshot(_ context.Context, req *accountv1.GetPortfolioSnapshotRequest, _ ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error) {
@@ -751,11 +748,6 @@ func (f *fakeAccountPlatformClient) SaveSession(_ context.Context, req *accountv
 func (f *fakeAccountPlatformClient) UpdateSession(_ context.Context, req *accountv1.UpdateSessionRequest, _ ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error) {
 	f.updateReq = req
 	return &accountv1.UpdateSessionResponse{}, nil
-}
-
-func (f *fakeAccountPlatformClient) UpdateAccountWalletState(_ context.Context, req *accountv1.UpdateAccountWalletStateRequest, _ ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
-	f.walletReq = req
-	return &accountv1.UpdateAccountWalletStateResponse{}, nil
 }
 
 type fakeOrderPlatformClient struct{}

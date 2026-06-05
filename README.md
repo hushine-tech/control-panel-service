@@ -151,21 +151,18 @@ strategy-service → orphans):
 4. **Restart control-panel-service** so the new backend takes effect.
 5. **Smoke**: `cd control-panel-service && go run scripts/smoke_ensure_runtime.go -user <id>`
    — validates EnsureHostedRuntime → docker run → self-register → token round-trip.
-6. **Switch handler feature flag** in
-   `gateway/quant-handler/config.local.yaml`:
-   ```yaml
-   features:
-     control_panel_route_resolution: true   # was false
-   ```
-7. **Restart handler**.
-8. After observation window: optionally enable interceptor strict mode
+6. **Restart handler** after pointing
+   `dependencies.control_panel_service_grpc` at this service. Strategy
+   traffic is always routed through RuntimeChannel now; there is no
+   handler-side direct strategy-service fallback.
+7. After observation window: optionally enable interceptor strict mode
    on the runtime side via `RUNTIME_CALLER_TOKEN_ENFORCE=1` (default
    true; flip to `0` if you want log-only during a long bake).
 
-To roll back: flip handler feature flag to false (instant), then
-optionally switch control-panel backend back to `noop`. Existing
-running runtime containers continue to be reachable via direct dial
-until they're ended / restart out.
+To roll back runtime provisioning, switch control-panel backend back to
+`noop` and restart control-panel-service. Handler strategy traffic still
+requires a registered runtime and RuntimeChannel route; the old direct
+strategy-service route has been removed.
 
 ## D2 cutover rollout sequence (market-data control plane)
 

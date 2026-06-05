@@ -24,14 +24,12 @@ import (
 type AccountPlatformClient interface {
 	GetAccount(ctx context.Context, in *accountv1.GetAccountRequest, opts ...grpc.CallOption) (*accountv1.GetAccountResponse, error)
 	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
-	GetOnlineAccountInfo(ctx context.Context, in *accountv1.GetOnlineAccountInfoRequest, opts ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *accountv1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error)
 	UpdatePortfolioSnapshot(ctx context.Context, in *accountv1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error)
 	PreflightStrategySession(ctx context.Context, in *accountv1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error)
 	GetActiveStrategy(ctx context.Context, in *accountv1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error)
 	SaveSession(ctx context.Context, in *accountv1.SaveSessionRequest, opts ...grpc.CallOption) (*accountv1.SaveSessionResponse, error)
 	UpdateSession(ctx context.Context, in *accountv1.UpdateSessionRequest, opts ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error)
-	UpdateAccountWalletState(ctx context.Context, in *accountv1.UpdateAccountWalletStateRequest, opts ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error)
 }
 
 type OrderPlatformClient interface {
@@ -115,20 +113,6 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		return nil, status.Error(codes.PermissionDenied, "authenticated runtime user_id is required")
 	}
 	switch canonicalPlatformMethod(method) {
-	case "account.GetOnlineAccountInfo":
-		req := &accountv1.GetOnlineAccountInfoRequest{}
-		if err := unpackRuntimePayload(payload, req); err != nil {
-			return nil, err
-		}
-		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
-			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
-		}
-		req.UserId = rt.UserID
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
-			return nil, err
-		}
-		return p.requireAccount().GetOnlineAccountInfo(ctx, req)
-
 	case "account.GetPortfolioSnapshot":
 		req := &accountv1.GetPortfolioSnapshotRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
@@ -216,21 +200,6 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		}
 		req.RuntimeId = rt.RuntimeID
 		return p.requireAccount().UpdateSession(ctx, req)
-
-	case "account.UpdateAccountWalletState":
-		req := &accountv1.UpdateAccountWalletStateRequest{}
-		if err := unpackRuntimePayload(payload, req); err != nil {
-			return nil, err
-		}
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(req.GetSessionId()) != "" {
-			if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
-				return nil, err
-			}
-		}
-		return p.requireAccount().UpdateAccountWalletState(ctx, req)
 
 	case "order.PlaceOrder":
 		req := &orderv1.PlaceOrderRequest{}
@@ -502,8 +471,6 @@ func canonicalPlatformMethod(method string) string {
 	method = strings.TrimSpace(method)
 	method = strings.TrimPrefix(method, "/")
 	switch method {
-	case "GetOnlineAccountInfo", "account.v1.AccountService/GetOnlineAccountInfo":
-		return "account.GetOnlineAccountInfo"
 	case "GetPortfolioSnapshot", "account.v1.AccountService/GetPortfolioSnapshot":
 		return "account.GetPortfolioSnapshot"
 	case "UpdatePortfolioSnapshot", "account.v1.AccountService/UpdatePortfolioSnapshot":
@@ -516,8 +483,6 @@ func canonicalPlatformMethod(method string) string {
 		return "account.SaveSession"
 	case "UpdateSession", "account.v1.AccountService/UpdateSession":
 		return "account.UpdateSession"
-	case "UpdateAccountWalletState", "account.v1.AccountService/UpdateAccountWalletState":
-		return "account.UpdateAccountWalletState"
 	case "PlaceOrder", "order.v1.OrderService/PlaceOrder":
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
@@ -954,9 +919,6 @@ func (unavailableAccountClient) GetAccount(context.Context, *accountv1.GetAccoun
 func (unavailableAccountClient) GetSession(context.Context, *accountv1.GetSessionRequest, ...grpc.CallOption) (*accountv1.GetSessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) GetOnlineAccountInfo(context.Context, *accountv1.GetOnlineAccountInfoRequest, ...grpc.CallOption) (*accountv1.GetOnlineAccountInfoResponse, error) {
-	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
-}
 func (unavailableAccountClient) GetPortfolioSnapshot(context.Context, *accountv1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
@@ -973,9 +935,6 @@ func (unavailableAccountClient) SaveSession(context.Context, *accountv1.SaveSess
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) UpdateSession(context.Context, *accountv1.UpdateSessionRequest, ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error) {
-	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
-}
-func (unavailableAccountClient) UpdateAccountWalletState(context.Context, *accountv1.UpdateAccountWalletStateRequest, ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 

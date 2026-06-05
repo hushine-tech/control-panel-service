@@ -23,7 +23,6 @@ market_data:
 dependencies:
   account_service_grpc: "127.0.0.1:50051"
   order_service_grpc: "127.0.0.1:50051"
-  legacy_strategy_service_grpc: "127.0.0.1:50053"
 
 # Platform-wide caps. Effective per-user limits combine plan and platform
 # according to applyPlatformCap (plan/resolver.go):
