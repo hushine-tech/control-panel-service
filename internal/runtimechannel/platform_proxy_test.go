@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
@@ -233,6 +235,47 @@ func TestPlatformProxyPreflightStrategySessionInjectsAuthenticatedUser(t *testin
 		account.preflightReq.GetAccountId() != 7 ||
 		len(account.preflightReq.GetRequiredRoutes()) != 1 {
 		t.Fatalf("PreflightStrategySession req = %+v", account.preflightReq)
+	}
+}
+
+func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(account, order, nil)
+	goodTillDate := timestamppb.New(time.Unix(1893456000, 0).UTC())
+	payload, err := anypb.New(&orderv1.PlaceOrderRequest{
+		AccountId:    7,
+		Symbol:       "BTCUSDT",
+		Side:         "BUY",
+		Qty:          0.1,
+		OrderType:    "LIMIT",
+		TimeInForce:  "GTD",
+		PostOnly:     false,
+		GoodTillDate: goodTillDate,
+		ReduceOnly:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"order.PlaceOrder",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if order.placeReq == nil {
+		t.Fatal("PlaceOrder was not called")
+	}
+	if order.placeReq.GetAccountId() != 7 || order.placeReq.GetSymbol() != "BTCUSDT" {
+		t.Fatalf("PlaceOrder route = %+v", order.placeReq)
+	}
+	if order.placeReq.GetPostOnly() || !order.placeReq.GetReduceOnly() || order.placeReq.GetGoodTillDate().AsTime().Unix() != 1893456000 {
+		t.Fatalf("advanced fields = %+v, want post_only=false reduce_only=true good_till_date=1893456000", order.placeReq)
 	}
 }
 
@@ -798,9 +841,12 @@ func (f *fakeAccountPlatformClient) UpdateSession(_ context.Context, req *accoun
 	return &accountv1.UpdateSessionResponse{}, nil
 }
 
-type fakeOrderPlatformClient struct{}
+type fakeOrderPlatformClient struct {
+	placeReq *orderv1.PlaceOrderRequest
+}
 
-func (fakeOrderPlatformClient) PlaceOrder(context.Context, *orderv1.PlaceOrderRequest, ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error) {
+func (f *fakeOrderPlatformClient) PlaceOrder(_ context.Context, req *orderv1.PlaceOrderRequest, _ ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error) {
+	f.placeReq = req
 	return &orderv1.PlaceOrderResponse{}, nil
 }
 
