@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,8 @@ const (
 	klineTopicPrefix           = "md.kline"
 	defaultKafkaRefreshEvery   = 5 * time.Second
 	defaultStreamDeliveryLease = 30 * time.Second
+	demoEnvironment            = 1
+	maxDemoKlineDelay          = time.Minute
 )
 
 type LiveDeliverySubscriptionRepository interface {
@@ -363,12 +366,30 @@ func (w *KafkaLiveDeliveryWorker) handleKlineMessage(ctx context.Context, topic 
 		return err
 	}
 	streamKey := route.streamKey()
+	now := time.Now().UTC()
 	for _, sub := range subs {
 		if _, err := w.repo.CreateOrRenewStreamDeliveryLease(ctx, sub.SubscriptionID, w.cfg.OwnerInstanceID, w.cfg.LeaseTTL); err != nil {
 			if errors.Is(err, mdrepo.ErrPermissionDenied) {
 				continue
 			}
 			_ = w.recordDeliveryFailure(ctx, sub.SubscriptionID, topic, streamKey, "lease_error", err)
+			continue
+		}
+		if stale, ageMs, eventTimeMs := isStaleDemoKline(sub.Environment, payload, now); stale {
+			log.Printf(
+				"dropping stale demo live kline session=%s runtime=%s stream=%s topic=%s offset=%d age_ms=%d event_time_ms=%d max_age_ms=%d",
+				sub.SessionID,
+				sub.RuntimeID,
+				streamKey,
+				topic,
+				offset,
+				ageMs,
+				eventTimeMs,
+				maxDemoKlineDelay.Milliseconds(),
+			)
+			if err := w.repo.RecordStreamDeliveryProgress(ctx, sub.SubscriptionID, w.cfg.OwnerInstanceID, topic, partition, offset, now); err != nil {
+				_ = w.recordDeliveryFailure(ctx, sub.SubscriptionID, topic, streamKey, "progress_error", err)
+			}
 			continue
 		}
 		if err := w.deliverer.DeliverLiveKlineBatch(ctx, LiveKlineDeliveryBatch{
@@ -406,6 +427,53 @@ func routeFromKlineMessage(topic string, key, value []byte) (klineRoute, error) 
 	}
 	route.Symbol = symbol
 	return normalizeRoute(route), nil
+}
+
+func isStaleDemoKline(environment int32, payload map[string]any, now time.Time) (bool, int64, int64) {
+	if environment != demoEnvironment {
+		return false, 0, 0
+	}
+	eventTimeMs := klineEventTimeMs(payload)
+	if eventTimeMs <= 0 {
+		return false, 0, 0
+	}
+	ageMs := now.UnixMilli() - eventTimeMs
+	return ageMs > maxDemoKlineDelay.Milliseconds(), ageMs, eventTimeMs
+}
+
+func klineEventTimeMs(payload map[string]any) int64 {
+	for _, key := range []string{"timestamp", "close_time", "close_time_ms", "event_time"} {
+		if value, ok := int64FromAny(payload[key]); ok {
+			return value
+		}
+	}
+	return 0
+}
+
+func int64FromAny(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return n, true
+		}
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err == nil {
+			return n, true
+		}
+	}
+	return 0, false
 }
 
 func parseKlineTopic(topic string) (klineRoute, error) {

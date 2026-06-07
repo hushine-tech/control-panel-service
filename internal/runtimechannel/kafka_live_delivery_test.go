@@ -3,6 +3,7 @@ package runtimechannel
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,52 @@ func TestKafkaLiveDeliveryWorkerRoutesMatchingKlineMessages(t *testing.T) {
 	}
 	if got := st.GetFields()["symbol"].GetStringValue(); got != "ETHUSDT" {
 		t.Fatalf("packed symbol = %q, want ETHUSDT", got)
+	}
+}
+
+func TestKafkaLiveDeliveryWorkerDropsStaleDemoKlineMessages(t *testing.T) {
+	repo := &liveDeliveryRepoStub{subs: []domain.SessionMarketDataSubscription{{
+		SubscriptionID: 7,
+		UserID:         42,
+		SessionID:      "sess-1",
+		RuntimeID:      "rt-1",
+		Environment:    1,
+		Key: domain.StreamKey{
+			Exchange: "binance",
+			Market:   "futures",
+			Kind:     "kline",
+			Symbol:   "ETHUSDT",
+			Interval: "1m",
+		},
+		Status: "active",
+	}}}
+	deliverer := &captureLiveDeliverer{}
+	worker := NewKafkaLiveDeliveryWorker(repo, deliverer, KafkaLiveDeliveryConfig{
+		OwnerInstanceID: "cp-1",
+		LeaseTTL:        time.Minute,
+	})
+	if err := worker.refreshSubscriptions(context.Background()); err != nil {
+		t.Fatalf("refreshSubscriptions: %v", err)
+	}
+	staleCloseTime := time.Now().Add(-2 * time.Minute).UnixMilli()
+
+	err := worker.handleKlineMessage(
+		context.Background(),
+		"md.kline.binance.futures.1m",
+		[]byte("ETHUSDT"),
+		[]byte(`{"symbol":"ETHUSDT","interval":"1m","close":100.5,"close_time":`+strconv.FormatInt(staleCloseTime, 10)+`}`),
+		0,
+		11,
+	)
+
+	if err != nil {
+		t.Fatalf("handleKlineMessage: %v", err)
+	}
+	if len(deliverer.batches) != 0 {
+		t.Fatalf("delivered batches = %d, want stale demo kline dropped", len(deliverer.batches))
+	}
+	if repo.progress != 1 || repo.lastOffset != 11 {
+		t.Fatalf("delivery progress = count:%d offset:%d, want 1/11 for dropped stale message", repo.progress, repo.lastOffset)
 	}
 }
 

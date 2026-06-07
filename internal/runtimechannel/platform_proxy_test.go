@@ -236,15 +236,8 @@ func TestPlatformProxyPreflightStrategySessionInjectsAuthenticatedUser(t *testin
 	}
 }
 
-func TestPlatformProxyUpdatePortfolioSnapshotChecksSessionAndInjectsUser(t *testing.T) {
-	account := &fakeAccountPlatformClient{
-		session: &accountv1.StrategySessionEntry{
-			SessionId: "sess-1",
-			UserId:    42,
-			RuntimeId: "runtime-1",
-			Status:    "running",
-		},
-	}
+func TestPlatformProxyUpdatePortfolioSnapshotIsRejected(t *testing.T) {
+	account := &fakeAccountPlatformClient{}
 	proxy := NewPlatformProxy(account, nil, nil)
 	payload, err := anypb.New(&accountv1.UpdatePortfolioSnapshotRequest{
 		AccountId:      7,
@@ -256,23 +249,66 @@ func TestPlatformProxyUpdatePortfolioSnapshotChecksSessionAndInjectsUser(t *test
 		t.Fatal(err)
 	}
 
-	resp, err := proxy.DispatchRuntimeRequest(
+	_, err = proxy.DispatchRuntimeRequest(
 		context.Background(),
 		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
 		"account.UpdatePortfolioSnapshot",
+		payload,
+	)
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
+	}
+	if account.portfolioUpdateReq != nil {
+		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", account.portfolioUpdateReq)
+	}
+}
+
+func TestPlatformProxyUpdateAccountWalletStateChecksSessionAndInjectsUser(t *testing.T) {
+	account := &fakeAccountPlatformClient{
+		session: &accountv1.StrategySessionEntry{
+			SessionId: "sess-1",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.UpdateAccountWalletStateRequest{
+		AccountId:      7,
+		TotalValue:     1200,
+		WalletBalance:  1100,
+		SnapshotReason: 1,
+		StrategyId:     9,
+		SessionId:      "sess-1",
+		Futures: &accountv1.FuturesWallet{
+			MarginMode:       "cross",
+			PositionMode:     "one_way",
+			WalletBalance:    1100,
+			AvailableBalance: 1000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.UpdateAccountWalletState",
 		payload,
 	)
 	if err != nil {
 		t.Fatalf("DispatchRuntimeRequest: %v", err)
 	}
 
-	if _, ok := resp.(*accountv1.UpdatePortfolioSnapshotResponse); !ok {
-		t.Fatalf("response = %T, want UpdatePortfolioSnapshotResponse", resp)
+	if _, ok := resp.(*accountv1.UpdateAccountWalletStateResponse); !ok {
+		t.Fatalf("response = %T, want UpdateAccountWalletStateResponse", resp)
 	}
-	if account.portfolioUpdateReq.GetUserId() != 42 ||
-		account.portfolioUpdateReq.GetAccountId() != 7 ||
-		account.portfolioUpdateReq.GetSessionId() != "sess-1" {
-		t.Fatalf("UpdatePortfolioSnapshot req = %+v", account.portfolioUpdateReq)
+	if account.walletStateUpdateReq.GetUserId() != 42 ||
+		account.walletStateUpdateReq.GetAccountId() != 7 ||
+		account.walletStateUpdateReq.GetSessionId() != "sess-1" ||
+		account.walletStateUpdateReq.GetFutures().GetWalletBalance() != 1100 {
+		t.Fatalf("UpdateAccountWalletState req = %+v", account.walletStateUpdateReq)
 	}
 }
 
@@ -300,8 +336,8 @@ func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *t
 		"account.v1.AccountService/UpdatePortfolioSnapshot",
 		payload,
 	)
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
 	}
 	if account.portfolioUpdateReq != nil {
 		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", account.portfolioUpdateReq)
@@ -325,8 +361,8 @@ func TestPlatformProxyUpdatePortfolioSnapshotRejectsEmptySessionID(t *testing.T)
 		"account.UpdatePortfolioSnapshot",
 		payload,
 	)
-	if code := status.Code(err); code != codes.InvalidArgument && code != codes.PermissionDenied {
-		t.Fatalf("code = %v, want InvalidArgument or PermissionDenied (err=%v)", code, err)
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
 	}
 	if account.portfolioUpdateReq != nil {
 		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", account.portfolioUpdateReq)
@@ -675,13 +711,14 @@ func mustStruct(t *testing.T, fields map[string]any) *structpb.Struct {
 }
 
 type fakeAccountPlatformClient struct {
-	getAccountReq      *accountv1.GetAccountRequest
-	saveReq            *accountv1.SaveSessionRequest
-	updateReq          *accountv1.UpdateSessionRequest
-	portfolioGetReq    *accountv1.GetPortfolioSnapshotRequest
-	portfolioUpdateReq *accountv1.UpdatePortfolioSnapshotRequest
-	preflightReq       *accountv1.PreflightStrategySessionRequest
-	session            *accountv1.StrategySessionEntry
+	getAccountReq        *accountv1.GetAccountRequest
+	saveReq              *accountv1.SaveSessionRequest
+	updateReq            *accountv1.UpdateSessionRequest
+	portfolioGetReq      *accountv1.GetPortfolioSnapshotRequest
+	portfolioUpdateReq   *accountv1.UpdatePortfolioSnapshotRequest
+	walletStateUpdateReq *accountv1.UpdateAccountWalletStateRequest
+	preflightReq         *accountv1.PreflightStrategySessionRequest
+	session              *accountv1.StrategySessionEntry
 }
 
 func (f *fakeAccountPlatformClient) GetAccount(_ context.Context, req *accountv1.GetAccountRequest, _ ...grpc.CallOption) (*accountv1.GetAccountResponse, error) {
@@ -718,6 +755,17 @@ func (f *fakeAccountPlatformClient) UpdatePortfolioSnapshot(_ context.Context, r
 	f.portfolioUpdateReq = req
 	return &accountv1.UpdatePortfolioSnapshotResponse{
 		Snapshot: &accountv1.PortfolioSnapshot{AccountId: req.GetAccountId(), UserId: req.GetUserId()},
+	}, nil
+}
+
+func (f *fakeAccountPlatformClient) UpdateAccountWalletState(_ context.Context, req *accountv1.UpdateAccountWalletStateRequest, _ ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
+	f.walletStateUpdateReq = req
+	return &accountv1.UpdateAccountWalletStateResponse{
+		Wallet: &accountv1.AccountWalletState{
+			TotalValue: req.GetTotalValue(),
+			Futures:    req.GetFutures(),
+			Spot:       req.GetSpot(),
+		},
 	}, nil
 }
 

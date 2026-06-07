@@ -26,6 +26,7 @@ type AccountPlatformClient interface {
 	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *accountv1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error)
 	UpdatePortfolioSnapshot(ctx context.Context, in *accountv1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error)
+	UpdateAccountWalletState(ctx context.Context, in *accountv1.UpdateAccountWalletStateRequest, opts ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error)
 	PreflightStrategySession(ctx context.Context, in *accountv1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error)
 	GetActiveStrategy(ctx context.Context, in *accountv1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error)
 	SaveSession(ctx context.Context, in *accountv1.SaveSessionRequest, opts ...grpc.CallOption) (*accountv1.SaveSessionResponse, error)
@@ -128,7 +129,10 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		return p.requireAccount().GetPortfolioSnapshot(ctx, req)
 
 	case "account.UpdatePortfolioSnapshot":
-		req := &accountv1.UpdatePortfolioSnapshotRequest{}
+		return nil, status.Error(codes.Unimplemented, "account.UpdatePortfolioSnapshot is deprecated for runtime sessions; use account.UpdateAccountWalletState")
+
+	case "account.UpdateAccountWalletState":
+		req := &accountv1.UpdateAccountWalletStateRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
@@ -145,7 +149,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
 			return nil, err
 		}
-		return p.requireAccount().UpdatePortfolioSnapshot(ctx, req)
+		return p.requireAccount().UpdateAccountWalletState(ctx, req)
 
 	case "account.PreflightStrategySession":
 		req := &accountv1.PreflightStrategySessionRequest{}
@@ -475,6 +479,8 @@ func canonicalPlatformMethod(method string) string {
 		return "account.GetPortfolioSnapshot"
 	case "UpdatePortfolioSnapshot", "account.v1.AccountService/UpdatePortfolioSnapshot":
 		return "account.UpdatePortfolioSnapshot"
+	case "UpdateAccountWalletState", "account.v1.AccountService/UpdateAccountWalletState":
+		return "account.UpdateAccountWalletState"
 	case "PreflightStrategySession", "account.v1.AccountService/PreflightStrategySession":
 		return "account.PreflightStrategySession"
 	case "GetActiveStrategy", "account.v1.AccountService/GetActiveStrategy":
@@ -923,6 +929,9 @@ func (unavailableAccountClient) GetPortfolioSnapshot(context.Context, *accountv1
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) UpdatePortfolioSnapshot(context.Context, *accountv1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailableAccountClient) UpdateAccountWalletState(context.Context, *accountv1.UpdateAccountWalletStateRequest, ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailableAccountClient) PreflightStrategySession(context.Context, *accountv1.PreflightStrategySessionRequest, ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error) {
