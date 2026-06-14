@@ -20,14 +20,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlPanelService_RegisterRuntime_FullMethodName              = "/controlpanel.v1.ControlPanelService/RegisterRuntime"
-	ControlPanelService_HeartbeatRuntime_FullMethodName             = "/controlpanel.v1.ControlPanelService/HeartbeatRuntime"
 	ControlPanelService_ListRuntimes_FullMethodName                 = "/controlpanel.v1.ControlPanelService/ListRuntimes"
 	ControlPanelService_GetRuntime_FullMethodName                   = "/controlpanel.v1.ControlPanelService/GetRuntime"
 	ControlPanelService_EndRuntime_FullMethodName                   = "/controlpanel.v1.ControlPanelService/EndRuntime"
 	ControlPanelService_ResolveRuntimeRouteByID_FullMethodName      = "/controlpanel.v1.ControlPanelService/ResolveRuntimeRouteByID"
 	ControlPanelService_EnsureHostedRuntime_FullMethodName          = "/controlpanel.v1.ControlPanelService/EnsureHostedRuntime"
-	ControlPanelService_ValidateCallerToken_FullMethodName          = "/controlpanel.v1.ControlPanelService/ValidateCallerToken"
 	ControlPanelService_IssueRuntimeCredential_FullMethodName       = "/controlpanel.v1.ControlPanelService/IssueRuntimeCredential"
 	ControlPanelService_ListRuntimeCredentials_FullMethodName       = "/controlpanel.v1.ControlPanelService/ListRuntimeCredentials"
 	ControlPanelService_ListRuntimeAdmissionFailures_FullMethodName = "/controlpanel.v1.ControlPanelService/ListRuntimeAdmissionFailures"
@@ -54,16 +51,6 @@ const (
 // self-hosted RuntimeChannel proxying, runtime credentials, and the D2
 // market-data control-plane tables (requests / streams / leases / history).
 type ControlPanelServiceClient interface {
-	// RegisterRuntime is called by hosted strategy-runtime instances on startup.
-	// Self-hosted runtimes MUST use RuntimeChannel HELLO with a signed
-	// runtime credential instead; RegisterRuntime rejects source=self_hosted.
-	// The response returns a registration_token that the hosted runtime must
-	// present on subsequent Heartbeat calls.
-	RegisterRuntime(ctx context.Context, in *RegisterRuntimeRequest, opts ...grpc.CallOption) (*RegisterRuntimeResponse, error)
-	// HeartbeatRuntime updates the runtime's heartbeat_at timestamp. Auth via
-	// registration_token in gRPC metadata. Stale heartbeats cause the route
-	// resolver to mark the runtime unhealthy (configurable deadline).
-	HeartbeatRuntime(ctx context.Context, in *HeartbeatRuntimeRequest, opts ...grpc.CallOption) (*HeartbeatRuntimeResponse, error)
 	// ListRuntimes returns the runtimes visible to the authenticated caller.
 	// Filters: user_id (required for non-admin callers), status, source.
 	ListRuntimes(ctx context.Context, in *ListRuntimesRequest, opts ...grpc.CallOption) (*ListRuntimesResponse, error)
@@ -100,16 +87,6 @@ type ControlPanelServiceClient interface {
 	//
 	// For D1 this RPC is gated by quant-handler's strategy session paths.
 	EnsureHostedRuntime(ctx context.Context, in *EnsureHostedRuntimeRequest, opts ...grpc.CallOption) (*EnsureHostedRuntimeResponse, error)
-	// ValidateCallerToken is the runtime-side hook the strategy-runtime
-	// gRPC interceptor calls to verify an inbound `x-caller-token`
-	// metadata value. The caller_token was issued by control-panel-service
-	// on a previous Resolve / Ensure call; this RPC checks that the token
-	// is still valid and is bound to the inbound runtime_id.
-	//
-	// Phase D1 only — D3 will move handler↔runtime traffic through the
-	// control-panel proxy and the per-call attestation token disappears.
-	// Documented as D3-removable.
-	ValidateCallerToken(ctx context.Context, in *ValidateCallerTokenRequest, opts ...grpc.CallOption) (*ValidateCallerTokenResponse, error)
 	// IssueRuntimeCredential generates a fresh Ed25519 keypair server-side,
 	// persists the public key keyed by a server-generated key_id, and
 	// returns {key_id, private_key_pem} to the caller exactly once. The
@@ -175,26 +152,6 @@ func NewControlPanelServiceClient(cc grpc.ClientConnInterface) ControlPanelServi
 	return &controlPanelServiceClient{cc}
 }
 
-func (c *controlPanelServiceClient) RegisterRuntime(ctx context.Context, in *RegisterRuntimeRequest, opts ...grpc.CallOption) (*RegisterRuntimeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RegisterRuntimeResponse)
-	err := c.cc.Invoke(ctx, ControlPanelService_RegisterRuntime_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *controlPanelServiceClient) HeartbeatRuntime(ctx context.Context, in *HeartbeatRuntimeRequest, opts ...grpc.CallOption) (*HeartbeatRuntimeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HeartbeatRuntimeResponse)
-	err := c.cc.Invoke(ctx, ControlPanelService_HeartbeatRuntime_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *controlPanelServiceClient) ListRuntimes(ctx context.Context, in *ListRuntimesRequest, opts ...grpc.CallOption) (*ListRuntimesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListRuntimesResponse)
@@ -239,16 +196,6 @@ func (c *controlPanelServiceClient) EnsureHostedRuntime(ctx context.Context, in 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EnsureHostedRuntimeResponse)
 	err := c.cc.Invoke(ctx, ControlPanelService_EnsureHostedRuntime_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *controlPanelServiceClient) ValidateCallerToken(ctx context.Context, in *ValidateCallerTokenRequest, opts ...grpc.CallOption) (*ValidateCallerTokenResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ValidateCallerTokenResponse)
-	err := c.cc.Invoke(ctx, ControlPanelService_ValidateCallerToken_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -399,16 +346,6 @@ func (c *controlPanelServiceClient) GetStrategyStatus(ctx context.Context, in *s
 // self-hosted RuntimeChannel proxying, runtime credentials, and the D2
 // market-data control-plane tables (requests / streams / leases / history).
 type ControlPanelServiceServer interface {
-	// RegisterRuntime is called by hosted strategy-runtime instances on startup.
-	// Self-hosted runtimes MUST use RuntimeChannel HELLO with a signed
-	// runtime credential instead; RegisterRuntime rejects source=self_hosted.
-	// The response returns a registration_token that the hosted runtime must
-	// present on subsequent Heartbeat calls.
-	RegisterRuntime(context.Context, *RegisterRuntimeRequest) (*RegisterRuntimeResponse, error)
-	// HeartbeatRuntime updates the runtime's heartbeat_at timestamp. Auth via
-	// registration_token in gRPC metadata. Stale heartbeats cause the route
-	// resolver to mark the runtime unhealthy (configurable deadline).
-	HeartbeatRuntime(context.Context, *HeartbeatRuntimeRequest) (*HeartbeatRuntimeResponse, error)
 	// ListRuntimes returns the runtimes visible to the authenticated caller.
 	// Filters: user_id (required for non-admin callers), status, source.
 	ListRuntimes(context.Context, *ListRuntimesRequest) (*ListRuntimesResponse, error)
@@ -445,16 +382,6 @@ type ControlPanelServiceServer interface {
 	//
 	// For D1 this RPC is gated by quant-handler's strategy session paths.
 	EnsureHostedRuntime(context.Context, *EnsureHostedRuntimeRequest) (*EnsureHostedRuntimeResponse, error)
-	// ValidateCallerToken is the runtime-side hook the strategy-runtime
-	// gRPC interceptor calls to verify an inbound `x-caller-token`
-	// metadata value. The caller_token was issued by control-panel-service
-	// on a previous Resolve / Ensure call; this RPC checks that the token
-	// is still valid and is bound to the inbound runtime_id.
-	//
-	// Phase D1 only — D3 will move handler↔runtime traffic through the
-	// control-panel proxy and the per-call attestation token disappears.
-	// Documented as D3-removable.
-	ValidateCallerToken(context.Context, *ValidateCallerTokenRequest) (*ValidateCallerTokenResponse, error)
 	// IssueRuntimeCredential generates a fresh Ed25519 keypair server-side,
 	// persists the public key keyed by a server-generated key_id, and
 	// returns {key_id, private_key_pem} to the caller exactly once. The
@@ -520,12 +447,6 @@ type ControlPanelServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedControlPanelServiceServer struct{}
 
-func (UnimplementedControlPanelServiceServer) RegisterRuntime(context.Context, *RegisterRuntimeRequest) (*RegisterRuntimeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RegisterRuntime not implemented")
-}
-func (UnimplementedControlPanelServiceServer) HeartbeatRuntime(context.Context, *HeartbeatRuntimeRequest) (*HeartbeatRuntimeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method HeartbeatRuntime not implemented")
-}
 func (UnimplementedControlPanelServiceServer) ListRuntimes(context.Context, *ListRuntimesRequest) (*ListRuntimesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRuntimes not implemented")
 }
@@ -540,9 +461,6 @@ func (UnimplementedControlPanelServiceServer) ResolveRuntimeRouteByID(context.Co
 }
 func (UnimplementedControlPanelServiceServer) EnsureHostedRuntime(context.Context, *EnsureHostedRuntimeRequest) (*EnsureHostedRuntimeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EnsureHostedRuntime not implemented")
-}
-func (UnimplementedControlPanelServiceServer) ValidateCallerToken(context.Context, *ValidateCallerTokenRequest) (*ValidateCallerTokenResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ValidateCallerToken not implemented")
 }
 func (UnimplementedControlPanelServiceServer) IssueRuntimeCredential(context.Context, *IssueRuntimeCredentialRequest) (*IssueRuntimeCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IssueRuntimeCredential not implemented")
@@ -602,42 +520,6 @@ func RegisterControlPanelServiceServer(s grpc.ServiceRegistrar, srv ControlPanel
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&ControlPanelService_ServiceDesc, srv)
-}
-
-func _ControlPanelService_RegisterRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRuntimeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlPanelServiceServer).RegisterRuntime(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ControlPanelService_RegisterRuntime_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlPanelServiceServer).RegisterRuntime(ctx, req.(*RegisterRuntimeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ControlPanelService_HeartbeatRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HeartbeatRuntimeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlPanelServiceServer).HeartbeatRuntime(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ControlPanelService_HeartbeatRuntime_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlPanelServiceServer).HeartbeatRuntime(ctx, req.(*HeartbeatRuntimeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _ControlPanelService_ListRuntimes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -726,24 +608,6 @@ func _ControlPanelService_EnsureHostedRuntime_Handler(srv interface{}, ctx conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ControlPanelServiceServer).EnsureHostedRuntime(ctx, req.(*EnsureHostedRuntimeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ControlPanelService_ValidateCallerToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ValidateCallerTokenRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ControlPanelServiceServer).ValidateCallerToken(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ControlPanelService_ValidateCallerToken_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ControlPanelServiceServer).ValidateCallerToken(ctx, req.(*ValidateCallerTokenRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -979,14 +843,6 @@ var ControlPanelService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ControlPanelServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "RegisterRuntime",
-			Handler:    _ControlPanelService_RegisterRuntime_Handler,
-		},
-		{
-			MethodName: "HeartbeatRuntime",
-			Handler:    _ControlPanelService_HeartbeatRuntime_Handler,
-		},
-		{
 			MethodName: "ListRuntimes",
 			Handler:    _ControlPanelService_ListRuntimes_Handler,
 		},
@@ -1005,10 +861,6 @@ var ControlPanelService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "EnsureHostedRuntime",
 			Handler:    _ControlPanelService_EnsureHostedRuntime_Handler,
-		},
-		{
-			MethodName: "ValidateCallerToken",
-			Handler:    _ControlPanelService_ValidateCallerToken_Handler,
 		},
 		{
 			MethodName: "IssueRuntimeCredential",

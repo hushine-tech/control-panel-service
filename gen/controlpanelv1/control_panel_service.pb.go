@@ -1152,300 +1152,6 @@ func (x *StartDebugReplayResponse) GetDataset() *DebugDatasetState {
 	return nil
 }
 
-type RegisterRuntimeRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Optional caller-supplied id; control-plane generates one if empty.
-	RuntimeId string `protobuf:"bytes,1,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	Source    string `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"` // must be "hosted"; self_hosted uses RuntimeChannel
-	// Required for hosted.
-	BindUserId      int64    `protobuf:"varint,3,opt,name=bind_user_id,json=bindUserId,proto3" json:"bind_user_id,omitempty"`
-	Name            string   `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"` // default "default"
-	EndpointHost    string   `protobuf:"bytes,5,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
-	GrpcPort        int32    `protobuf:"varint,6,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	DebugPort       int32    `protobuf:"varint,7,opt,name=debug_port,json=debugPort,proto3" json:"debug_port,omitempty"`
-	Capabilities    []string `protobuf:"bytes,8,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
-	ResourceProfile string   `protobuf:"bytes,9,opt,name=resource_profile,json=resourceProfile,proto3" json:"resource_profile,omitempty"`
-	Version         string   `protobuf:"bytes,10,opt,name=version,proto3" json:"version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *RegisterRuntimeRequest) Reset() {
-	*x = RegisterRuntimeRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RegisterRuntimeRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RegisterRuntimeRequest) ProtoMessage() {}
-
-func (x *RegisterRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RegisterRuntimeRequest.ProtoReflect.Descriptor instead.
-func (*RegisterRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *RegisterRuntimeRequest) GetRuntimeId() string {
-	if x != nil {
-		return x.RuntimeId
-	}
-	return ""
-}
-
-func (x *RegisterRuntimeRequest) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *RegisterRuntimeRequest) GetBindUserId() int64 {
-	if x != nil {
-		return x.BindUserId
-	}
-	return 0
-}
-
-func (x *RegisterRuntimeRequest) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *RegisterRuntimeRequest) GetEndpointHost() string {
-	if x != nil {
-		return x.EndpointHost
-	}
-	return ""
-}
-
-func (x *RegisterRuntimeRequest) GetGrpcPort() int32 {
-	if x != nil {
-		return x.GrpcPort
-	}
-	return 0
-}
-
-func (x *RegisterRuntimeRequest) GetDebugPort() int32 {
-	if x != nil {
-		return x.DebugPort
-	}
-	return 0
-}
-
-func (x *RegisterRuntimeRequest) GetCapabilities() []string {
-	if x != nil {
-		return x.Capabilities
-	}
-	return nil
-}
-
-func (x *RegisterRuntimeRequest) GetResourceProfile() string {
-	if x != nil {
-		return x.ResourceProfile
-	}
-	return ""
-}
-
-func (x *RegisterRuntimeRequest) GetVersion() string {
-	if x != nil {
-		return x.Version
-	}
-	return ""
-}
-
-type RegisterRuntimeResponse struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Runtime *Runtime               `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	// Returned to the runtime to present on subsequent Heartbeat calls.
-	// Caller should treat this as a secret.
-	RegistrationToken string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3" json:"registration_token,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *RegisterRuntimeResponse) Reset() {
-	*x = RegisterRuntimeResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RegisterRuntimeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RegisterRuntimeResponse) ProtoMessage() {}
-
-func (x *RegisterRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RegisterRuntimeResponse.ProtoReflect.Descriptor instead.
-func (*RegisterRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *RegisterRuntimeResponse) GetRuntime() *Runtime {
-	if x != nil {
-		return x.Runtime
-	}
-	return nil
-}
-
-func (x *RegisterRuntimeResponse) GetRegistrationToken() string {
-	if x != nil {
-		return x.RegistrationToken
-	}
-	return ""
-}
-
-type HeartbeatRuntimeRequest struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	RuntimeId string                 `protobuf:"bytes,1,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	// Status the runtime is reporting (typically "active").
-	Status string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	// Caller-side observation summary, for log/audit only. May be empty.
-	Note          string `protobuf:"bytes,3,opt,name=note,proto3" json:"note,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *HeartbeatRuntimeRequest) Reset() {
-	*x = HeartbeatRuntimeRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HeartbeatRuntimeRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HeartbeatRuntimeRequest) ProtoMessage() {}
-
-func (x *HeartbeatRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HeartbeatRuntimeRequest.ProtoReflect.Descriptor instead.
-func (*HeartbeatRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{13}
-}
-
-func (x *HeartbeatRuntimeRequest) GetRuntimeId() string {
-	if x != nil {
-		return x.RuntimeId
-	}
-	return ""
-}
-
-func (x *HeartbeatRuntimeRequest) GetStatus() string {
-	if x != nil {
-		return x.Status
-	}
-	return ""
-}
-
-func (x *HeartbeatRuntimeRequest) GetNote() string {
-	if x != nil {
-		return x.Note
-	}
-	return ""
-}
-
-type HeartbeatRuntimeResponse struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	HeartbeatAt       *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=heartbeat_at,json=heartbeatAt,proto3" json:"heartbeat_at,omitempty"`
-	ShutdownRequested bool                   `protobuf:"varint,2,opt,name=shutdown_requested,json=shutdownRequested,proto3" json:"shutdown_requested,omitempty"`
-	TerminalReason    string                 `protobuf:"bytes,3,opt,name=terminal_reason,json=terminalReason,proto3" json:"terminal_reason,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *HeartbeatRuntimeResponse) Reset() {
-	*x = HeartbeatRuntimeResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HeartbeatRuntimeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HeartbeatRuntimeResponse) ProtoMessage() {}
-
-func (x *HeartbeatRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HeartbeatRuntimeResponse.ProtoReflect.Descriptor instead.
-func (*HeartbeatRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *HeartbeatRuntimeResponse) GetHeartbeatAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.HeartbeatAt
-	}
-	return nil
-}
-
-func (x *HeartbeatRuntimeResponse) GetShutdownRequested() bool {
-	if x != nil {
-		return x.ShutdownRequested
-	}
-	return false
-}
-
-func (x *HeartbeatRuntimeResponse) GetTerminalReason() string {
-	if x != nil {
-		return x.TerminalReason
-	}
-	return ""
-}
-
 type ListRuntimesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"` // required (must equal auth user_id)
@@ -1459,7 +1165,7 @@ type ListRuntimesRequest struct {
 
 func (x *ListRuntimesRequest) Reset() {
 	*x = ListRuntimesRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[15]
+	mi := &file_control_panel_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1471,7 +1177,7 @@ func (x *ListRuntimesRequest) String() string {
 func (*ListRuntimesRequest) ProtoMessage() {}
 
 func (x *ListRuntimesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[15]
+	mi := &file_control_panel_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1484,7 +1190,7 @@ func (x *ListRuntimesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRuntimesRequest.ProtoReflect.Descriptor instead.
 func (*ListRuntimesRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{15}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListRuntimesRequest) GetUserId() int64 {
@@ -1533,7 +1239,7 @@ type ListRuntimesResponse struct {
 
 func (x *ListRuntimesResponse) Reset() {
 	*x = ListRuntimesResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[16]
+	mi := &file_control_panel_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1545,7 +1251,7 @@ func (x *ListRuntimesResponse) String() string {
 func (*ListRuntimesResponse) ProtoMessage() {}
 
 func (x *ListRuntimesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[16]
+	mi := &file_control_panel_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1558,7 +1264,7 @@ func (x *ListRuntimesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRuntimesResponse.ProtoReflect.Descriptor instead.
 func (*ListRuntimesResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{16}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListRuntimesResponse) GetRuntimes() []*Runtime {
@@ -1592,7 +1298,7 @@ type GetRuntimeRequest struct {
 
 func (x *GetRuntimeRequest) Reset() {
 	*x = GetRuntimeRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[17]
+	mi := &file_control_panel_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1604,7 +1310,7 @@ func (x *GetRuntimeRequest) String() string {
 func (*GetRuntimeRequest) ProtoMessage() {}
 
 func (x *GetRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[17]
+	mi := &file_control_panel_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1617,7 +1323,7 @@ func (x *GetRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*GetRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{17}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetRuntimeRequest) GetUserId() int64 {
@@ -1643,7 +1349,7 @@ type GetRuntimeResponse struct {
 
 func (x *GetRuntimeResponse) Reset() {
 	*x = GetRuntimeResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[18]
+	mi := &file_control_panel_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1655,7 +1361,7 @@ func (x *GetRuntimeResponse) String() string {
 func (*GetRuntimeResponse) ProtoMessage() {}
 
 func (x *GetRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[18]
+	mi := &file_control_panel_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1668,7 +1374,7 @@ func (x *GetRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*GetRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{18}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GetRuntimeResponse) GetRuntime() *Runtime {
@@ -1688,7 +1394,7 @@ type EndRuntimeRequest struct {
 
 func (x *EndRuntimeRequest) Reset() {
 	*x = EndRuntimeRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[19]
+	mi := &file_control_panel_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1700,7 +1406,7 @@ func (x *EndRuntimeRequest) String() string {
 func (*EndRuntimeRequest) ProtoMessage() {}
 
 func (x *EndRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[19]
+	mi := &file_control_panel_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1713,7 +1419,7 @@ func (x *EndRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*EndRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{19}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *EndRuntimeRequest) GetUserId() int64 {
@@ -1739,7 +1445,7 @@ type EndRuntimeResponse struct {
 
 func (x *EndRuntimeResponse) Reset() {
 	*x = EndRuntimeResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[20]
+	mi := &file_control_panel_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1751,7 +1457,7 @@ func (x *EndRuntimeResponse) String() string {
 func (*EndRuntimeResponse) ProtoMessage() {}
 
 func (x *EndRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[20]
+	mi := &file_control_panel_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1764,7 +1470,7 @@ func (x *EndRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*EndRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{20}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *EndRuntimeResponse) GetRuntime() *Runtime {
@@ -1792,7 +1498,7 @@ type PublishRuntimeNotificationRequest struct {
 
 func (x *PublishRuntimeNotificationRequest) Reset() {
 	*x = PublishRuntimeNotificationRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[21]
+	mi := &file_control_panel_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1804,7 +1510,7 @@ func (x *PublishRuntimeNotificationRequest) String() string {
 func (*PublishRuntimeNotificationRequest) ProtoMessage() {}
 
 func (x *PublishRuntimeNotificationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[21]
+	mi := &file_control_panel_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1817,7 +1523,7 @@ func (x *PublishRuntimeNotificationRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use PublishRuntimeNotificationRequest.ProtoReflect.Descriptor instead.
 func (*PublishRuntimeNotificationRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{21}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PublishRuntimeNotificationRequest) GetUserId() int64 {
@@ -1899,7 +1605,7 @@ type PublishRuntimeNotificationResponse struct {
 
 func (x *PublishRuntimeNotificationResponse) Reset() {
 	*x = PublishRuntimeNotificationResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[22]
+	mi := &file_control_panel_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1911,7 +1617,7 @@ func (x *PublishRuntimeNotificationResponse) String() string {
 func (*PublishRuntimeNotificationResponse) ProtoMessage() {}
 
 func (x *PublishRuntimeNotificationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[22]
+	mi := &file_control_panel_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1924,7 +1630,7 @@ func (x *PublishRuntimeNotificationResponse) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use PublishRuntimeNotificationResponse.ProtoReflect.Descriptor instead.
 func (*PublishRuntimeNotificationResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{22}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PublishRuntimeNotificationResponse) GetAccepted() bool {
@@ -1946,7 +1652,7 @@ type ResolveRuntimeRouteByIDRequest struct {
 
 func (x *ResolveRuntimeRouteByIDRequest) Reset() {
 	*x = ResolveRuntimeRouteByIDRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[23]
+	mi := &file_control_panel_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +1664,7 @@ func (x *ResolveRuntimeRouteByIDRequest) String() string {
 func (*ResolveRuntimeRouteByIDRequest) ProtoMessage() {}
 
 func (x *ResolveRuntimeRouteByIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[23]
+	mi := &file_control_panel_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +1677,7 @@ func (x *ResolveRuntimeRouteByIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveRuntimeRouteByIDRequest.ProtoReflect.Descriptor instead.
 func (*ResolveRuntimeRouteByIDRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{23}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ResolveRuntimeRouteByIDRequest) GetUserId() int64 {
@@ -2003,23 +1709,15 @@ func (x *ResolveRuntimeRouteByIDRequest) GetEnvironment() int32 {
 }
 
 type ResolveRuntimeRouteResponse struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Runtime *Runtime               `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	// Concatenated "host:port" for direct gRPC dial, e.g. "10.0.0.5:50053".
-	GrpcEndpoint string `protobuf:"bytes,2,opt,name=grpc_endpoint,json=grpcEndpoint,proto3" json:"grpc_endpoint,omitempty"`
-	// Optional debug endpoint when the runtime advertised a debug_port.
-	DebugEndpoint string `protobuf:"bytes,3,opt,name=debug_endpoint,json=debugEndpoint,proto3" json:"debug_endpoint,omitempty"`
-	// Caller token control-plane issues for handler→runtime calls. Short-lived;
-	// handler MUST present it in the gRPC metadata when calling the runtime.
-	CallerToken          string                 `protobuf:"bytes,4,opt,name=caller_token,json=callerToken,proto3" json:"caller_token,omitempty"`
-	CallerTokenExpiresAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=caller_token_expires_at,json=callerTokenExpiresAt,proto3" json:"caller_token_expires_at,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Runtime       *Runtime               `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ResolveRuntimeRouteResponse) Reset() {
 	*x = ResolveRuntimeRouteResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[24]
+	mi := &file_control_panel_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2031,7 +1729,7 @@ func (x *ResolveRuntimeRouteResponse) String() string {
 func (*ResolveRuntimeRouteResponse) ProtoMessage() {}
 
 func (x *ResolveRuntimeRouteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[24]
+	mi := &file_control_panel_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2044,40 +1742,12 @@ func (x *ResolveRuntimeRouteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResolveRuntimeRouteResponse.ProtoReflect.Descriptor instead.
 func (*ResolveRuntimeRouteResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{24}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ResolveRuntimeRouteResponse) GetRuntime() *Runtime {
 	if x != nil {
 		return x.Runtime
-	}
-	return nil
-}
-
-func (x *ResolveRuntimeRouteResponse) GetGrpcEndpoint() string {
-	if x != nil {
-		return x.GrpcEndpoint
-	}
-	return ""
-}
-
-func (x *ResolveRuntimeRouteResponse) GetDebugEndpoint() string {
-	if x != nil {
-		return x.DebugEndpoint
-	}
-	return ""
-}
-
-func (x *ResolveRuntimeRouteResponse) GetCallerToken() string {
-	if x != nil {
-		return x.CallerToken
-	}
-	return ""
-}
-
-func (x *ResolveRuntimeRouteResponse) GetCallerTokenExpiresAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.CallerTokenExpiresAt
 	}
 	return nil
 }
@@ -2098,7 +1768,7 @@ type EnsureHostedRuntimeRequest struct {
 
 func (x *EnsureHostedRuntimeRequest) Reset() {
 	*x = EnsureHostedRuntimeRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[25]
+	mi := &file_control_panel_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2110,7 +1780,7 @@ func (x *EnsureHostedRuntimeRequest) String() string {
 func (*EnsureHostedRuntimeRequest) ProtoMessage() {}
 
 func (x *EnsureHostedRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[25]
+	mi := &file_control_panel_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2123,7 +1793,7 @@ func (x *EnsureHostedRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureHostedRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*EnsureHostedRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{25}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *EnsureHostedRuntimeRequest) GetUserId() int64 {
@@ -2150,22 +1820,17 @@ func (x *EnsureHostedRuntimeRequest) GetResourceProfile() string {
 type EnsureHostedRuntimeResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Runtime *Runtime               `protobuf:"bytes,1,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	// host:port for handler dial.
-	GrpcEndpoint         string                 `protobuf:"bytes,2,opt,name=grpc_endpoint,json=grpcEndpoint,proto3" json:"grpc_endpoint,omitempty"`
-	DebugEndpoint        string                 `protobuf:"bytes,3,opt,name=debug_endpoint,json=debugEndpoint,proto3" json:"debug_endpoint,omitempty"`
-	CallerToken          string                 `protobuf:"bytes,4,opt,name=caller_token,json=callerToken,proto3" json:"caller_token,omitempty"`
-	CallerTokenExpiresAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=caller_token_expires_at,json=callerTokenExpiresAt,proto3" json:"caller_token_expires_at,omitempty"`
 	// True when this call provisioned a new container; false when an
 	// existing healthy runtime was returned. Operators / observability
 	// distinguish lazy first-touch from steady-state reuse.
-	Provisioned   bool `protobuf:"varint,6,opt,name=provisioned,proto3" json:"provisioned,omitempty"`
+	Provisioned   bool `protobuf:"varint,2,opt,name=provisioned,proto3" json:"provisioned,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EnsureHostedRuntimeResponse) Reset() {
 	*x = EnsureHostedRuntimeResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[26]
+	mi := &file_control_panel_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2177,7 +1842,7 @@ func (x *EnsureHostedRuntimeResponse) String() string {
 func (*EnsureHostedRuntimeResponse) ProtoMessage() {}
 
 func (x *EnsureHostedRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[26]
+	mi := &file_control_panel_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2190,7 +1855,7 @@ func (x *EnsureHostedRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureHostedRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*EnsureHostedRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{26}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *EnsureHostedRuntimeResponse) GetRuntime() *Runtime {
@@ -2200,164 +1865,11 @@ func (x *EnsureHostedRuntimeResponse) GetRuntime() *Runtime {
 	return nil
 }
 
-func (x *EnsureHostedRuntimeResponse) GetGrpcEndpoint() string {
-	if x != nil {
-		return x.GrpcEndpoint
-	}
-	return ""
-}
-
-func (x *EnsureHostedRuntimeResponse) GetDebugEndpoint() string {
-	if x != nil {
-		return x.DebugEndpoint
-	}
-	return ""
-}
-
-func (x *EnsureHostedRuntimeResponse) GetCallerToken() string {
-	if x != nil {
-		return x.CallerToken
-	}
-	return ""
-}
-
-func (x *EnsureHostedRuntimeResponse) GetCallerTokenExpiresAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.CallerTokenExpiresAt
-	}
-	return nil
-}
-
 func (x *EnsureHostedRuntimeResponse) GetProvisioned() bool {
 	if x != nil {
 		return x.Provisioned
 	}
 	return false
-}
-
-type ValidateCallerTokenRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Token presented by quant-handler in the inbound RPC's
-	// `x-caller-token` metadata. The runtime forwards it verbatim.
-	CallerToken string `protobuf:"bytes,1,opt,name=caller_token,json=callerToken,proto3" json:"caller_token,omitempty"`
-	// The runtime's own runtime_id. control-panel-service checks the
-	// token was issued for this runtime; a token issued for runtime A
-	// MUST NOT validate when presented to runtime B.
-	RuntimeId     string `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ValidateCallerTokenRequest) Reset() {
-	*x = ValidateCallerTokenRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ValidateCallerTokenRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ValidateCallerTokenRequest) ProtoMessage() {}
-
-func (x *ValidateCallerTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ValidateCallerTokenRequest.ProtoReflect.Descriptor instead.
-func (*ValidateCallerTokenRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *ValidateCallerTokenRequest) GetCallerToken() string {
-	if x != nil {
-		return x.CallerToken
-	}
-	return ""
-}
-
-func (x *ValidateCallerTokenRequest) GetRuntimeId() string {
-	if x != nil {
-		return x.RuntimeId
-	}
-	return ""
-}
-
-type ValidateCallerTokenResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Valid bool                   `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
-	// The user_id the token was bound to at issue time. Returned even
-	// for a valid token so the runtime can cross-check against the
-	// inbound RPC's UserId field.
-	UserId int64 `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	// Diagnostic; set when valid=false. Examples:
-	//
-	//	"expired"       — token TTL elapsed
-	//	"unknown"       — token not in the store (never issued / evicted)
-	//	"runtime_mismatch" — token issued for a different runtime
-	Reason        string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ValidateCallerTokenResponse) Reset() {
-	*x = ValidateCallerTokenResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[28]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ValidateCallerTokenResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ValidateCallerTokenResponse) ProtoMessage() {}
-
-func (x *ValidateCallerTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[28]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ValidateCallerTokenResponse.ProtoReflect.Descriptor instead.
-func (*ValidateCallerTokenResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{28}
-}
-
-func (x *ValidateCallerTokenResponse) GetValid() bool {
-	if x != nil {
-		return x.Valid
-	}
-	return false
-}
-
-func (x *ValidateCallerTokenResponse) GetUserId() int64 {
-	if x != nil {
-		return x.UserId
-	}
-	return 0
-}
-
-func (x *ValidateCallerTokenResponse) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
 }
 
 type IssueRuntimeCredentialRequest struct {
@@ -2380,7 +1892,7 @@ type IssueRuntimeCredentialRequest struct {
 
 func (x *IssueRuntimeCredentialRequest) Reset() {
 	*x = IssueRuntimeCredentialRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[29]
+	mi := &file_control_panel_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2392,7 +1904,7 @@ func (x *IssueRuntimeCredentialRequest) String() string {
 func (*IssueRuntimeCredentialRequest) ProtoMessage() {}
 
 func (x *IssueRuntimeCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[29]
+	mi := &file_control_panel_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2405,7 +1917,7 @@ func (x *IssueRuntimeCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueRuntimeCredentialRequest.ProtoReflect.Descriptor instead.
 func (*IssueRuntimeCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{29}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *IssueRuntimeCredentialRequest) GetUserId() int64 {
@@ -2452,7 +1964,7 @@ type IssueRuntimeCredentialResponse struct {
 
 func (x *IssueRuntimeCredentialResponse) Reset() {
 	*x = IssueRuntimeCredentialResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[30]
+	mi := &file_control_panel_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2464,7 +1976,7 @@ func (x *IssueRuntimeCredentialResponse) String() string {
 func (*IssueRuntimeCredentialResponse) ProtoMessage() {}
 
 func (x *IssueRuntimeCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[30]
+	mi := &file_control_panel_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2477,7 +1989,7 @@ func (x *IssueRuntimeCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueRuntimeCredentialResponse.ProtoReflect.Descriptor instead.
 func (*IssueRuntimeCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{30}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *IssueRuntimeCredentialResponse) GetKeyId() string {
@@ -2532,7 +2044,7 @@ type ListRuntimeCredentialsRequest struct {
 
 func (x *ListRuntimeCredentialsRequest) Reset() {
 	*x = ListRuntimeCredentialsRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[31]
+	mi := &file_control_panel_service_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2544,7 +2056,7 @@ func (x *ListRuntimeCredentialsRequest) String() string {
 func (*ListRuntimeCredentialsRequest) ProtoMessage() {}
 
 func (x *ListRuntimeCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[31]
+	mi := &file_control_panel_service_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2557,7 +2069,7 @@ func (x *ListRuntimeCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRuntimeCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*ListRuntimeCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{31}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListRuntimeCredentialsRequest) GetUserId() int64 {
@@ -2606,7 +2118,7 @@ type ListRuntimeCredentialsResponse struct {
 
 func (x *ListRuntimeCredentialsResponse) Reset() {
 	*x = ListRuntimeCredentialsResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[32]
+	mi := &file_control_panel_service_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2618,7 +2130,7 @@ func (x *ListRuntimeCredentialsResponse) String() string {
 func (*ListRuntimeCredentialsResponse) ProtoMessage() {}
 
 func (x *ListRuntimeCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[32]
+	mi := &file_control_panel_service_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2631,7 +2143,7 @@ func (x *ListRuntimeCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRuntimeCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*ListRuntimeCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{32}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListRuntimeCredentialsResponse) GetCredentials() []*RuntimeCredential {
@@ -2665,7 +2177,7 @@ type ListRuntimeAdmissionFailuresRequest struct {
 
 func (x *ListRuntimeAdmissionFailuresRequest) Reset() {
 	*x = ListRuntimeAdmissionFailuresRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[33]
+	mi := &file_control_panel_service_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2677,7 +2189,7 @@ func (x *ListRuntimeAdmissionFailuresRequest) String() string {
 func (*ListRuntimeAdmissionFailuresRequest) ProtoMessage() {}
 
 func (x *ListRuntimeAdmissionFailuresRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[33]
+	mi := &file_control_panel_service_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2690,7 +2202,7 @@ func (x *ListRuntimeAdmissionFailuresRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use ListRuntimeAdmissionFailuresRequest.ProtoReflect.Descriptor instead.
 func (*ListRuntimeAdmissionFailuresRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{33}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListRuntimeAdmissionFailuresRequest) GetUserId() int64 {
@@ -2716,7 +2228,7 @@ type ListRuntimeAdmissionFailuresResponse struct {
 
 func (x *ListRuntimeAdmissionFailuresResponse) Reset() {
 	*x = ListRuntimeAdmissionFailuresResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[34]
+	mi := &file_control_panel_service_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2728,7 +2240,7 @@ func (x *ListRuntimeAdmissionFailuresResponse) String() string {
 func (*ListRuntimeAdmissionFailuresResponse) ProtoMessage() {}
 
 func (x *ListRuntimeAdmissionFailuresResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[34]
+	mi := &file_control_panel_service_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2741,7 +2253,7 @@ func (x *ListRuntimeAdmissionFailuresResponse) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use ListRuntimeAdmissionFailuresResponse.ProtoReflect.Descriptor instead.
 func (*ListRuntimeAdmissionFailuresResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{34}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListRuntimeAdmissionFailuresResponse) GetFailures() []*RuntimeAdmissionFailure {
@@ -2772,7 +2284,7 @@ type RuntimeAdmissionFailure struct {
 
 func (x *RuntimeAdmissionFailure) Reset() {
 	*x = RuntimeAdmissionFailure{}
-	mi := &file_control_panel_service_proto_msgTypes[35]
+	mi := &file_control_panel_service_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2784,7 +2296,7 @@ func (x *RuntimeAdmissionFailure) String() string {
 func (*RuntimeAdmissionFailure) ProtoMessage() {}
 
 func (x *RuntimeAdmissionFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[35]
+	mi := &file_control_panel_service_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2797,7 +2309,7 @@ func (x *RuntimeAdmissionFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeAdmissionFailure.ProtoReflect.Descriptor instead.
 func (*RuntimeAdmissionFailure) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{35}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *RuntimeAdmissionFailure) GetAdmissionFailureId() int64 {
@@ -2920,7 +2432,7 @@ type RuntimeCredential struct {
 
 func (x *RuntimeCredential) Reset() {
 	*x = RuntimeCredential{}
-	mi := &file_control_panel_service_proto_msgTypes[36]
+	mi := &file_control_panel_service_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2932,7 +2444,7 @@ func (x *RuntimeCredential) String() string {
 func (*RuntimeCredential) ProtoMessage() {}
 
 func (x *RuntimeCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[36]
+	mi := &file_control_panel_service_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2945,7 +2457,7 @@ func (x *RuntimeCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeCredential.ProtoReflect.Descriptor instead.
 func (*RuntimeCredential) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{36}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RuntimeCredential) GetKeyId() string {
@@ -3058,7 +2570,7 @@ type RevokeRuntimeCredentialRequest struct {
 
 func (x *RevokeRuntimeCredentialRequest) Reset() {
 	*x = RevokeRuntimeCredentialRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[37]
+	mi := &file_control_panel_service_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3070,7 +2582,7 @@ func (x *RevokeRuntimeCredentialRequest) String() string {
 func (*RevokeRuntimeCredentialRequest) ProtoMessage() {}
 
 func (x *RevokeRuntimeCredentialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[37]
+	mi := &file_control_panel_service_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3083,7 +2595,7 @@ func (x *RevokeRuntimeCredentialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeRuntimeCredentialRequest.ProtoReflect.Descriptor instead.
 func (*RevokeRuntimeCredentialRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{37}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RevokeRuntimeCredentialRequest) GetUserId() int64 {
@@ -3119,7 +2631,7 @@ type RevokeRuntimeCredentialResponse struct {
 
 func (x *RevokeRuntimeCredentialResponse) Reset() {
 	*x = RevokeRuntimeCredentialResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[38]
+	mi := &file_control_panel_service_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3131,7 +2643,7 @@ func (x *RevokeRuntimeCredentialResponse) String() string {
 func (*RevokeRuntimeCredentialResponse) ProtoMessage() {}
 
 func (x *RevokeRuntimeCredentialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[38]
+	mi := &file_control_panel_service_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3144,7 +2656,7 @@ func (x *RevokeRuntimeCredentialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeRuntimeCredentialResponse.ProtoReflect.Descriptor instead.
 func (*RevokeRuntimeCredentialResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{38}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *RevokeRuntimeCredentialResponse) GetCredential() *RuntimeCredential {
@@ -3207,7 +2719,7 @@ type RuntimeFrame struct {
 
 func (x *RuntimeFrame) Reset() {
 	*x = RuntimeFrame{}
-	mi := &file_control_panel_service_proto_msgTypes[39]
+	mi := &file_control_panel_service_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3219,7 +2731,7 @@ func (x *RuntimeFrame) String() string {
 func (*RuntimeFrame) ProtoMessage() {}
 
 func (x *RuntimeFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[39]
+	mi := &file_control_panel_service_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3232,7 +2744,7 @@ func (x *RuntimeFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeFrame.ProtoReflect.Descriptor instead.
 func (*RuntimeFrame) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{39}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RuntimeFrame) GetCorrelationId() string {
@@ -3568,31 +3080,34 @@ func (*RuntimeFrame_Resume) isRuntimeFrame_Payload() {}
 func (*RuntimeFrame_HeartbeatAck) isRuntimeFrame_Payload() {}
 
 type RuntimeHello struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	KeyId string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	// Optional caller-supplied id; if empty, control-panel-service derives one
-	// from the key_id so reconnects remain stable enough for registry routing.
-	RuntimeId       string   `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	Name            string   `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	EndpointHost    string   `protobuf:"bytes,4,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
-	GrpcPort        int32    `protobuf:"varint,5,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
-	DebugPort       int32    `protobuf:"varint,6,opt,name=debug_port,json=debugPort,proto3" json:"debug_port,omitempty"`
-	Capabilities    []string `protobuf:"bytes,7,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
-	ResourceProfile string   `protobuf:"bytes,8,opt,name=resource_profile,json=resourceProfile,proto3" json:"resource_profile,omitempty"`
-	Version         string   `protobuf:"bytes,9,opt,name=version,proto3" json:"version,omitempty"`
-	IssuedAtUnixMs  int64    `protobuf:"varint,10,opt,name=issued_at_unix_ms,json=issuedAtUnixMs,proto3" json:"issued_at_unix_ms,omitempty"`
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	KeyId           string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	RuntimeId       string                 `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
+	Name            string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	EndpointHost    string                 `protobuf:"bytes,4,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
+	GrpcPort        int32                  `protobuf:"varint,5,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
+	DebugPort       int32                  `protobuf:"varint,6,opt,name=debug_port,json=debugPort,proto3" json:"debug_port,omitempty"`
+	Capabilities    []string               `protobuf:"bytes,7,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	ResourceProfile string                 `protobuf:"bytes,8,opt,name=resource_profile,json=resourceProfile,proto3" json:"resource_profile,omitempty"`
+	Version         string                 `protobuf:"bytes,9,opt,name=version,proto3" json:"version,omitempty"`
+	IssuedAtUnixMs  int64                  `protobuf:"varint,10,opt,name=issued_at_unix_ms,json=issuedAtUnixMs,proto3" json:"issued_at_unix_ms,omitempty"`
 	// Base64url-no-padding 16 random bytes.
 	Nonce string `protobuf:"bytes,11,opt,name=nonce,proto3" json:"nonce,omitempty"`
 	// Base64url-no-padding Ed25519 signature over the canonical HELLO payload
 	// excluding this field.
-	Signature     string `protobuf:"bytes,12,opt,name=signature,proto3" json:"signature,omitempty"`
+	Signature string `protobuf:"bytes,12,opt,name=signature,proto3" json:"signature,omitempty"`
+	// hosted, self_hosted, or bare. Empty keeps old credential HELLO behavior
+	// and is normalized by control-panel from credential metadata.
+	Source string `protobuf:"bytes,13,opt,name=source,proto3" json:"source,omitempty"`
+	// Required only when source=bare.
+	UserId        int64 `protobuf:"varint,14,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RuntimeHello) Reset() {
 	*x = RuntimeHello{}
-	mi := &file_control_panel_service_proto_msgTypes[40]
+	mi := &file_control_panel_service_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3604,7 +3119,7 @@ func (x *RuntimeHello) String() string {
 func (*RuntimeHello) ProtoMessage() {}
 
 func (x *RuntimeHello) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[40]
+	mi := &file_control_panel_service_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3617,7 +3132,7 @@ func (x *RuntimeHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeHello.ProtoReflect.Descriptor instead.
 func (*RuntimeHello) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{40}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RuntimeHello) GetKeyId() string {
@@ -3704,6 +3219,20 @@ func (x *RuntimeHello) GetSignature() string {
 	return ""
 }
 
+func (x *RuntimeHello) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *RuntimeHello) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
 type RuntimeHelloAck struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	RuntimeId            string                 `protobuf:"bytes,1,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
@@ -3717,7 +3246,7 @@ type RuntimeHelloAck struct {
 
 func (x *RuntimeHelloAck) Reset() {
 	*x = RuntimeHelloAck{}
-	mi := &file_control_panel_service_proto_msgTypes[41]
+	mi := &file_control_panel_service_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3729,7 +3258,7 @@ func (x *RuntimeHelloAck) String() string {
 func (*RuntimeHelloAck) ProtoMessage() {}
 
 func (x *RuntimeHelloAck) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[41]
+	mi := &file_control_panel_service_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3742,7 +3271,7 @@ func (x *RuntimeHelloAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeHelloAck.ProtoReflect.Descriptor instead.
 func (*RuntimeHelloAck) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{41}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RuntimeHelloAck) GetRuntimeId() string {
@@ -3791,7 +3320,7 @@ type RuntimeResume struct {
 
 func (x *RuntimeResume) Reset() {
 	*x = RuntimeResume{}
-	mi := &file_control_panel_service_proto_msgTypes[42]
+	mi := &file_control_panel_service_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3803,7 +3332,7 @@ func (x *RuntimeResume) String() string {
 func (*RuntimeResume) ProtoMessage() {}
 
 func (x *RuntimeResume) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[42]
+	mi := &file_control_panel_service_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3816,7 +3345,7 @@ func (x *RuntimeResume) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeResume.ProtoReflect.Descriptor instead.
 func (*RuntimeResume) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{42}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RuntimeResume) GetRuntimeId() string {
@@ -3855,7 +3384,7 @@ type StrategyRequest struct {
 
 func (x *StrategyRequest) Reset() {
 	*x = StrategyRequest{}
-	mi := &file_control_panel_service_proto_msgTypes[43]
+	mi := &file_control_panel_service_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3867,7 +3396,7 @@ func (x *StrategyRequest) String() string {
 func (*StrategyRequest) ProtoMessage() {}
 
 func (x *StrategyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[43]
+	mi := &file_control_panel_service_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3880,7 +3409,7 @@ func (x *StrategyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StrategyRequest.ProtoReflect.Descriptor instead.
 func (*StrategyRequest) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{43}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *StrategyRequest) GetMethod() string {
@@ -3913,7 +3442,7 @@ type StrategyResponse struct {
 
 func (x *StrategyResponse) Reset() {
 	*x = StrategyResponse{}
-	mi := &file_control_panel_service_proto_msgTypes[44]
+	mi := &file_control_panel_service_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3925,7 +3454,7 @@ func (x *StrategyResponse) String() string {
 func (*StrategyResponse) ProtoMessage() {}
 
 func (x *StrategyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[44]
+	mi := &file_control_panel_service_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3938,7 +3467,7 @@ func (x *StrategyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StrategyResponse.ProtoReflect.Descriptor instead.
 func (*StrategyResponse) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{44}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *StrategyResponse) GetResponse() *anypb.Any {
@@ -3957,7 +3486,7 @@ type StrategyProgress struct {
 
 func (x *StrategyProgress) Reset() {
 	*x = StrategyProgress{}
-	mi := &file_control_panel_service_proto_msgTypes[45]
+	mi := &file_control_panel_service_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3969,7 +3498,7 @@ func (x *StrategyProgress) String() string {
 func (*StrategyProgress) ProtoMessage() {}
 
 func (x *StrategyProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[45]
+	mi := &file_control_panel_service_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3982,7 +3511,7 @@ func (x *StrategyProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StrategyProgress.ProtoReflect.Descriptor instead.
 func (*StrategyProgress) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{45}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *StrategyProgress) GetEvent() *anypb.Any {
@@ -4001,7 +3530,7 @@ type StrategyAbort struct {
 
 func (x *StrategyAbort) Reset() {
 	*x = StrategyAbort{}
-	mi := &file_control_panel_service_proto_msgTypes[46]
+	mi := &file_control_panel_service_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4013,7 +3542,7 @@ func (x *StrategyAbort) String() string {
 func (*StrategyAbort) ProtoMessage() {}
 
 func (x *StrategyAbort) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[46]
+	mi := &file_control_panel_service_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4026,7 +3555,7 @@ func (x *StrategyAbort) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StrategyAbort.ProtoReflect.Descriptor instead.
 func (*StrategyAbort) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{46}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *StrategyAbort) GetReason() string {
@@ -4046,7 +3575,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_control_panel_service_proto_msgTypes[47]
+	mi := &file_control_panel_service_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4058,7 +3587,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[47]
+	mi := &file_control_panel_service_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4071,7 +3600,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{47}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *Heartbeat) GetSentAtUnixMs() int64 {
@@ -4099,7 +3628,7 @@ type RuntimeHeartbeatAck struct {
 
 func (x *RuntimeHeartbeatAck) Reset() {
 	*x = RuntimeHeartbeatAck{}
-	mi := &file_control_panel_service_proto_msgTypes[48]
+	mi := &file_control_panel_service_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4111,7 +3640,7 @@ func (x *RuntimeHeartbeatAck) String() string {
 func (*RuntimeHeartbeatAck) ProtoMessage() {}
 
 func (x *RuntimeHeartbeatAck) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[48]
+	mi := &file_control_panel_service_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4124,7 +3653,7 @@ func (x *RuntimeHeartbeatAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeHeartbeatAck.ProtoReflect.Descriptor instead.
 func (*RuntimeHeartbeatAck) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{48}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *RuntimeHeartbeatAck) GetRuntimeId() string {
@@ -4158,7 +3687,7 @@ type StreamError struct {
 
 func (x *StreamError) Reset() {
 	*x = StreamError{}
-	mi := &file_control_panel_service_proto_msgTypes[49]
+	mi := &file_control_panel_service_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4170,7 +3699,7 @@ func (x *StreamError) String() string {
 func (*StreamError) ProtoMessage() {}
 
 func (x *StreamError) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[49]
+	mi := &file_control_panel_service_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4183,7 +3712,7 @@ func (x *StreamError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamError.ProtoReflect.Descriptor instead.
 func (*StreamError) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{49}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *StreamError) GetCode() string {
@@ -4213,7 +3742,7 @@ type RuntimeCommandFrame struct {
 
 func (x *RuntimeCommandFrame) Reset() {
 	*x = RuntimeCommandFrame{}
-	mi := &file_control_panel_service_proto_msgTypes[50]
+	mi := &file_control_panel_service_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4225,7 +3754,7 @@ func (x *RuntimeCommandFrame) String() string {
 func (*RuntimeCommandFrame) ProtoMessage() {}
 
 func (x *RuntimeCommandFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[50]
+	mi := &file_control_panel_service_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4238,7 +3767,7 @@ func (x *RuntimeCommandFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeCommandFrame.ProtoReflect.Descriptor instead.
 func (*RuntimeCommandFrame) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{50}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *RuntimeCommandFrame) GetCommandId() string {
@@ -4287,7 +3816,7 @@ type RuntimeCommandAck struct {
 
 func (x *RuntimeCommandAck) Reset() {
 	*x = RuntimeCommandAck{}
-	mi := &file_control_panel_service_proto_msgTypes[51]
+	mi := &file_control_panel_service_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4299,7 +3828,7 @@ func (x *RuntimeCommandAck) String() string {
 func (*RuntimeCommandAck) ProtoMessage() {}
 
 func (x *RuntimeCommandAck) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[51]
+	mi := &file_control_panel_service_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4312,7 +3841,7 @@ func (x *RuntimeCommandAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeCommandAck.ProtoReflect.Descriptor instead.
 func (*RuntimeCommandAck) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{51}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *RuntimeCommandAck) GetCommandId() string {
@@ -4348,7 +3877,7 @@ type RuntimeCommandResult struct {
 
 func (x *RuntimeCommandResult) Reset() {
 	*x = RuntimeCommandResult{}
-	mi := &file_control_panel_service_proto_msgTypes[52]
+	mi := &file_control_panel_service_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4360,7 +3889,7 @@ func (x *RuntimeCommandResult) String() string {
 func (*RuntimeCommandResult) ProtoMessage() {}
 
 func (x *RuntimeCommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[52]
+	mi := &file_control_panel_service_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4373,7 +3902,7 @@ func (x *RuntimeCommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeCommandResult.ProtoReflect.Descriptor instead.
 func (*RuntimeCommandResult) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{52}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *RuntimeCommandResult) GetCommandId() string {
@@ -4417,7 +3946,7 @@ type RuntimeStatusPatch struct {
 
 func (x *RuntimeStatusPatch) Reset() {
 	*x = RuntimeStatusPatch{}
-	mi := &file_control_panel_service_proto_msgTypes[53]
+	mi := &file_control_panel_service_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4429,7 +3958,7 @@ func (x *RuntimeStatusPatch) String() string {
 func (*RuntimeStatusPatch) ProtoMessage() {}
 
 func (x *RuntimeStatusPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[53]
+	mi := &file_control_panel_service_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4442,7 +3971,7 @@ func (x *RuntimeStatusPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeStatusPatch.ProtoReflect.Descriptor instead.
 func (*RuntimeStatusPatch) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{53}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *RuntimeStatusPatch) GetRuntimeId() string {
@@ -4490,7 +4019,7 @@ type RuntimeShutdown struct {
 
 func (x *RuntimeShutdown) Reset() {
 	*x = RuntimeShutdown{}
-	mi := &file_control_panel_service_proto_msgTypes[54]
+	mi := &file_control_panel_service_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4502,7 +4031,7 @@ func (x *RuntimeShutdown) String() string {
 func (*RuntimeShutdown) ProtoMessage() {}
 
 func (x *RuntimeShutdown) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[54]
+	mi := &file_control_panel_service_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4515,7 +4044,7 @@ func (x *RuntimeShutdown) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeShutdown.ProtoReflect.Descriptor instead.
 func (*RuntimeShutdown) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{54}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *RuntimeShutdown) GetReason() string {
@@ -4545,7 +4074,7 @@ type RuntimeDatasetChunk struct {
 
 func (x *RuntimeDatasetChunk) Reset() {
 	*x = RuntimeDatasetChunk{}
-	mi := &file_control_panel_service_proto_msgTypes[55]
+	mi := &file_control_panel_service_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4557,7 +4086,7 @@ func (x *RuntimeDatasetChunk) String() string {
 func (*RuntimeDatasetChunk) ProtoMessage() {}
 
 func (x *RuntimeDatasetChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[55]
+	mi := &file_control_panel_service_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4570,7 +4099,7 @@ func (x *RuntimeDatasetChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeDatasetChunk.ProtoReflect.Descriptor instead.
 func (*RuntimeDatasetChunk) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{55}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *RuntimeDatasetChunk) GetDatasetId() string {
@@ -4620,7 +4149,7 @@ type RuntimeLiveKlineBatch struct {
 
 func (x *RuntimeLiveKlineBatch) Reset() {
 	*x = RuntimeLiveKlineBatch{}
-	mi := &file_control_panel_service_proto_msgTypes[56]
+	mi := &file_control_panel_service_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4632,7 +4161,7 @@ func (x *RuntimeLiveKlineBatch) String() string {
 func (*RuntimeLiveKlineBatch) ProtoMessage() {}
 
 func (x *RuntimeLiveKlineBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[56]
+	mi := &file_control_panel_service_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4645,7 +4174,7 @@ func (x *RuntimeLiveKlineBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeLiveKlineBatch.ProtoReflect.Descriptor instead.
 func (*RuntimeLiveKlineBatch) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{56}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *RuntimeLiveKlineBatch) GetSessionId() string {
@@ -4687,7 +4216,7 @@ type RuntimeDataAck struct {
 
 func (x *RuntimeDataAck) Reset() {
 	*x = RuntimeDataAck{}
-	mi := &file_control_panel_service_proto_msgTypes[57]
+	mi := &file_control_panel_service_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4699,7 +4228,7 @@ func (x *RuntimeDataAck) String() string {
 func (*RuntimeDataAck) ProtoMessage() {}
 
 func (x *RuntimeDataAck) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[57]
+	mi := &file_control_panel_service_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4712,7 +4241,7 @@ func (x *RuntimeDataAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeDataAck.ProtoReflect.Descriptor instead.
 func (*RuntimeDataAck) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{57}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *RuntimeDataAck) GetSessionId() string {
@@ -4748,7 +4277,7 @@ type RuntimeDataBackpressure struct {
 
 func (x *RuntimeDataBackpressure) Reset() {
 	*x = RuntimeDataBackpressure{}
-	mi := &file_control_panel_service_proto_msgTypes[58]
+	mi := &file_control_panel_service_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4760,7 +4289,7 @@ func (x *RuntimeDataBackpressure) String() string {
 func (*RuntimeDataBackpressure) ProtoMessage() {}
 
 func (x *RuntimeDataBackpressure) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[58]
+	mi := &file_control_panel_service_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4773,7 +4302,7 @@ func (x *RuntimeDataBackpressure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeDataBackpressure.ProtoReflect.Descriptor instead.
 func (*RuntimeDataBackpressure) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{58}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *RuntimeDataBackpressure) GetSessionId() string {
@@ -4815,7 +4344,7 @@ type RuntimeDataEnd struct {
 
 func (x *RuntimeDataEnd) Reset() {
 	*x = RuntimeDataEnd{}
-	mi := &file_control_panel_service_proto_msgTypes[59]
+	mi := &file_control_panel_service_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4827,7 +4356,7 @@ func (x *RuntimeDataEnd) String() string {
 func (*RuntimeDataEnd) ProtoMessage() {}
 
 func (x *RuntimeDataEnd) ProtoReflect() protoreflect.Message {
-	mi := &file_control_panel_service_proto_msgTypes[59]
+	mi := &file_control_panel_service_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4840,7 +4369,7 @@ func (x *RuntimeDataEnd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeDataEnd.ProtoReflect.Descriptor instead.
 func (*RuntimeDataEnd) Descriptor() ([]byte, []int) {
-	return file_control_panel_service_proto_rawDescGZIP(), []int{59}
+	return file_control_panel_service_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *RuntimeDataEnd) GetSessionId() string {
@@ -4980,34 +4509,7 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
 	"\fsession_name\x18\x02 \x01(\tR\vsessionName\x12<\n" +
-	"\adataset\x18\x03 \x01(\v2\".controlpanel.v1.DebugDatasetStateR\adataset\"\xcf\x02\n" +
-	"\x16RegisterRuntimeRequest\x12\x1d\n" +
-	"\n" +
-	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12\x16\n" +
-	"\x06source\x18\x02 \x01(\tR\x06source\x12 \n" +
-	"\fbind_user_id\x18\x03 \x01(\x03R\n" +
-	"bindUserId\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\x12#\n" +
-	"\rendpoint_host\x18\x05 \x01(\tR\fendpointHost\x12\x1b\n" +
-	"\tgrpc_port\x18\x06 \x01(\x05R\bgrpcPort\x12\x1d\n" +
-	"\n" +
-	"debug_port\x18\a \x01(\x05R\tdebugPort\x12\"\n" +
-	"\fcapabilities\x18\b \x03(\tR\fcapabilities\x12)\n" +
-	"\x10resource_profile\x18\t \x01(\tR\x0fresourceProfile\x12\x18\n" +
-	"\aversion\x18\n" +
-	" \x01(\tR\aversion\"|\n" +
-	"\x17RegisterRuntimeResponse\x122\n" +
-	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\x12-\n" +
-	"\x12registration_token\x18\x02 \x01(\tR\x11registrationToken\"d\n" +
-	"\x17HeartbeatRuntimeRequest\x12\x1d\n" +
-	"\n" +
-	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\x12\x12\n" +
-	"\x04note\x18\x03 \x01(\tR\x04note\"\xb1\x01\n" +
-	"\x18HeartbeatRuntimeResponse\x12=\n" +
-	"\fheartbeat_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\vheartbeatAt\x12-\n" +
-	"\x12shutdown_requested\x18\x02 \x01(\bR\x11shutdownRequested\x12'\n" +
-	"\x0fterminal_reason\x18\x03 \x01(\tR\x0eterminalReason\"\x8c\x01\n" +
+	"\adataset\x18\x03 \x01(\v2\".controlpanel.v1.DebugDatasetStateR\adataset\"\x8c\x01\n" +
 	"\x13ListRuntimesRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x16\n" +
@@ -5054,32 +4556,16 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\n" +
 	"runtime_id\x18\x02 \x01(\tR\truntimeId\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12 \n" +
-	"\venvironment\x18\x04 \x01(\x05R\venvironment\"\x93\x02\n" +
+	"\venvironment\x18\x04 \x01(\x05R\venvironment\"Q\n" +
 	"\x1bResolveRuntimeRouteResponse\x122\n" +
-	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\x12#\n" +
-	"\rgrpc_endpoint\x18\x02 \x01(\tR\fgrpcEndpoint\x12%\n" +
-	"\x0edebug_endpoint\x18\x03 \x01(\tR\rdebugEndpoint\x12!\n" +
-	"\fcaller_token\x18\x04 \x01(\tR\vcallerToken\x12Q\n" +
-	"\x17caller_token_expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x14callerTokenExpiresAt\"t\n" +
+	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\"t\n" +
 	"\x1aEnsureHostedRuntimeRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12)\n" +
-	"\x10resource_profile\x18\x03 \x01(\tR\x0fresourceProfile\"\xb5\x02\n" +
+	"\x10resource_profile\x18\x03 \x01(\tR\x0fresourceProfile\"s\n" +
 	"\x1bEnsureHostedRuntimeResponse\x122\n" +
-	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\x12#\n" +
-	"\rgrpc_endpoint\x18\x02 \x01(\tR\fgrpcEndpoint\x12%\n" +
-	"\x0edebug_endpoint\x18\x03 \x01(\tR\rdebugEndpoint\x12!\n" +
-	"\fcaller_token\x18\x04 \x01(\tR\vcallerToken\x12Q\n" +
-	"\x17caller_token_expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x14callerTokenExpiresAt\x12 \n" +
-	"\vprovisioned\x18\x06 \x01(\bR\vprovisioned\"^\n" +
-	"\x1aValidateCallerTokenRequest\x12!\n" +
-	"\fcaller_token\x18\x01 \x01(\tR\vcallerToken\x12\x1d\n" +
-	"\n" +
-	"runtime_id\x18\x02 \x01(\tR\truntimeId\"d\n" +
-	"\x1bValidateCallerTokenResponse\x12\x14\n" +
-	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"b\n" +
+	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\x12 \n" +
+	"\vprovisioned\x18\x02 \x01(\bR\vprovisioned\"b\n" +
 	"\x1dIssueRuntimeCredentialRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12\x12\n" +
@@ -5179,7 +4665,7 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\thello_ack\x18\x1b \x01(\v2 .controlpanel.v1.RuntimeHelloAckH\x00R\bhelloAck\x128\n" +
 	"\x06resume\x18\x1c \x01(\v2\x1e.controlpanel.v1.RuntimeResumeH\x00R\x06resume\x12K\n" +
 	"\rheartbeat_ack\x18\x1d \x01(\v2$.controlpanel.v1.RuntimeHeartbeatAckH\x00R\fheartbeatAckB\t\n" +
-	"\apayload\"\x81\x03\n" +
+	"\apayload\"\xb2\x03\n" +
 	"\fRuntimeHello\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1d\n" +
 	"\n" +
@@ -5195,7 +4681,9 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\x11issued_at_unix_ms\x18\n" +
 	" \x01(\x03R\x0eissuedAtUnixMs\x12\x14\n" +
 	"\x05nonce\x18\v \x01(\tR\x05nonce\x12\x1c\n" +
-	"\tsignature\x18\f \x01(\tR\tsignature\"\x9a\x02\n" +
+	"\tsignature\x18\f \x01(\tR\tsignature\x12\x16\n" +
+	"\x06source\x18\r \x01(\tR\x06source\x12\x17\n" +
+	"\auser_id\x18\x0e \x01(\x03R\x06userId\"\x9a\x02\n" +
 	"\x0fRuntimeHelloAck\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12!\n" +
@@ -5319,18 +4807,15 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\x13FRAME_TYPE_DATA_END\x10\x11\x12\x18\n" +
 	"\x14FRAME_TYPE_HELLO_ACK\x10\x12\x12\x15\n" +
 	"\x11FRAME_TYPE_RESUME\x10\x13\x12\x1c\n" +
-	"\x18FRAME_TYPE_HEARTBEAT_ACK\x10\x142\xf9\x11\n" +
-	"\x13ControlPanelService\x12d\n" +
-	"\x0fRegisterRuntime\x12'.controlpanel.v1.RegisterRuntimeRequest\x1a(.controlpanel.v1.RegisterRuntimeResponse\x12g\n" +
-	"\x10HeartbeatRuntime\x12(.controlpanel.v1.HeartbeatRuntimeRequest\x1a).controlpanel.v1.HeartbeatRuntimeResponse\x12[\n" +
+	"\x18FRAME_TYPE_HEARTBEAT_ACK\x10\x142\xb8\x0f\n" +
+	"\x13ControlPanelService\x12[\n" +
 	"\fListRuntimes\x12$.controlpanel.v1.ListRuntimesRequest\x1a%.controlpanel.v1.ListRuntimesResponse\x12U\n" +
 	"\n" +
 	"GetRuntime\x12\".controlpanel.v1.GetRuntimeRequest\x1a#.controlpanel.v1.GetRuntimeResponse\x12U\n" +
 	"\n" +
 	"EndRuntime\x12\".controlpanel.v1.EndRuntimeRequest\x1a#.controlpanel.v1.EndRuntimeResponse\x12x\n" +
 	"\x17ResolveRuntimeRouteByID\x12/.controlpanel.v1.ResolveRuntimeRouteByIDRequest\x1a,.controlpanel.v1.ResolveRuntimeRouteResponse\x12p\n" +
-	"\x13EnsureHostedRuntime\x12+.controlpanel.v1.EnsureHostedRuntimeRequest\x1a,.controlpanel.v1.EnsureHostedRuntimeResponse\x12p\n" +
-	"\x13ValidateCallerToken\x12+.controlpanel.v1.ValidateCallerTokenRequest\x1a,.controlpanel.v1.ValidateCallerTokenResponse\x12y\n" +
+	"\x13EnsureHostedRuntime\x12+.controlpanel.v1.EnsureHostedRuntimeRequest\x1a,.controlpanel.v1.EnsureHostedRuntimeResponse\x12y\n" +
 	"\x16IssueRuntimeCredential\x12..controlpanel.v1.IssueRuntimeCredentialRequest\x1a/.controlpanel.v1.IssueRuntimeCredentialResponse\x12y\n" +
 	"\x16ListRuntimeCredentials\x12..controlpanel.v1.ListRuntimeCredentialsRequest\x1a/.controlpanel.v1.ListRuntimeCredentialsResponse\x12\x8b\x01\n" +
 	"\x1cListRuntimeAdmissionFailures\x124.controlpanel.v1.ListRuntimeAdmissionFailuresRequest\x1a5.controlpanel.v1.ListRuntimeAdmissionFailuresResponse\x12|\n" +
@@ -5358,7 +4843,7 @@ func file_control_panel_service_proto_rawDescGZIP() []byte {
 }
 
 var file_control_panel_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_control_panel_service_proto_msgTypes = make([]protoimpl.MessageInfo, 61)
+var file_control_panel_service_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_control_panel_service_proto_goTypes = []any{
 	(FrameType)(0),                                // 0: controlpanel.v1.FrameType
 	(*Runtime)(nil),                               // 1: controlpanel.v1.Runtime
@@ -5372,183 +4857,167 @@ var file_control_panel_service_proto_goTypes = []any{
 	(*GetRuntimeDebugDatasetResponse)(nil),        // 9: controlpanel.v1.GetRuntimeDebugDatasetResponse
 	(*StartDebugReplayRequest)(nil),               // 10: controlpanel.v1.StartDebugReplayRequest
 	(*StartDebugReplayResponse)(nil),              // 11: controlpanel.v1.StartDebugReplayResponse
-	(*RegisterRuntimeRequest)(nil),                // 12: controlpanel.v1.RegisterRuntimeRequest
-	(*RegisterRuntimeResponse)(nil),               // 13: controlpanel.v1.RegisterRuntimeResponse
-	(*HeartbeatRuntimeRequest)(nil),               // 14: controlpanel.v1.HeartbeatRuntimeRequest
-	(*HeartbeatRuntimeResponse)(nil),              // 15: controlpanel.v1.HeartbeatRuntimeResponse
-	(*ListRuntimesRequest)(nil),                   // 16: controlpanel.v1.ListRuntimesRequest
-	(*ListRuntimesResponse)(nil),                  // 17: controlpanel.v1.ListRuntimesResponse
-	(*GetRuntimeRequest)(nil),                     // 18: controlpanel.v1.GetRuntimeRequest
-	(*GetRuntimeResponse)(nil),                    // 19: controlpanel.v1.GetRuntimeResponse
-	(*EndRuntimeRequest)(nil),                     // 20: controlpanel.v1.EndRuntimeRequest
-	(*EndRuntimeResponse)(nil),                    // 21: controlpanel.v1.EndRuntimeResponse
-	(*PublishRuntimeNotificationRequest)(nil),     // 22: controlpanel.v1.PublishRuntimeNotificationRequest
-	(*PublishRuntimeNotificationResponse)(nil),    // 23: controlpanel.v1.PublishRuntimeNotificationResponse
-	(*ResolveRuntimeRouteByIDRequest)(nil),        // 24: controlpanel.v1.ResolveRuntimeRouteByIDRequest
-	(*ResolveRuntimeRouteResponse)(nil),           // 25: controlpanel.v1.ResolveRuntimeRouteResponse
-	(*EnsureHostedRuntimeRequest)(nil),            // 26: controlpanel.v1.EnsureHostedRuntimeRequest
-	(*EnsureHostedRuntimeResponse)(nil),           // 27: controlpanel.v1.EnsureHostedRuntimeResponse
-	(*ValidateCallerTokenRequest)(nil),            // 28: controlpanel.v1.ValidateCallerTokenRequest
-	(*ValidateCallerTokenResponse)(nil),           // 29: controlpanel.v1.ValidateCallerTokenResponse
-	(*IssueRuntimeCredentialRequest)(nil),         // 30: controlpanel.v1.IssueRuntimeCredentialRequest
-	(*IssueRuntimeCredentialResponse)(nil),        // 31: controlpanel.v1.IssueRuntimeCredentialResponse
-	(*ListRuntimeCredentialsRequest)(nil),         // 32: controlpanel.v1.ListRuntimeCredentialsRequest
-	(*ListRuntimeCredentialsResponse)(nil),        // 33: controlpanel.v1.ListRuntimeCredentialsResponse
-	(*ListRuntimeAdmissionFailuresRequest)(nil),   // 34: controlpanel.v1.ListRuntimeAdmissionFailuresRequest
-	(*ListRuntimeAdmissionFailuresResponse)(nil),  // 35: controlpanel.v1.ListRuntimeAdmissionFailuresResponse
-	(*RuntimeAdmissionFailure)(nil),               // 36: controlpanel.v1.RuntimeAdmissionFailure
-	(*RuntimeCredential)(nil),                     // 37: controlpanel.v1.RuntimeCredential
-	(*RevokeRuntimeCredentialRequest)(nil),        // 38: controlpanel.v1.RevokeRuntimeCredentialRequest
-	(*RevokeRuntimeCredentialResponse)(nil),       // 39: controlpanel.v1.RevokeRuntimeCredentialResponse
-	(*RuntimeFrame)(nil),                          // 40: controlpanel.v1.RuntimeFrame
-	(*RuntimeHello)(nil),                          // 41: controlpanel.v1.RuntimeHello
-	(*RuntimeHelloAck)(nil),                       // 42: controlpanel.v1.RuntimeHelloAck
-	(*RuntimeResume)(nil),                         // 43: controlpanel.v1.RuntimeResume
-	(*StrategyRequest)(nil),                       // 44: controlpanel.v1.StrategyRequest
-	(*StrategyResponse)(nil),                      // 45: controlpanel.v1.StrategyResponse
-	(*StrategyProgress)(nil),                      // 46: controlpanel.v1.StrategyProgress
-	(*StrategyAbort)(nil),                         // 47: controlpanel.v1.StrategyAbort
-	(*Heartbeat)(nil),                             // 48: controlpanel.v1.Heartbeat
-	(*RuntimeHeartbeatAck)(nil),                   // 49: controlpanel.v1.RuntimeHeartbeatAck
-	(*StreamError)(nil),                           // 50: controlpanel.v1.StreamError
-	(*RuntimeCommandFrame)(nil),                   // 51: controlpanel.v1.RuntimeCommandFrame
-	(*RuntimeCommandAck)(nil),                     // 52: controlpanel.v1.RuntimeCommandAck
-	(*RuntimeCommandResult)(nil),                  // 53: controlpanel.v1.RuntimeCommandResult
-	(*RuntimeStatusPatch)(nil),                    // 54: controlpanel.v1.RuntimeStatusPatch
-	(*RuntimeShutdown)(nil),                       // 55: controlpanel.v1.RuntimeShutdown
-	(*RuntimeDatasetChunk)(nil),                   // 56: controlpanel.v1.RuntimeDatasetChunk
-	(*RuntimeLiveKlineBatch)(nil),                 // 57: controlpanel.v1.RuntimeLiveKlineBatch
-	(*RuntimeDataAck)(nil),                        // 58: controlpanel.v1.RuntimeDataAck
-	(*RuntimeDataBackpressure)(nil),               // 59: controlpanel.v1.RuntimeDataBackpressure
-	(*RuntimeDataEnd)(nil),                        // 60: controlpanel.v1.RuntimeDataEnd
-	nil,                                           // 61: controlpanel.v1.StrategyRequest.TraceContextEntry
-	(*timestamppb.Timestamp)(nil),                 // 62: google.protobuf.Timestamp
-	(*anypb.Any)(nil),                             // 63: google.protobuf.Any
-	(*strategyv1.RunStrategyRequest)(nil),         // 64: strategy.v1.RunStrategyRequest
-	(*strategyv1.PreviewRunStrategyRequest)(nil),  // 65: strategy.v1.PreviewRunStrategyRequest
-	(*strategyv1.StopStrategyRequest)(nil),        // 66: strategy.v1.StopStrategyRequest
-	(*strategyv1.GetStrategyStatusRequest)(nil),   // 67: strategy.v1.GetStrategyStatusRequest
-	(*strategyv1.RunStrategyResponse)(nil),        // 68: strategy.v1.RunStrategyResponse
-	(*strategyv1.PreviewRunStrategyResponse)(nil), // 69: strategy.v1.PreviewRunStrategyResponse
-	(*strategyv1.StopStrategyResponse)(nil),       // 70: strategy.v1.StopStrategyResponse
-	(*strategyv1.GetStrategyStatusResponse)(nil),  // 71: strategy.v1.GetStrategyStatusResponse
+	(*ListRuntimesRequest)(nil),                   // 12: controlpanel.v1.ListRuntimesRequest
+	(*ListRuntimesResponse)(nil),                  // 13: controlpanel.v1.ListRuntimesResponse
+	(*GetRuntimeRequest)(nil),                     // 14: controlpanel.v1.GetRuntimeRequest
+	(*GetRuntimeResponse)(nil),                    // 15: controlpanel.v1.GetRuntimeResponse
+	(*EndRuntimeRequest)(nil),                     // 16: controlpanel.v1.EndRuntimeRequest
+	(*EndRuntimeResponse)(nil),                    // 17: controlpanel.v1.EndRuntimeResponse
+	(*PublishRuntimeNotificationRequest)(nil),     // 18: controlpanel.v1.PublishRuntimeNotificationRequest
+	(*PublishRuntimeNotificationResponse)(nil),    // 19: controlpanel.v1.PublishRuntimeNotificationResponse
+	(*ResolveRuntimeRouteByIDRequest)(nil),        // 20: controlpanel.v1.ResolveRuntimeRouteByIDRequest
+	(*ResolveRuntimeRouteResponse)(nil),           // 21: controlpanel.v1.ResolveRuntimeRouteResponse
+	(*EnsureHostedRuntimeRequest)(nil),            // 22: controlpanel.v1.EnsureHostedRuntimeRequest
+	(*EnsureHostedRuntimeResponse)(nil),           // 23: controlpanel.v1.EnsureHostedRuntimeResponse
+	(*IssueRuntimeCredentialRequest)(nil),         // 24: controlpanel.v1.IssueRuntimeCredentialRequest
+	(*IssueRuntimeCredentialResponse)(nil),        // 25: controlpanel.v1.IssueRuntimeCredentialResponse
+	(*ListRuntimeCredentialsRequest)(nil),         // 26: controlpanel.v1.ListRuntimeCredentialsRequest
+	(*ListRuntimeCredentialsResponse)(nil),        // 27: controlpanel.v1.ListRuntimeCredentialsResponse
+	(*ListRuntimeAdmissionFailuresRequest)(nil),   // 28: controlpanel.v1.ListRuntimeAdmissionFailuresRequest
+	(*ListRuntimeAdmissionFailuresResponse)(nil),  // 29: controlpanel.v1.ListRuntimeAdmissionFailuresResponse
+	(*RuntimeAdmissionFailure)(nil),               // 30: controlpanel.v1.RuntimeAdmissionFailure
+	(*RuntimeCredential)(nil),                     // 31: controlpanel.v1.RuntimeCredential
+	(*RevokeRuntimeCredentialRequest)(nil),        // 32: controlpanel.v1.RevokeRuntimeCredentialRequest
+	(*RevokeRuntimeCredentialResponse)(nil),       // 33: controlpanel.v1.RevokeRuntimeCredentialResponse
+	(*RuntimeFrame)(nil),                          // 34: controlpanel.v1.RuntimeFrame
+	(*RuntimeHello)(nil),                          // 35: controlpanel.v1.RuntimeHello
+	(*RuntimeHelloAck)(nil),                       // 36: controlpanel.v1.RuntimeHelloAck
+	(*RuntimeResume)(nil),                         // 37: controlpanel.v1.RuntimeResume
+	(*StrategyRequest)(nil),                       // 38: controlpanel.v1.StrategyRequest
+	(*StrategyResponse)(nil),                      // 39: controlpanel.v1.StrategyResponse
+	(*StrategyProgress)(nil),                      // 40: controlpanel.v1.StrategyProgress
+	(*StrategyAbort)(nil),                         // 41: controlpanel.v1.StrategyAbort
+	(*Heartbeat)(nil),                             // 42: controlpanel.v1.Heartbeat
+	(*RuntimeHeartbeatAck)(nil),                   // 43: controlpanel.v1.RuntimeHeartbeatAck
+	(*StreamError)(nil),                           // 44: controlpanel.v1.StreamError
+	(*RuntimeCommandFrame)(nil),                   // 45: controlpanel.v1.RuntimeCommandFrame
+	(*RuntimeCommandAck)(nil),                     // 46: controlpanel.v1.RuntimeCommandAck
+	(*RuntimeCommandResult)(nil),                  // 47: controlpanel.v1.RuntimeCommandResult
+	(*RuntimeStatusPatch)(nil),                    // 48: controlpanel.v1.RuntimeStatusPatch
+	(*RuntimeShutdown)(nil),                       // 49: controlpanel.v1.RuntimeShutdown
+	(*RuntimeDatasetChunk)(nil),                   // 50: controlpanel.v1.RuntimeDatasetChunk
+	(*RuntimeLiveKlineBatch)(nil),                 // 51: controlpanel.v1.RuntimeLiveKlineBatch
+	(*RuntimeDataAck)(nil),                        // 52: controlpanel.v1.RuntimeDataAck
+	(*RuntimeDataBackpressure)(nil),               // 53: controlpanel.v1.RuntimeDataBackpressure
+	(*RuntimeDataEnd)(nil),                        // 54: controlpanel.v1.RuntimeDataEnd
+	nil,                                           // 55: controlpanel.v1.StrategyRequest.TraceContextEntry
+	(*timestamppb.Timestamp)(nil),                 // 56: google.protobuf.Timestamp
+	(*anypb.Any)(nil),                             // 57: google.protobuf.Any
+	(*strategyv1.RunStrategyRequest)(nil),         // 58: strategy.v1.RunStrategyRequest
+	(*strategyv1.PreviewRunStrategyRequest)(nil),  // 59: strategy.v1.PreviewRunStrategyRequest
+	(*strategyv1.StopStrategyRequest)(nil),        // 60: strategy.v1.StopStrategyRequest
+	(*strategyv1.GetStrategyStatusRequest)(nil),   // 61: strategy.v1.GetStrategyStatusRequest
+	(*strategyv1.RunStrategyResponse)(nil),        // 62: strategy.v1.RunStrategyResponse
+	(*strategyv1.PreviewRunStrategyResponse)(nil), // 63: strategy.v1.PreviewRunStrategyResponse
+	(*strategyv1.StopStrategyResponse)(nil),       // 64: strategy.v1.StopStrategyResponse
+	(*strategyv1.GetStrategyStatusResponse)(nil),  // 65: strategy.v1.GetStrategyStatusResponse
 }
 var file_control_panel_service_proto_depIdxs = []int32{
-	62, // 0: controlpanel.v1.Runtime.paired_at:type_name -> google.protobuf.Timestamp
-	62, // 1: controlpanel.v1.Runtime.heartbeat_at:type_name -> google.protobuf.Timestamp
-	62, // 2: controlpanel.v1.Runtime.created_at:type_name -> google.protobuf.Timestamp
-	62, // 3: controlpanel.v1.Runtime.updated_at:type_name -> google.protobuf.Timestamp
-	62, // 4: controlpanel.v1.Runtime.started_at:type_name -> google.protobuf.Timestamp
-	62, // 5: controlpanel.v1.Runtime.ended_at:type_name -> google.protobuf.Timestamp
-	62, // 6: controlpanel.v1.Runtime.connection_owner_acquired_at:type_name -> google.protobuf.Timestamp
-	62, // 7: controlpanel.v1.Runtime.connection_owner_heartbeat_at:type_name -> google.protobuf.Timestamp
-	62, // 8: controlpanel.v1.Runtime.cleanup_at:type_name -> google.protobuf.Timestamp
+	56, // 0: controlpanel.v1.Runtime.paired_at:type_name -> google.protobuf.Timestamp
+	56, // 1: controlpanel.v1.Runtime.heartbeat_at:type_name -> google.protobuf.Timestamp
+	56, // 2: controlpanel.v1.Runtime.created_at:type_name -> google.protobuf.Timestamp
+	56, // 3: controlpanel.v1.Runtime.updated_at:type_name -> google.protobuf.Timestamp
+	56, // 4: controlpanel.v1.Runtime.started_at:type_name -> google.protobuf.Timestamp
+	56, // 5: controlpanel.v1.Runtime.ended_at:type_name -> google.protobuf.Timestamp
+	56, // 6: controlpanel.v1.Runtime.connection_owner_acquired_at:type_name -> google.protobuf.Timestamp
+	56, // 7: controlpanel.v1.Runtime.connection_owner_heartbeat_at:type_name -> google.protobuf.Timestamp
+	56, // 8: controlpanel.v1.Runtime.cleanup_at:type_name -> google.protobuf.Timestamp
 	2,  // 9: controlpanel.v1.Runtime.debug_workspace:type_name -> controlpanel.v1.DebugWorkspaceState
 	3,  // 10: controlpanel.v1.Runtime.debug_dataset:type_name -> controlpanel.v1.DebugDatasetState
 	2,  // 11: controlpanel.v1.PrepareDebugWorkspaceResponse.workspace:type_name -> controlpanel.v1.DebugWorkspaceState
 	3,  // 12: controlpanel.v1.LoadDebugDatasetResponse.dataset:type_name -> controlpanel.v1.DebugDatasetState
 	3,  // 13: controlpanel.v1.GetRuntimeDebugDatasetResponse.dataset:type_name -> controlpanel.v1.DebugDatasetState
 	3,  // 14: controlpanel.v1.StartDebugReplayResponse.dataset:type_name -> controlpanel.v1.DebugDatasetState
-	1,  // 15: controlpanel.v1.RegisterRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	62, // 16: controlpanel.v1.HeartbeatRuntimeResponse.heartbeat_at:type_name -> google.protobuf.Timestamp
-	1,  // 17: controlpanel.v1.ListRuntimesResponse.runtimes:type_name -> controlpanel.v1.Runtime
-	1,  // 18: controlpanel.v1.GetRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	1,  // 19: controlpanel.v1.EndRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	1,  // 20: controlpanel.v1.ResolveRuntimeRouteResponse.runtime:type_name -> controlpanel.v1.Runtime
-	62, // 21: controlpanel.v1.ResolveRuntimeRouteResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
-	1,  // 22: controlpanel.v1.EnsureHostedRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
-	62, // 23: controlpanel.v1.EnsureHostedRuntimeResponse.caller_token_expires_at:type_name -> google.protobuf.Timestamp
-	62, // 24: controlpanel.v1.IssueRuntimeCredentialResponse.created_at:type_name -> google.protobuf.Timestamp
-	37, // 25: controlpanel.v1.ListRuntimeCredentialsResponse.credentials:type_name -> controlpanel.v1.RuntimeCredential
-	36, // 26: controlpanel.v1.ListRuntimeAdmissionFailuresResponse.failures:type_name -> controlpanel.v1.RuntimeAdmissionFailure
-	62, // 27: controlpanel.v1.RuntimeAdmissionFailure.first_seen_at:type_name -> google.protobuf.Timestamp
-	62, // 28: controlpanel.v1.RuntimeAdmissionFailure.last_seen_at:type_name -> google.protobuf.Timestamp
-	62, // 29: controlpanel.v1.RuntimeCredential.created_at:type_name -> google.protobuf.Timestamp
-	62, // 30: controlpanel.v1.RuntimeCredential.last_used_at:type_name -> google.protobuf.Timestamp
-	62, // 31: controlpanel.v1.RuntimeCredential.revoked_at:type_name -> google.protobuf.Timestamp
-	62, // 32: controlpanel.v1.RuntimeCredential.downloaded_at:type_name -> google.protobuf.Timestamp
-	62, // 33: controlpanel.v1.RuntimeCredential.consumed_at:type_name -> google.protobuf.Timestamp
-	62, // 34: controlpanel.v1.RuntimeCredential.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 35: controlpanel.v1.RevokeRuntimeCredentialResponse.credential:type_name -> controlpanel.v1.RuntimeCredential
-	0,  // 36: controlpanel.v1.RuntimeFrame.frame_type:type_name -> controlpanel.v1.FrameType
-	41, // 37: controlpanel.v1.RuntimeFrame.hello:type_name -> controlpanel.v1.RuntimeHello
-	44, // 38: controlpanel.v1.RuntimeFrame.request:type_name -> controlpanel.v1.StrategyRequest
-	45, // 39: controlpanel.v1.RuntimeFrame.response:type_name -> controlpanel.v1.StrategyResponse
-	46, // 40: controlpanel.v1.RuntimeFrame.progress:type_name -> controlpanel.v1.StrategyProgress
-	47, // 41: controlpanel.v1.RuntimeFrame.abort:type_name -> controlpanel.v1.StrategyAbort
-	48, // 42: controlpanel.v1.RuntimeFrame.heartbeat:type_name -> controlpanel.v1.Heartbeat
-	50, // 43: controlpanel.v1.RuntimeFrame.error:type_name -> controlpanel.v1.StreamError
-	51, // 44: controlpanel.v1.RuntimeFrame.command:type_name -> controlpanel.v1.RuntimeCommandFrame
-	52, // 45: controlpanel.v1.RuntimeFrame.command_ack:type_name -> controlpanel.v1.RuntimeCommandAck
-	53, // 46: controlpanel.v1.RuntimeFrame.command_result:type_name -> controlpanel.v1.RuntimeCommandResult
-	54, // 47: controlpanel.v1.RuntimeFrame.status_patch:type_name -> controlpanel.v1.RuntimeStatusPatch
-	55, // 48: controlpanel.v1.RuntimeFrame.shutdown:type_name -> controlpanel.v1.RuntimeShutdown
-	56, // 49: controlpanel.v1.RuntimeFrame.dataset_chunk:type_name -> controlpanel.v1.RuntimeDatasetChunk
-	57, // 50: controlpanel.v1.RuntimeFrame.live_kline_batch:type_name -> controlpanel.v1.RuntimeLiveKlineBatch
-	58, // 51: controlpanel.v1.RuntimeFrame.data_ack:type_name -> controlpanel.v1.RuntimeDataAck
-	59, // 52: controlpanel.v1.RuntimeFrame.data_backpressure:type_name -> controlpanel.v1.RuntimeDataBackpressure
-	60, // 53: controlpanel.v1.RuntimeFrame.data_end:type_name -> controlpanel.v1.RuntimeDataEnd
-	42, // 54: controlpanel.v1.RuntimeFrame.hello_ack:type_name -> controlpanel.v1.RuntimeHelloAck
-	43, // 55: controlpanel.v1.RuntimeFrame.resume:type_name -> controlpanel.v1.RuntimeResume
-	49, // 56: controlpanel.v1.RuntimeFrame.heartbeat_ack:type_name -> controlpanel.v1.RuntimeHeartbeatAck
-	62, // 57: controlpanel.v1.RuntimeHelloAck.resume_token_expires_at:type_name -> google.protobuf.Timestamp
-	62, // 58: controlpanel.v1.RuntimeHelloAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
-	63, // 59: controlpanel.v1.StrategyRequest.request:type_name -> google.protobuf.Any
-	61, // 60: controlpanel.v1.StrategyRequest.trace_context:type_name -> controlpanel.v1.StrategyRequest.TraceContextEntry
-	63, // 61: controlpanel.v1.StrategyResponse.response:type_name -> google.protobuf.Any
-	63, // 62: controlpanel.v1.StrategyProgress.event:type_name -> google.protobuf.Any
-	62, // 63: controlpanel.v1.RuntimeHeartbeatAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
-	63, // 64: controlpanel.v1.RuntimeCommandFrame.payload:type_name -> google.protobuf.Any
-	63, // 65: controlpanel.v1.RuntimeCommandResult.result:type_name -> google.protobuf.Any
-	63, // 66: controlpanel.v1.RuntimeStatusPatch.payload:type_name -> google.protobuf.Any
-	63, // 67: controlpanel.v1.RuntimeLiveKlineBatch.klines:type_name -> google.protobuf.Any
-	12, // 68: controlpanel.v1.ControlPanelService.RegisterRuntime:input_type -> controlpanel.v1.RegisterRuntimeRequest
-	14, // 69: controlpanel.v1.ControlPanelService.HeartbeatRuntime:input_type -> controlpanel.v1.HeartbeatRuntimeRequest
-	16, // 70: controlpanel.v1.ControlPanelService.ListRuntimes:input_type -> controlpanel.v1.ListRuntimesRequest
-	18, // 71: controlpanel.v1.ControlPanelService.GetRuntime:input_type -> controlpanel.v1.GetRuntimeRequest
-	20, // 72: controlpanel.v1.ControlPanelService.EndRuntime:input_type -> controlpanel.v1.EndRuntimeRequest
-	24, // 73: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:input_type -> controlpanel.v1.ResolveRuntimeRouteByIDRequest
-	26, // 74: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:input_type -> controlpanel.v1.EnsureHostedRuntimeRequest
-	28, // 75: controlpanel.v1.ControlPanelService.ValidateCallerToken:input_type -> controlpanel.v1.ValidateCallerTokenRequest
-	30, // 76: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:input_type -> controlpanel.v1.IssueRuntimeCredentialRequest
-	32, // 77: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:input_type -> controlpanel.v1.ListRuntimeCredentialsRequest
-	34, // 78: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:input_type -> controlpanel.v1.ListRuntimeAdmissionFailuresRequest
-	38, // 79: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:input_type -> controlpanel.v1.RevokeRuntimeCredentialRequest
-	40, // 80: controlpanel.v1.ControlPanelService.RuntimeChannel:input_type -> controlpanel.v1.RuntimeFrame
-	4,  // 81: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:input_type -> controlpanel.v1.PrepareDebugWorkspaceRequest
-	6,  // 82: controlpanel.v1.ControlPanelService.LoadDebugDataset:input_type -> controlpanel.v1.LoadDebugDatasetRequest
-	8,  // 83: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:input_type -> controlpanel.v1.GetRuntimeDebugDatasetRequest
-	22, // 84: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:input_type -> controlpanel.v1.PublishRuntimeNotificationRequest
-	64, // 85: controlpanel.v1.ControlPanelService.RunStrategy:input_type -> strategy.v1.RunStrategyRequest
-	65, // 86: controlpanel.v1.ControlPanelService.PreviewRunStrategy:input_type -> strategy.v1.PreviewRunStrategyRequest
-	66, // 87: controlpanel.v1.ControlPanelService.StopStrategy:input_type -> strategy.v1.StopStrategyRequest
-	67, // 88: controlpanel.v1.ControlPanelService.GetStrategyStatus:input_type -> strategy.v1.GetStrategyStatusRequest
-	13, // 89: controlpanel.v1.ControlPanelService.RegisterRuntime:output_type -> controlpanel.v1.RegisterRuntimeResponse
-	15, // 90: controlpanel.v1.ControlPanelService.HeartbeatRuntime:output_type -> controlpanel.v1.HeartbeatRuntimeResponse
-	17, // 91: controlpanel.v1.ControlPanelService.ListRuntimes:output_type -> controlpanel.v1.ListRuntimesResponse
-	19, // 92: controlpanel.v1.ControlPanelService.GetRuntime:output_type -> controlpanel.v1.GetRuntimeResponse
-	21, // 93: controlpanel.v1.ControlPanelService.EndRuntime:output_type -> controlpanel.v1.EndRuntimeResponse
-	25, // 94: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:output_type -> controlpanel.v1.ResolveRuntimeRouteResponse
-	27, // 95: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:output_type -> controlpanel.v1.EnsureHostedRuntimeResponse
-	29, // 96: controlpanel.v1.ControlPanelService.ValidateCallerToken:output_type -> controlpanel.v1.ValidateCallerTokenResponse
-	31, // 97: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:output_type -> controlpanel.v1.IssueRuntimeCredentialResponse
-	33, // 98: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:output_type -> controlpanel.v1.ListRuntimeCredentialsResponse
-	35, // 99: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:output_type -> controlpanel.v1.ListRuntimeAdmissionFailuresResponse
-	39, // 100: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:output_type -> controlpanel.v1.RevokeRuntimeCredentialResponse
-	40, // 101: controlpanel.v1.ControlPanelService.RuntimeChannel:output_type -> controlpanel.v1.RuntimeFrame
-	5,  // 102: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:output_type -> controlpanel.v1.PrepareDebugWorkspaceResponse
-	7,  // 103: controlpanel.v1.ControlPanelService.LoadDebugDataset:output_type -> controlpanel.v1.LoadDebugDatasetResponse
-	9,  // 104: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:output_type -> controlpanel.v1.GetRuntimeDebugDatasetResponse
-	23, // 105: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:output_type -> controlpanel.v1.PublishRuntimeNotificationResponse
-	68, // 106: controlpanel.v1.ControlPanelService.RunStrategy:output_type -> strategy.v1.RunStrategyResponse
-	69, // 107: controlpanel.v1.ControlPanelService.PreviewRunStrategy:output_type -> strategy.v1.PreviewRunStrategyResponse
-	70, // 108: controlpanel.v1.ControlPanelService.StopStrategy:output_type -> strategy.v1.StopStrategyResponse
-	71, // 109: controlpanel.v1.ControlPanelService.GetStrategyStatus:output_type -> strategy.v1.GetStrategyStatusResponse
-	89, // [89:110] is the sub-list for method output_type
-	68, // [68:89] is the sub-list for method input_type
-	68, // [68:68] is the sub-list for extension type_name
-	68, // [68:68] is the sub-list for extension extendee
-	0,  // [0:68] is the sub-list for field type_name
+	1,  // 15: controlpanel.v1.ListRuntimesResponse.runtimes:type_name -> controlpanel.v1.Runtime
+	1,  // 16: controlpanel.v1.GetRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
+	1,  // 17: controlpanel.v1.EndRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
+	1,  // 18: controlpanel.v1.ResolveRuntimeRouteResponse.runtime:type_name -> controlpanel.v1.Runtime
+	1,  // 19: controlpanel.v1.EnsureHostedRuntimeResponse.runtime:type_name -> controlpanel.v1.Runtime
+	56, // 20: controlpanel.v1.IssueRuntimeCredentialResponse.created_at:type_name -> google.protobuf.Timestamp
+	31, // 21: controlpanel.v1.ListRuntimeCredentialsResponse.credentials:type_name -> controlpanel.v1.RuntimeCredential
+	30, // 22: controlpanel.v1.ListRuntimeAdmissionFailuresResponse.failures:type_name -> controlpanel.v1.RuntimeAdmissionFailure
+	56, // 23: controlpanel.v1.RuntimeAdmissionFailure.first_seen_at:type_name -> google.protobuf.Timestamp
+	56, // 24: controlpanel.v1.RuntimeAdmissionFailure.last_seen_at:type_name -> google.protobuf.Timestamp
+	56, // 25: controlpanel.v1.RuntimeCredential.created_at:type_name -> google.protobuf.Timestamp
+	56, // 26: controlpanel.v1.RuntimeCredential.last_used_at:type_name -> google.protobuf.Timestamp
+	56, // 27: controlpanel.v1.RuntimeCredential.revoked_at:type_name -> google.protobuf.Timestamp
+	56, // 28: controlpanel.v1.RuntimeCredential.downloaded_at:type_name -> google.protobuf.Timestamp
+	56, // 29: controlpanel.v1.RuntimeCredential.consumed_at:type_name -> google.protobuf.Timestamp
+	56, // 30: controlpanel.v1.RuntimeCredential.expires_at:type_name -> google.protobuf.Timestamp
+	31, // 31: controlpanel.v1.RevokeRuntimeCredentialResponse.credential:type_name -> controlpanel.v1.RuntimeCredential
+	0,  // 32: controlpanel.v1.RuntimeFrame.frame_type:type_name -> controlpanel.v1.FrameType
+	35, // 33: controlpanel.v1.RuntimeFrame.hello:type_name -> controlpanel.v1.RuntimeHello
+	38, // 34: controlpanel.v1.RuntimeFrame.request:type_name -> controlpanel.v1.StrategyRequest
+	39, // 35: controlpanel.v1.RuntimeFrame.response:type_name -> controlpanel.v1.StrategyResponse
+	40, // 36: controlpanel.v1.RuntimeFrame.progress:type_name -> controlpanel.v1.StrategyProgress
+	41, // 37: controlpanel.v1.RuntimeFrame.abort:type_name -> controlpanel.v1.StrategyAbort
+	42, // 38: controlpanel.v1.RuntimeFrame.heartbeat:type_name -> controlpanel.v1.Heartbeat
+	44, // 39: controlpanel.v1.RuntimeFrame.error:type_name -> controlpanel.v1.StreamError
+	45, // 40: controlpanel.v1.RuntimeFrame.command:type_name -> controlpanel.v1.RuntimeCommandFrame
+	46, // 41: controlpanel.v1.RuntimeFrame.command_ack:type_name -> controlpanel.v1.RuntimeCommandAck
+	47, // 42: controlpanel.v1.RuntimeFrame.command_result:type_name -> controlpanel.v1.RuntimeCommandResult
+	48, // 43: controlpanel.v1.RuntimeFrame.status_patch:type_name -> controlpanel.v1.RuntimeStatusPatch
+	49, // 44: controlpanel.v1.RuntimeFrame.shutdown:type_name -> controlpanel.v1.RuntimeShutdown
+	50, // 45: controlpanel.v1.RuntimeFrame.dataset_chunk:type_name -> controlpanel.v1.RuntimeDatasetChunk
+	51, // 46: controlpanel.v1.RuntimeFrame.live_kline_batch:type_name -> controlpanel.v1.RuntimeLiveKlineBatch
+	52, // 47: controlpanel.v1.RuntimeFrame.data_ack:type_name -> controlpanel.v1.RuntimeDataAck
+	53, // 48: controlpanel.v1.RuntimeFrame.data_backpressure:type_name -> controlpanel.v1.RuntimeDataBackpressure
+	54, // 49: controlpanel.v1.RuntimeFrame.data_end:type_name -> controlpanel.v1.RuntimeDataEnd
+	36, // 50: controlpanel.v1.RuntimeFrame.hello_ack:type_name -> controlpanel.v1.RuntimeHelloAck
+	37, // 51: controlpanel.v1.RuntimeFrame.resume:type_name -> controlpanel.v1.RuntimeResume
+	43, // 52: controlpanel.v1.RuntimeFrame.heartbeat_ack:type_name -> controlpanel.v1.RuntimeHeartbeatAck
+	56, // 53: controlpanel.v1.RuntimeHelloAck.resume_token_expires_at:type_name -> google.protobuf.Timestamp
+	56, // 54: controlpanel.v1.RuntimeHelloAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
+	57, // 55: controlpanel.v1.StrategyRequest.request:type_name -> google.protobuf.Any
+	55, // 56: controlpanel.v1.StrategyRequest.trace_context:type_name -> controlpanel.v1.StrategyRequest.TraceContextEntry
+	57, // 57: controlpanel.v1.StrategyResponse.response:type_name -> google.protobuf.Any
+	57, // 58: controlpanel.v1.StrategyProgress.event:type_name -> google.protobuf.Any
+	56, // 59: controlpanel.v1.RuntimeHeartbeatAck.fingerprint_expires_at:type_name -> google.protobuf.Timestamp
+	57, // 60: controlpanel.v1.RuntimeCommandFrame.payload:type_name -> google.protobuf.Any
+	57, // 61: controlpanel.v1.RuntimeCommandResult.result:type_name -> google.protobuf.Any
+	57, // 62: controlpanel.v1.RuntimeStatusPatch.payload:type_name -> google.protobuf.Any
+	57, // 63: controlpanel.v1.RuntimeLiveKlineBatch.klines:type_name -> google.protobuf.Any
+	12, // 64: controlpanel.v1.ControlPanelService.ListRuntimes:input_type -> controlpanel.v1.ListRuntimesRequest
+	14, // 65: controlpanel.v1.ControlPanelService.GetRuntime:input_type -> controlpanel.v1.GetRuntimeRequest
+	16, // 66: controlpanel.v1.ControlPanelService.EndRuntime:input_type -> controlpanel.v1.EndRuntimeRequest
+	20, // 67: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:input_type -> controlpanel.v1.ResolveRuntimeRouteByIDRequest
+	22, // 68: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:input_type -> controlpanel.v1.EnsureHostedRuntimeRequest
+	24, // 69: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:input_type -> controlpanel.v1.IssueRuntimeCredentialRequest
+	26, // 70: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:input_type -> controlpanel.v1.ListRuntimeCredentialsRequest
+	28, // 71: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:input_type -> controlpanel.v1.ListRuntimeAdmissionFailuresRequest
+	32, // 72: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:input_type -> controlpanel.v1.RevokeRuntimeCredentialRequest
+	34, // 73: controlpanel.v1.ControlPanelService.RuntimeChannel:input_type -> controlpanel.v1.RuntimeFrame
+	4,  // 74: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:input_type -> controlpanel.v1.PrepareDebugWorkspaceRequest
+	6,  // 75: controlpanel.v1.ControlPanelService.LoadDebugDataset:input_type -> controlpanel.v1.LoadDebugDatasetRequest
+	8,  // 76: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:input_type -> controlpanel.v1.GetRuntimeDebugDatasetRequest
+	18, // 77: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:input_type -> controlpanel.v1.PublishRuntimeNotificationRequest
+	58, // 78: controlpanel.v1.ControlPanelService.RunStrategy:input_type -> strategy.v1.RunStrategyRequest
+	59, // 79: controlpanel.v1.ControlPanelService.PreviewRunStrategy:input_type -> strategy.v1.PreviewRunStrategyRequest
+	60, // 80: controlpanel.v1.ControlPanelService.StopStrategy:input_type -> strategy.v1.StopStrategyRequest
+	61, // 81: controlpanel.v1.ControlPanelService.GetStrategyStatus:input_type -> strategy.v1.GetStrategyStatusRequest
+	13, // 82: controlpanel.v1.ControlPanelService.ListRuntimes:output_type -> controlpanel.v1.ListRuntimesResponse
+	15, // 83: controlpanel.v1.ControlPanelService.GetRuntime:output_type -> controlpanel.v1.GetRuntimeResponse
+	17, // 84: controlpanel.v1.ControlPanelService.EndRuntime:output_type -> controlpanel.v1.EndRuntimeResponse
+	21, // 85: controlpanel.v1.ControlPanelService.ResolveRuntimeRouteByID:output_type -> controlpanel.v1.ResolveRuntimeRouteResponse
+	23, // 86: controlpanel.v1.ControlPanelService.EnsureHostedRuntime:output_type -> controlpanel.v1.EnsureHostedRuntimeResponse
+	25, // 87: controlpanel.v1.ControlPanelService.IssueRuntimeCredential:output_type -> controlpanel.v1.IssueRuntimeCredentialResponse
+	27, // 88: controlpanel.v1.ControlPanelService.ListRuntimeCredentials:output_type -> controlpanel.v1.ListRuntimeCredentialsResponse
+	29, // 89: controlpanel.v1.ControlPanelService.ListRuntimeAdmissionFailures:output_type -> controlpanel.v1.ListRuntimeAdmissionFailuresResponse
+	33, // 90: controlpanel.v1.ControlPanelService.RevokeRuntimeCredential:output_type -> controlpanel.v1.RevokeRuntimeCredentialResponse
+	34, // 91: controlpanel.v1.ControlPanelService.RuntimeChannel:output_type -> controlpanel.v1.RuntimeFrame
+	5,  // 92: controlpanel.v1.ControlPanelService.PrepareDebugWorkspace:output_type -> controlpanel.v1.PrepareDebugWorkspaceResponse
+	7,  // 93: controlpanel.v1.ControlPanelService.LoadDebugDataset:output_type -> controlpanel.v1.LoadDebugDatasetResponse
+	9,  // 94: controlpanel.v1.ControlPanelService.GetRuntimeDebugDataset:output_type -> controlpanel.v1.GetRuntimeDebugDatasetResponse
+	19, // 95: controlpanel.v1.ControlPanelService.PublishRuntimeNotification:output_type -> controlpanel.v1.PublishRuntimeNotificationResponse
+	62, // 96: controlpanel.v1.ControlPanelService.RunStrategy:output_type -> strategy.v1.RunStrategyResponse
+	63, // 97: controlpanel.v1.ControlPanelService.PreviewRunStrategy:output_type -> strategy.v1.PreviewRunStrategyResponse
+	64, // 98: controlpanel.v1.ControlPanelService.StopStrategy:output_type -> strategy.v1.StopStrategyResponse
+	65, // 99: controlpanel.v1.ControlPanelService.GetStrategyStatus:output_type -> strategy.v1.GetStrategyStatusResponse
+	82, // [82:100] is the sub-list for method output_type
+	64, // [64:82] is the sub-list for method input_type
+	64, // [64:64] is the sub-list for extension type_name
+	64, // [64:64] is the sub-list for extension extendee
+	0,  // [0:64] is the sub-list for field type_name
 }
 
 func init() { file_control_panel_service_proto_init() }
@@ -5556,7 +5025,7 @@ func file_control_panel_service_proto_init() {
 	if File_control_panel_service_proto != nil {
 		return
 	}
-	file_control_panel_service_proto_msgTypes[39].OneofWrappers = []any{
+	file_control_panel_service_proto_msgTypes[33].OneofWrappers = []any{
 		(*RuntimeFrame_Hello)(nil),
 		(*RuntimeFrame_Request)(nil),
 		(*RuntimeFrame_Response)(nil),
@@ -5584,7 +5053,7 @@ func file_control_panel_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_control_panel_service_proto_rawDesc), len(file_control_panel_service_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   61,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
