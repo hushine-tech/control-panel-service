@@ -160,7 +160,7 @@ func main() {
 			if network == "host" {
 				// Host networking: container shares host net stack, so
 				// 127.0.0.1 + the bind port works.
-				dialAddr = "127.0.0.1" + portFromBindAddr(cfg.Server.GRPCAddr)
+				dialAddr = "127.0.0.1" + portFromBindAddr(cfg.RuntimeChannelServer.GRPCAddr)
 				logger.Info(ctx, "system", fmt.Sprintf(
 					"provisioning.docker.control_panel_dial_addr unset; defaulted to %q for host networking", dialAddr,
 				))
@@ -184,7 +184,11 @@ func main() {
 	}
 
 	// ── RuntimeChannel stream registry (Phase D3) ──────────────────────────
-	runtimeChannelSvc := runtimechannel.New(repo)
+	runtimeChannelSvc := runtimechannel.NewWithConfig(repo, runtimechannel.Config{
+		Auth: runtimechannel.AuthConfig{
+			AllowBareRuntime: cfg.RuntimePlatform.DebugBareRuntimeEnabled,
+		},
+	})
 	credentialSvc := credential.New(repo, runtimeChannelSvc)
 
 	// ── Notification publisher ─────────────────────────────────────────────
@@ -206,7 +210,6 @@ func main() {
 	runtimeSvc := runtime.New(repo, planResolver, runtime.Config{
 		HeartbeatGrace:         time.Duration(cfg.RuntimePlatform.HeartbeatGraceSeconds) * time.Second,
 		DeathGrace:             time.Duration(cfg.RuntimePlatform.DeathGraceSeconds) * time.Second,
-		CallerTokenTTL:         time.Duration(cfg.RuntimePlatform.CallerTokenTTLSeconds) * time.Second,
 		Provisioning:           cfg.Provisioning,
 		Provisioner:            provisioner,
 		SessionClient:          accClient.ServiceClient(),
@@ -330,6 +333,43 @@ func main() {
 		}
 	}()
 
+	runtimeChannelAddr := cfg.RuntimeChannelServer.GRPCAddr
+	if runtimeChannelAddr == "" {
+		runtimeChannelAddr = ":50055"
+	}
+	runtimeChannelCreds, err := runtimechannel.ServerTLSCredentials(runtimechannel.ServerTLSConfig{
+		Enabled:      cfg.RuntimeChannelServer.TLS.Enabled,
+		CertFile:     cfg.RuntimeChannelServer.TLS.CertFile,
+		KeyFile:      cfg.RuntimeChannelServer.TLS.KeyFile,
+		ClientCAFile: cfg.RuntimeChannelServer.TLS.ClientCAFile,
+	})
+	if err != nil {
+		log.Fatalf("init runtime channel tls: %v", err)
+	}
+	var runtimeChannelOptions []grpc.ServerOption
+	if runtimeChannelCreds != nil {
+		runtimeChannelOptions = append(runtimeChannelOptions, grpc.Creds(runtimeChannelCreds))
+	}
+	runtimeChannelGRPCSrv := grpc.NewServer(runtimeChannelOptions...)
+	cpv1.RegisterControlPanelServiceServer(runtimeChannelGRPCSrv, runtimechannel.NewGRPCService(runtimeChannelSvc))
+	runtimeChannelLis, err := net.Listen("tcp", runtimeChannelAddr)
+	if err != nil {
+		log.Fatalf("listen runtime channel grpc: %v", err)
+	}
+	go func() {
+		tlsMode := "disabled"
+		if runtimeChannelCreds != nil {
+			tlsMode = "server_tls"
+			if cfg.RuntimeChannelServer.TLS.ClientCAFile != "" {
+				tlsMode = "mutual_tls"
+			}
+		}
+		logger.Info(ctx, "system", fmt.Sprintf("runtime channel grpc server listening on %s tls=%s", runtimeChannelAddr, tlsMode))
+		if err := runtimeChannelGRPCSrv.Serve(runtimeChannelLis); err != nil {
+			log.Printf("runtime channel grpc server error: %v", err)
+		}
+	}()
+
 	healthHandler.MarkReady()
 	logger.Info(ctx, "system", "control-panel-service ready")
 
@@ -344,6 +384,7 @@ func main() {
 
 	_ = httpSrv.Shutdown(shutdownCtx)
 	grpcSrv.GracefulStop()
+	runtimeChannelGRPCSrv.GracefulStop()
 
 	logger.Info(context.Background(), "system", "control-panel-service stopped")
 }

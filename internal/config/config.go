@@ -123,9 +123,8 @@ type ResourceProfile struct {
 
 // ProvisioningConfig aggregates the inputs the hosted-runtime provisioner
 // needs at runtime time: per-profile resource limits, the strategy-runtime
-// container image to start, and the host:port range to advertise back to
-// quant-handler. D1 hosted-only single-host operation; multi-host runtime
-// placement is out of scope.
+// container image to start, and the legacy host:port pool kept only for
+// historical registry fields. Runtime session traffic is RuntimeChannel-only.
 type ProvisioningConfig struct {
 	// Backend selects the provisioner implementation:
 	//   ""      → NoOpProvisioner (default; EnsureHostedRuntime fails closed)
@@ -137,19 +136,18 @@ type ProvisioningConfig struct {
 	// Defaults to "hushine/strategy-runtime:executor-dev".
 	Image string `yaml:"image"`
 
-	// AdvertiseHost is the value control-panel-service stores as
-	// runtime_registry.endpoint_host. quant-handler dials this directly.
-	// Single-host development: "127.0.0.1". Cluster: the routable LAN IP.
+	// AdvertiseHost is retained for older registry rows and operator display.
+	// Runtime session traffic uses RuntimeChannel.
 	AdvertiseHost string `yaml:"advertise_host"`
 
-	// PortRangeBase / PortRangeSize define the gRPC port pool the
-	// provisioner allocates from. Default base=50100 size=200.
+	// PortRangeBase / PortRangeSize are retained for historical registry
+	// compatibility. Hosted runtime traffic no longer publishes these ports.
 	PortRangeBase int `yaml:"port_range_base"`
 	PortRangeSize int `yaml:"port_range_size"`
 
 	// RegistrationTimeoutSeconds is how long EnsureHostedRuntime waits
-	// for a freshly-provisioned runtime to call RegisterRuntime back via
-	// its self-register code (Phase D1 section 4). Defaults to 30s.
+	// for a freshly-provisioned runtime to connect through RuntimeChannel.
+	// Defaults to 30s.
 	RegistrationTimeoutSeconds int `yaml:"registration_timeout_seconds"`
 
 	// Profiles maps resource_profile name → Docker limits.

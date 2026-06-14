@@ -201,7 +201,7 @@ func (r *TimescaleRepository) CreateOrReplaceHostedRuntime(ctx context.Context, 
 // CreateOrReplaceSelfHostedRuntime is the RuntimeChannel HELLO admission path.
 // The row is bound to the credential owner at HELLO verification time;
 // endpoint_host/grpc_port may be empty/zero because handler traffic reaches the
-// runtime through RuntimeChannel, not direct dial. It never cancels hosted
+// runtime through RuntimeChannel. It never cancels hosted
 // runtimes just because identity names differ.
 func (r *TimescaleRepository) CreateOrReplaceSelfHostedRuntime(ctx context.Context, rt domain.Runtime) error {
 	if rt.Source != domain.RuntimeSourceSelfHosted {

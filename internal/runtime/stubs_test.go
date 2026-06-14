@@ -243,6 +243,26 @@ func (s *stubRepo) CreateOrReplaceSelfHostedRuntime(_ context.Context, rt domain
 	return nil
 }
 
+func (s *stubRepo) CreateOrReplaceBareRuntime(_ context.Context, rt domain.Runtime) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt = normalizeStubRuntimeForWrite(rt)
+	if rt.Source != domain.RuntimeSourceBare || rt.UserID <= 0 || rt.CredentialKeyID != "" {
+		return repository.ErrConflict
+	}
+	if _, ok := s.runtimes[rt.RuntimeID]; ok {
+		return repository.ErrConflict
+	}
+	for _, e := range s.runtimes {
+		if e.UserID == rt.UserID && e.Name == rt.Name {
+			return repository.ErrConflict
+		}
+	}
+	rt.Role = domain.CredentialRoleDebugger
+	s.runtimes[rt.RuntimeID] = rt
+	return nil
+}
+
 func (s *stubRepo) GetRuntime(_ context.Context, runtimeID string) (domain.Runtime, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -576,7 +596,6 @@ func makeService(repo *stubRepo, planCode string, plans map[string]config.Runtim
 	svc := New(repo, resolver, Config{
 		HeartbeatGrace: time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
 		DeathGrace:     time.Duration(platform.DeathGraceSeconds) * time.Second,
-		CallerTokenTTL: time.Duration(platform.CallerTokenTTLSeconds) * time.Second,
 		SessionClient:  &fakeSessionClient{},
 	})
 	clock := now
@@ -629,7 +648,6 @@ func makeServiceWithProvisioner(repo *stubRepo, planCode string, prov provision.
 	svc := New(repo, resolver, Config{
 		HeartbeatGrace: 30 * time.Second,
 		DeathGrace:     5 * time.Minute,
-		CallerTokenTTL: 60 * time.Second,
 		Provisioning:   provCfg,
 		Provisioner:    prov,
 		SessionClient:  &fakeSessionClient{},

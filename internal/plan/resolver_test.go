@@ -53,7 +53,7 @@ func TestResolve_PicksUserPlan(t *testing.T) {
 
 // TestResolve_LookupNotFoundFailsClosed proves the fail-closed contract.
 // Previously this returned the default plan silently; the fix forwards
-// the absent-user error so callers (RegisterRuntime / ResolveRuntimeRoute)
+// the absent-user error so callers (ResolveRuntimeRoute / EnsureHostedRuntime)
 // can refuse the request rather than allocate quota to a missing user.
 func TestResolve_LookupNotFoundFailsClosed(t *testing.T) {
 	plans := map[string]config.RuntimePlan{

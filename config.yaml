@@ -107,20 +107,16 @@ provisioning:
   # DockerProvisioner-specific settings. Ignored when backend != "docker".
   docker:
     # "host" = container shares host network (simplest single-host dev).
-    #          The runtime listens on the platform-allocated host port.
-    #          quant-handler dials advertise_host:allocated_port directly.
-    # "bridge" / custom = container gets its own network namespace; the
-    #          provisioner adds -p HOST:CONTAINER to map the allocated
-    #          host port to the in-container 50053. Operator must set
-    #          runtime_env addresses to be reachable from inside the
-    #          container (host.docker.internal or service names).
+    # "bridge" / custom = container gets its own network namespace.
+    # Runtime session traffic is outbound RuntimeChannel only; no strategy
+    # gRPC port is published from the hosted container.
     network_mode: "bridge"
-    # What the runtime container should dial for self-registration. NOT
-    # the same as server.grpc_addr (that is the BIND address, e.g.
-    # ":50054"). Default for host networking is "127.0.0.1:<bind_port>".
+    # What the runtime container should dial for RuntimeChannel. NOT the same
+    # as runtime_channel_server.grpc_addr when that value is a bind address.
+    # Default for host networking is "127.0.0.1:<runtime_channel_bind_port>".
     # Bridge / custom networks REQUIRE explicit value:
-    # "host.docker.internal:50054" or routable LAN/service address.
-    control_panel_dial_addr: "host.docker.internal:50054"
+    # "host.docker.internal:50055" or routable LAN/service address.
+    control_panel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
     runtime_user_grpc_port: 50053
     runtime_env:

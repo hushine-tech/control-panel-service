@@ -7,7 +7,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -20,10 +19,6 @@ import (
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
-
-// runtimeTokenMetadataKey is the gRPC metadata key the runtime presents on
-// Heartbeat / future business calls. Lower-case per gRPC convention.
-const runtimeTokenMetadataKey = "x-runtime-token"
 
 // ControlPanelGRPCService is the wire-layer wrapper over Service. It also
 // dispatches the Phase D3 credential RPCs to a separate credential.Service
@@ -55,56 +50,6 @@ func NewControlPanelGRPCService(svc *Service, credSvc *credential.Service, chann
 
 func (g *ControlPanelGRPCService) SetDebuggerService(debugSvc *debugger.Service) {
 	g.debugSvc = debugSvc
-}
-
-// ── RegisterRuntime ─────────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) RegisterRuntime(ctx context.Context, req *cpv1.RegisterRuntimeRequest) (*cpv1.RegisterRuntimeResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	args := RegisterArgs{
-		RuntimeID:       req.GetRuntimeId(),
-		Source:          req.GetSource(),
-		BindUserID:      req.GetBindUserId(),
-		Name:            req.GetName(),
-		EndpointHost:    req.GetEndpointHost(),
-		GRPCPort:        req.GetGrpcPort(),
-		DebugPort:       req.GetDebugPort(),
-		Capabilities:    req.GetCapabilities(),
-		ResourceProfile: req.GetResourceProfile(),
-		Version:         req.GetVersion(),
-	}
-	result, err := g.svc.RegisterRuntime(ctx, args)
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	resp := &cpv1.RegisterRuntimeResponse{
-		Runtime:           runtimeToProto(result.Runtime),
-		RegistrationToken: result.RegistrationToken,
-	}
-	return resp, nil
-}
-
-// ── HeartbeatRuntime ────────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) HeartbeatRuntime(ctx context.Context, req *cpv1.HeartbeatRuntimeRequest) (*cpv1.HeartbeatRuntimeResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	token := extractRuntimeToken(ctx)
-	result, err := g.svc.HeartbeatRuntime(ctx, req.GetRuntimeId(), token)
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	resp := &cpv1.HeartbeatRuntimeResponse{
-		ShutdownRequested: result.ShutdownRequested,
-		TerminalReason:    result.TerminalReason,
-	}
-	if !result.HeartbeatAt.IsZero() {
-		resp.HeartbeatAt = timestamppb.New(result.HeartbeatAt)
-	}
-	return resp, nil
 }
 
 // ── ListRuntimes ────────────────────────────────────────────────────────────
@@ -175,16 +120,9 @@ func (g *ControlPanelGRPCService) ResolveRuntimeRouteByID(ctx context.Context, r
 	if err != nil {
 		return nil, mapErrorToStatus(err)
 	}
-	resp := &cpv1.ResolveRuntimeRouteResponse{
-		Runtime:       runtimeToProto(result.Runtime),
-		GrpcEndpoint:  result.GRPCEndpoint,
-		DebugEndpoint: result.DebugEndpoint,
-		CallerToken:   result.CallerToken,
-	}
-	if !result.CallerTokenExpiresAt.IsZero() {
-		resp.CallerTokenExpiresAt = timestamppb.New(result.CallerTokenExpiresAt)
-	}
-	return resp, nil
+	return &cpv1.ResolveRuntimeRouteResponse{
+		Runtime: runtimeToProto(result.Runtime),
+	}, nil
 }
 
 // ── EnsureHostedRuntime ─────────────────────────────────────────────────────
@@ -202,36 +140,10 @@ func (g *ControlPanelGRPCService) EnsureHostedRuntime(ctx context.Context, req *
 		return nil, mapErrorToStatus(err)
 	}
 	resp := &cpv1.EnsureHostedRuntimeResponse{
-		Runtime:       runtimeToProto(result.Runtime),
-		GrpcEndpoint:  result.GRPCEndpoint,
-		DebugEndpoint: result.DebugEndpoint,
-		CallerToken:   result.CallerToken,
-		Provisioned:   result.Provisioned,
-	}
-	if !result.CallerTokenExpiresAt.IsZero() {
-		resp.CallerTokenExpiresAt = timestamppb.New(result.CallerTokenExpiresAt)
+		Runtime:     runtimeToProto(result.Runtime),
+		Provisioned: result.Provisioned,
 	}
 	return resp, nil
-}
-
-// ── ValidateCallerToken ─────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) ValidateCallerToken(ctx context.Context, req *cpv1.ValidateCallerTokenRequest) (*cpv1.ValidateCallerTokenResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	result, err := g.svc.ValidateCallerToken(ctx, ValidateCallerTokenArgs{
-		Token:     req.GetCallerToken(),
-		RuntimeID: req.GetRuntimeId(),
-	})
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	return &cpv1.ValidateCallerTokenResponse{
-		Valid:  result.Valid,
-		UserId: result.UserID,
-		Reason: result.Reason,
-	}, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -322,18 +234,6 @@ func debugDatasetToProto(state *domain.DebugDatasetState) *cpv1.DebugDatasetStat
 		State:          state.State,
 		LastError:      state.LastError,
 	}
-}
-
-func extractRuntimeToken(ctx context.Context) string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ""
-	}
-	values := md.Get(runtimeTokenMetadataKey)
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
 
 // mapErrorToStatus translates Service sentinels and unrelated errors to
@@ -467,10 +367,7 @@ func (g *ControlPanelGRPCService) RevokeRuntimeCredential(ctx context.Context, r
 // ── RuntimeChannel (Phase D3 self-hosted runtimes) ─────────────────────────
 
 func (g *ControlPanelGRPCService) RuntimeChannel(stream cpv1.ControlPanelService_RuntimeChannelServer) error {
-	if g.channelSvc == nil {
-		return status.Error(codes.FailedPrecondition, "runtime channel service is not configured")
-	}
-	return g.channelSvc.Handle(stream)
+	return status.Error(codes.FailedPrecondition, "RuntimeChannel is served on the dedicated runtime_channel_server listener")
 }
 
 func (g *ControlPanelGRPCService) PrepareDebugWorkspace(ctx context.Context, req *cpv1.PrepareDebugWorkspaceRequest) (*cpv1.PrepareDebugWorkspaceResponse, error) {

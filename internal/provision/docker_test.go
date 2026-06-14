@@ -112,7 +112,7 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	// Per-runtime env vars.
 	assertHasEnv(t, args, "RUNTIME_INGRESS_MODE=outbound")
 	if envIsPresent(args, "RUNTIME_REGISTER_WITH_CONTROL_PANEL=1") {
-		t.Error("hosted runtime should register through RuntimeChannel credential path, not direct RegisterRuntime")
+		t.Error("hosted runtime should connect through RuntimeChannel credential path")
 	}
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
 	assertHasEnv(t, args, "RUNTIME_NAME=hosted-steady-river")

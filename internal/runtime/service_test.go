@@ -19,184 +19,61 @@ import (
 
 var fixedNow = time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
-// ── Register ────────────────────────────────────────────────────────────────
-
-func TestRegister_SelfHostedRejected(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source:          domain.RuntimeSourceSelfHosted,
-		EndpointHost:    "10.0.0.5",
-		GRPCPort:        50053,
-		ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("err = %v, want ErrInvalidArgument", err)
+func insertConnectedRuntime(t *testing.T, repo *stubRepo, rt domain.Runtime, atOpt ...time.Time) domain.Runtime {
+	t.Helper()
+	at := fixedNow
+	if len(atOpt) > 0 {
+		at = atOpt[0]
 	}
-}
-
-func TestRegister_HostedStartsInStartingState(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	res, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source:          domain.RuntimeSourceHosted,
-		BindUserID:      42,
-		EndpointHost:    "10.0.0.5",
-		GRPCPort:        50053,
-		ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("RegisterRuntime: %v", err)
+	if rt.RuntimeID == "" {
+		rt.RuntimeID = "rt-connected"
 	}
-	if res.Runtime.Status != domain.RuntimeStatusStarting {
-		t.Errorf("status = %q, want starting", res.Runtime.Status)
+	if rt.UserID == 0 {
+		rt.UserID = 42
 	}
-	if res.Runtime.UserID != 42 {
-		t.Errorf("user_id = %d, want 42", res.Runtime.UserID)
+	if rt.Name == "" {
+		rt.Name = rt.RuntimeID
 	}
-}
-
-func TestRegister_Hosted_QuotaExceeded(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "free", nil, config.RuntimePlatformConfig{DefaultPlanCode: "free"}, fixedNow)
-
-	for i := 0; i < 1; i++ {
-		if _, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-			Source: domain.RuntimeSourceHosted, BindUserID: 7,
-			EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-		}); err != nil {
-			t.Fatalf("first register: %v", err)
-		}
+	if rt.Source == "" {
+		rt.Source = domain.RuntimeSourceHosted
 	}
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 7,
-		EndpointHost: "h", GRPCPort: 2, ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrQuotaExceeded) {
-		t.Fatalf("err = %v, want ErrQuotaExceeded", err)
+	if rt.Role == "" {
+		rt.Role = domain.CredentialRoleExecutor
 	}
-}
-
-func TestRegister_RejectsBadSource(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: "garbage", EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("err = %v, want ErrInvalidArgument", err)
+	if rt.ResourceProfile == "" {
+		rt.ResourceProfile = "small"
 	}
-}
-
-func TestRegister_HostedRequiresUserID(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("err = %v, want ErrInvalidArgument", err)
+	if rt.Status == "" {
+		rt.Status = domain.RuntimeStatusActive
 	}
-}
-
-// ── Heartbeat ───────────────────────────────────────────────────────────────
-
-func TestHeartbeat_FlipsStatusToActive(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	res, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
+	if rt.HeartbeatAt == nil {
+		heartbeat := at
+		rt.HeartbeatAt = &heartbeat
 	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), res.Runtime.RuntimeID, res.RegistrationToken); err != nil {
-		t.Fatalf("heartbeat: %v", err)
+	if rt.ConnectionOwnerInstanceID == "" {
+		rt.ConnectionOwnerInstanceID = "cp-test"
 	}
-	got, _ := repo.GetRuntime(context.Background(), res.Runtime.RuntimeID)
-	if got.Status != domain.RuntimeStatusActive {
-		t.Errorf("status = %q, want active", got.Status)
+	if rt.ConnectionOwnerAcquiredAt == nil {
+		acquired := at
+		rt.ConnectionOwnerAcquiredAt = &acquired
 	}
-	if got.HeartbeatAt == nil {
-		t.Errorf("heartbeat_at not set")
+	if rt.ConnectionOwnerHeartbeatAt == nil {
+		ownerHeartbeat := at
+		rt.ConnectionOwnerHeartbeatAt = &ownerHeartbeat
 	}
-}
-
-func TestHeartbeat_TokenMismatch(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	res, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
+	if rt.CreatedAt.IsZero() {
+		rt.CreatedAt = at
 	}
-	_, err = svc.HeartbeatRuntime(context.Background(), res.Runtime.RuntimeID, "wrong-token")
-	if !errors.Is(err, ErrTokenMismatch) {
-		t.Fatalf("err = %v, want ErrTokenMismatch", err)
+	if rt.UpdatedAt.IsZero() {
+		rt.UpdatedAt = at
 	}
-}
-
-func TestHeartbeat_TerminalRuntimeReturnsShutdownInstruction(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	res, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
+	if err := repo.CreateRuntime(context.Background(), rt); err != nil {
+		t.Fatalf("CreateRuntime(%s): %v", rt.RuntimeID, err)
 	}
-	if _, err := repo.EndRuntime(context.Background(), res.Runtime.RuntimeID, domain.RuntimeEndedReasonUserCancelled, fixedNow); err != nil {
-		t.Fatalf("end: %v", err)
-	}
-	got, err := svc.HeartbeatRuntime(context.Background(), res.Runtime.RuntimeID, res.RegistrationToken)
-	if err != nil {
-		t.Fatalf("heartbeat terminal: %v", err)
-	}
-	if !got.ShutdownRequested || got.TerminalReason != domain.RuntimeEndedReasonUserCancelled {
-		t.Fatalf("heartbeat result = %+v, want shutdown with user_cancelled", got)
-	}
-	stored, _ := repo.GetRuntime(context.Background(), res.Runtime.RuntimeID)
-	if stored.Status != domain.RuntimeStatusCancelled {
-		t.Fatalf("stored status = %q, want cancelled", stored.Status)
-	}
+	return rt
 }
 
 // ── Resolve ─────────────────────────────────────────────────────────────────
-
-func TestResolveRuntimeRouteByID_HappyPathLegacyCoverage(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	reg, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "host.example", GRPCPort: 50053, DebugPort: 5678, ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), reg.Runtime.RuntimeID, reg.RegistrationToken); err != nil {
-		t.Fatalf("heartbeat: %v", err)
-	}
-	attachRuntimeOwner(t, repo, reg.Runtime.RuntimeID, fixedNow)
-	res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: reg.Runtime.RuntimeID})
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if res.GRPCEndpoint != "host.example:50053" {
-		t.Errorf("grpc_endpoint = %q, want host.example:50053", res.GRPCEndpoint)
-	}
-	if res.DebugEndpoint != "host.example:5678" {
-		t.Errorf("debug_endpoint = %q, want host.example:5678", res.DebugEndpoint)
-	}
-	if res.CallerToken == "" {
-		t.Errorf("caller_token missing")
-	}
-}
 
 func TestResolveRuntimeRouteByID_RejectsDebuggerRuntimeForExecutorRoute(t *testing.T) {
 	repo := newStubRepo()
@@ -343,23 +220,22 @@ func TestResolveRuntimeRouteByID_ExecutorDemoSharedAcrossSources(t *testing.T) {
 func TestGetRuntime_OwnershipChecked(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	reg, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "host.example", GRPCPort: 50053, ResourceProfile: "small",
+	rt := insertConnectedRuntime(t, repo, domain.Runtime{
+		RuntimeID: "rt-owned",
+		UserID:    42,
+		Name:      "hosted-owned",
+		Source:    domain.RuntimeSourceHosted,
 	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
 
-	got, err := svc.GetRuntime(context.Background(), GetRuntimeArgs{UserID: 42, RuntimeID: reg.Runtime.RuntimeID})
+	got, err := svc.GetRuntime(context.Background(), GetRuntimeArgs{UserID: 42, RuntimeID: rt.RuntimeID})
 	if err != nil {
 		t.Fatalf("GetRuntime owner: %v", err)
 	}
-	if got.RuntimeID != reg.Runtime.RuntimeID {
-		t.Fatalf("runtime_id = %q, want %q", got.RuntimeID, reg.Runtime.RuntimeID)
+	if got.RuntimeID != rt.RuntimeID {
+		t.Fatalf("runtime_id = %q, want %q", got.RuntimeID, rt.RuntimeID)
 	}
 
-	_, err = svc.GetRuntime(context.Background(), GetRuntimeArgs{UserID: 7, RuntimeID: reg.Runtime.RuntimeID})
+	_, err = svc.GetRuntime(context.Background(), GetRuntimeArgs{UserID: 7, RuntimeID: rt.RuntimeID})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-user err = %v, want ErrNotFound", err)
 	}
@@ -768,42 +644,33 @@ func TestEndRuntime_CrossUserFailsClosed(t *testing.T) {
 func TestResolveRuntimeRouteByID_HappyPath(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	reg, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "host.example", GRPCPort: 50053, DebugPort: 5678, ResourceProfile: "small",
+	rt := insertConnectedRuntime(t, repo, domain.Runtime{
+		RuntimeID: "rt-route",
+		UserID:    42,
+		Name:      "hosted-route",
+		Source:    domain.RuntimeSourceHosted,
 	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), reg.Runtime.RuntimeID, reg.RegistrationToken); err != nil {
-		t.Fatalf("heartbeat: %v", err)
-	}
-	attachRuntimeOwner(t, repo, reg.Runtime.RuntimeID, fixedNow)
 
-	res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: reg.Runtime.RuntimeID})
+	res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: rt.RuntimeID})
 	if err != nil {
 		t.Fatalf("resolve by id: %v", err)
 	}
-	if res.Runtime.RuntimeID != reg.Runtime.RuntimeID {
-		t.Fatalf("runtime_id = %q, want %q", res.Runtime.RuntimeID, reg.Runtime.RuntimeID)
-	}
-	if res.GRPCEndpoint != "host.example:50053" || res.CallerToken == "" {
-		t.Fatalf("bad route: endpoint=%q token=%q", res.GRPCEndpoint, res.CallerToken)
+	if res.Runtime.RuntimeID != rt.RuntimeID {
+		t.Fatalf("runtime_id = %q, want %q", res.Runtime.RuntimeID, rt.RuntimeID)
 	}
 }
 
 func TestResolveRuntimeRouteByID_CrossUserFailsClosed(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	reg, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "host.example", GRPCPort: 50053, ResourceProfile: "small",
+	rt := insertConnectedRuntime(t, repo, domain.Runtime{
+		RuntimeID: "rt-cross",
+		UserID:    42,
+		Name:      "hosted-cross",
+		Source:    domain.RuntimeSourceHosted,
 	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
 
-	_, err = svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 7, RuntimeID: reg.Runtime.RuntimeID})
+	_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 7, RuntimeID: rt.RuntimeID})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-user resolve err = %v, want ErrNotFound", err)
 	}
@@ -871,36 +738,23 @@ func TestRuntimeToProtoIncludesCredentialKeyID(t *testing.T) {
 	}
 }
 
-func TestResolve_SelfHostedDoesNotIssueCallerTokenOrEndpoint(t *testing.T) {
+func TestResolveRuntimeRouteByID_ReturnsRuntimeOnly(t *testing.T) {
 	repo := newStubRepo()
 	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	heartbeat := fixedNow
-	repo.runtimes["rt-self"] = domain.Runtime{
+	insertConnectedRuntime(t, repo, domain.Runtime{
 		RuntimeID:       "rt-self",
 		CredentialKeyID: "key-1",
 		UserID:          42,
 		Name:            "default",
 		Source:          domain.RuntimeSourceSelfHosted,
-		EndpointHost:    "user-laptop.local",
-		GRPCPort:        50053,
-		DebugPort:       5678,
-		ResourceProfile: "small",
-		Status:          domain.RuntimeStatusActive,
-		HeartbeatAt:     &heartbeat,
-		CreatedAt:       fixedNow,
-		UpdatedAt:       fixedNow,
-	}
-	attachRuntimeOwner(t, repo, "rt-self", fixedNow)
+	})
 
 	res, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt-self"})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if res.CallerToken != "" || !res.CallerTokenExpiresAt.IsZero() {
-		t.Fatalf("self-hosted route returned caller token: token=%q expires=%v", res.CallerToken, res.CallerTokenExpiresAt)
-	}
-	if res.GRPCEndpoint != "" || res.DebugEndpoint != "" {
-		t.Fatalf("self-hosted route returned direct endpoints: grpc=%q debug=%q", res.GRPCEndpoint, res.DebugEndpoint)
+	if res.Runtime.RuntimeID != "rt-self" {
+		t.Fatalf("runtime_id = %q, want rt-self", res.Runtime.RuntimeID)
 	}
 }
 
@@ -968,20 +822,15 @@ func TestResolve_StaleHeartbeat(t *testing.T) {
 	repo := newStubRepo()
 	platform := config.RuntimePlatformConfig{HeartbeatGraceSeconds: 5}
 	svc := makeService(repo, "pro", nil, platform, fixedNow)
-	reg, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
+	rt := insertConnectedRuntime(t, repo, domain.Runtime{
+		RuntimeID: "rt-stale",
+		UserID:    42,
+		Name:      "hosted-stale",
+		Source:    domain.RuntimeSourceHosted,
 	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), reg.Runtime.RuntimeID, reg.RegistrationToken); err != nil {
-		t.Fatalf("heartbeat: %v", err)
-	}
-	attachRuntimeOwner(t, repo, reg.Runtime.RuntimeID, fixedNow)
 	// Advance clock past grace.
 	svc.SetClock(func() time.Time { return fixedNow.Add(60 * time.Second) })
-	_, err = svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: reg.Runtime.RuntimeID})
+	_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: rt.RuntimeID})
 	if !errors.Is(err, ErrUnhealthy) {
 		t.Fatalf("err = %v, want ErrUnhealthy", err)
 	}
@@ -1014,13 +863,12 @@ func TestList_Filters(t *testing.T) {
 			UpdatedAt:       fixedNow,
 		}
 	}
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 60000, ResourceProfile: "small",
+	insertConnectedRuntime(t, repo, domain.Runtime{
+		RuntimeID: "rt-hosted",
+		UserID:    42,
+		Name:      "hosted-one",
+		Source:    domain.RuntimeSourceHosted,
 	})
-	if err != nil {
-		t.Fatalf("register hosted: %v", err)
-	}
 
 	res, err := svc.ListRuntimes(context.Background(), ListArgs{UserID: 42, SourceFilter: domain.RuntimeSourceHosted})
 	if err != nil {
@@ -1104,7 +952,6 @@ func makeServiceWithLookup(repo *stubRepo, lookup plan.PlanLookup) *Service {
 	platform := config.RuntimePlatformConfig{
 		DefaultPlanCode:            "pro",
 		HeartbeatGraceSeconds:      30,
-		CallerTokenTTLSeconds:      60,
 		MaxTotalHostedRuntimes:     -1,
 		MaxTotalSelfHostedRuntimes: -1,
 	}
@@ -1112,7 +959,6 @@ func makeServiceWithLookup(repo *stubRepo, lookup plan.PlanLookup) *Service {
 	svc := New(repo, resolver, Config{
 		HeartbeatGrace: 30 * time.Second,
 		DeathGrace:     5 * time.Minute,
-		CallerTokenTTL: 60 * time.Second,
 	})
 	clock := fixedNow
 	svc.SetClock(func() time.Time { return clock })
@@ -1124,67 +970,6 @@ type errLookup struct{ err error }
 
 func (e errLookup) GetUserPlanCode(_ context.Context, _ int64) (string, error) {
 	return "", e.err
-}
-
-// TestRegister_AccountServiceNotFound_FailsClosed: hosted RegisterRuntime
-// with bind_user_id=42 but core-service returns NotFound for that user
-// MUST refuse the request rather than silently allocate a default plan.
-func TestRegister_AccountServiceNotFound_FailsClosed(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeServiceWithLookup(repo, errLookup{err: status.Error(codes.NotFound, "user not found")})
-
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source:          domain.RuntimeSourceHosted,
-		BindUserID:      42,
-		EndpointHost:    "10.0.0.5",
-		GRPCPort:        50053,
-		ResourceProfile: "small",
-		Name:            "default",
-	})
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v, want ErrNotFound (fail-closed for missing user)", err)
-	}
-}
-
-// TestRegister_AccountServiceUnavailable_FailsClosed: core-service
-// being unreachable MUST NOT result in a runtime being registered. The
-// pre-fix behavior was to silently fall back to default plan (pro), which
-// would let an arbitrary caller bind a hosted runtime to any user_id
-// while core-service was down.
-func TestRegister_AccountServiceUnavailable_FailsClosed(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeServiceWithLookup(repo, errLookup{err: status.Error(codes.Unavailable, "boom")})
-
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source:          domain.RuntimeSourceHosted,
-		BindUserID:      42,
-		EndpointHost:    "10.0.0.5",
-		GRPCPort:        50053,
-		ResourceProfile: "small",
-		Name:            "default",
-	})
-	if !errors.Is(err, ErrPlanLookupUnavailable) {
-		t.Fatalf("err = %v, want ErrPlanLookupUnavailable", err)
-	}
-}
-
-// ── Quota 0 semantics (#3) ────────────────────────────────────────────────
-
-// TestRegister_Hosted_RejectsDisallowedResourceProfile: hosted register
-// must check resource_profile against plan.AllowedResourceProfiles. The
-// caller (hosted-runtime provisioner) is trusted but not infallible, and
-// this is the last line of defense.
-func TestRegister_Hosted_RejectsDisallowedResourceProfile(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "free", nil, config.RuntimePlatformConfig{}, fixedNow)
-	// "free" plan allows only "small" per stubs_test.go default; request "large".
-	_, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 50053, ResourceProfile: "large",
-	})
-	if !errors.Is(err, ErrQuotaExceeded) {
-		t.Fatalf("err = %v, want ErrQuotaExceeded for disallowed profile", err)
-	}
 }
 
 // ── EnsureHostedRuntime (Phase D1 section 5) ──────────────────────────────
@@ -1205,9 +990,6 @@ func TestEnsureHostedRuntime_HappyPath(t *testing.T) {
 	}
 	if !res.Provisioned {
 		t.Errorf("Provisioned = false, want true (fresh provision)")
-	}
-	if res.GRPCEndpoint == "" {
-		t.Errorf("GRPCEndpoint empty")
 	}
 	if prov.calls != 1 {
 		t.Errorf("provisioner calls = %d, want 1", prov.calls)
@@ -1669,7 +1451,7 @@ func TestEnsureHostedRuntime_UnknownProfile(t *testing.T) {
 		},
 	}
 	svc := New(repo, resolver, Config{
-		HeartbeatGrace: 30 * time.Second, DeathGrace: 5 * time.Minute, CallerTokenTTL: 60 * time.Second,
+		HeartbeatGrace: 30 * time.Second, DeathGrace: 5 * time.Minute,
 		Provisioning: provCfg, Provisioner: prov,
 	})
 	clock := fixedNow
@@ -1684,7 +1466,7 @@ func TestEnsureHostedRuntime_UnknownProfile(t *testing.T) {
 }
 
 // TestEnsureHostedRuntime_RegistrationTimeout: provisioner reports
-// success but the runtime never calls RegisterRuntime back. Service
+// success but the runtime never connects through RuntimeChannel. Service
 // fails closed with ErrRegistrationTimeout and Deprovisions the
 // half-started container.
 func TestEnsureHostedRuntime_RegistrationTimeout(t *testing.T) {
@@ -1816,205 +1598,6 @@ func TestEnsureHostedRuntime_RejectsZeroUserID(t *testing.T) {
 	_, err := svc.EnsureHostedRuntime(context.Background(), EnsureHostedRuntimeArgs{UserID: 0})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("err = %v, want ErrInvalidArgument", err)
-	}
-}
-
-// ── ValidateCallerToken (Phase D1 section 6.5) ────────────────────────────
-
-// TestValidateCallerToken_ResolveThenValidate proves the round trip
-// quant-handler + strategy-runtime use:
-//  1. handler calls ResolveRuntimeRouteByID → gets caller_token
-//  2. handler dials runtime, attaches token in metadata
-//  3. runtime's interceptor calls ValidateCallerToken → ok
-func TestValidateCallerToken_ResolveThenValidate(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	// Plant a healthy runtime.
-	now := fixedNow
-	repo.runtimes["rt_42_default"] = domain.Runtime{
-		RuntimeID: "rt_42_default", UserID: 42, Name: "default",
-		Source:       domain.RuntimeSourceHosted,
-		EndpointHost: "10.0.0.5", GRPCPort: 50053, ResourceProfile: "small",
-		Status: domain.RuntimeStatusActive, HeartbeatAt: &now,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	attachRuntimeOwner(t, repo, "rt_42_default", fixedNow)
-
-	resolveResult, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt_42_default"})
-	if err != nil {
-		t.Fatalf("ResolveRuntimeRouteByID: %v", err)
-	}
-	if resolveResult.CallerToken == "" {
-		t.Fatal("CallerToken not issued")
-	}
-
-	// Step 3: validate the issued token against the runtime that
-	// received the call.
-	res, err := svc.ValidateCallerToken(context.Background(), ValidateCallerTokenArgs{
-		Token:     resolveResult.CallerToken,
-		RuntimeID: "rt_42_default",
-	})
-	if err != nil {
-		t.Fatalf("ValidateCallerToken: %v", err)
-	}
-	if !res.Valid {
-		t.Errorf("Valid = false reason=%q, want true", res.Reason)
-	}
-	if res.UserID != 42 {
-		t.Errorf("UserID = %d, want 42", res.UserID)
-	}
-}
-
-// TestValidateCallerToken_RuntimeMismatch_RejectsCrossRuntimeUse: a
-// token issued for runtime A must not validate when presented by
-// runtime B. Defense against a compromised runtime trying to forward
-// tokens to its peers.
-func TestValidateCallerToken_RuntimeMismatch_RejectsCrossRuntimeUse(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	now := fixedNow
-	repo.runtimes["rt_a"] = domain.Runtime{
-		RuntimeID: "rt_a", UserID: 42, Name: "a",
-		Source:       domain.RuntimeSourceHosted,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-		Status: domain.RuntimeStatusActive, HeartbeatAt: &now,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	attachRuntimeOwner(t, repo, "rt_a", fixedNow)
-
-	resolveResult, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt_a"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-
-	res, err := svc.ValidateCallerToken(context.Background(), ValidateCallerTokenArgs{
-		Token:     resolveResult.CallerToken,
-		RuntimeID: "rt_b", // different runtime
-	})
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if res.Valid {
-		t.Errorf("Valid = true; expected runtime_mismatch rejection")
-	}
-	if res.Reason != "runtime_mismatch" {
-		t.Errorf("Reason = %q, want runtime_mismatch", res.Reason)
-	}
-}
-
-func TestValidateCallerToken_UnknownToken(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	res, err := svc.ValidateCallerToken(context.Background(), ValidateCallerTokenArgs{
-		Token: "definitely-not-issued", RuntimeID: "rt_x",
-	})
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if res.Valid {
-		t.Error("Valid=true for unknown token")
-	}
-	if res.Reason != "unknown" {
-		t.Errorf("Reason = %q, want unknown", res.Reason)
-	}
-}
-
-func TestValidateCallerToken_EmptyToken(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	res, err := svc.ValidateCallerToken(context.Background(), ValidateCallerTokenArgs{
-		Token: "", RuntimeID: "rt_x",
-	})
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if res.Valid {
-		t.Error("Valid=true for empty token")
-	}
-	if res.Reason != "unknown" {
-		t.Errorf("Reason = %q, want unknown", res.Reason)
-	}
-}
-
-// ── Hosted RegisterRuntime slot admission ──────────────────────────────────
-
-func TestRegister_HostedOccupiedSlotConflictsWithoutMutation(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	first, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		Name: "default", EndpointHost: "10.0.0.5", GRPCPort: 50053,
-		ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("first register: %v", err)
-	}
-
-	_, err = svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		Name: "default", EndpointHost: "10.0.0.5", GRPCPort: 50053,
-		ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("second register err = %v, want ErrConflict", err)
-	}
-
-	got1, err := repo.GetRuntime(context.Background(), first.Runtime.RuntimeID)
-	if err != nil {
-		t.Fatalf("lookup first: %v", err)
-	}
-	if got1.Status != domain.RuntimeStatusStarting {
-		t.Errorf("first status = %q, want starting", got1.Status)
-	}
-	counts, err := repo.CountRuntimesByUser(context.Background(), 42)
-	if err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if counts.Hosted != 1 {
-		t.Errorf("hosted count = %d, want 1", counts.Hosted)
-	}
-}
-
-func TestRegister_HostedEndedRuntimeKeepsManualNameConflict(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-
-	first, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		Name: "default", EndpointHost: "10.0.0.5", GRPCPort: 50053,
-		ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("first register: %v", err)
-	}
-	if _, err := svc.EndRuntime(context.Background(), EndRuntimeArgs{UserID: 42, RuntimeID: first.Runtime.RuntimeID}); err != nil {
-		t.Fatalf("end first: %v", err)
-	}
-
-	_, err = svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		Name: "default", EndpointHost: "10.0.0.5", GRPCPort: 50053,
-		ResourceProfile: "small",
-	})
-	if !errors.Is(err, ErrConflict) {
-		t.Fatalf("second register after end err = %v, want ErrConflict", err)
-	}
-	got1, err := repo.GetRuntime(context.Background(), first.Runtime.RuntimeID)
-	if err != nil {
-		t.Fatalf("lookup first: %v", err)
-	}
-	if got1.Status != domain.RuntimeStatusCancelled {
-		t.Errorf("first status = %q, want cancelled", got1.Status)
-	}
-	counts, err := repo.CountRuntimesByUser(context.Background(), 42)
-	if err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if counts.Hosted != 0 {
-		t.Errorf("hosted count = %d, want 0 (ended row should be excluded)", counts.Hosted)
 	}
 }
 
