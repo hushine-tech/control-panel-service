@@ -23,46 +23,34 @@ make proto            # regenerate gen/controlpanelv1 from proto/
 |---|---|---|
 | HTTP health | `:8082/healthz`, `:8082/readyz` | always-200 + ready-gate |
 | gRPC | `:50054` | `controlpanel.v1.ControlPanelService` |
+| RuntimeChannel gRPC | `:50055` | dedicated runtime stream listener; optional server TLS / mTLS |
 
 ## RPC overview
 
 | RPC | Purpose | Status |
 |---|---|---|
-| `RegisterRuntime` | hosted runtime self-register on startup; returns `registration_token` | hosted path only |
-| `HeartbeatRuntime` | hosted runtime heartbeat; verifies `x-runtime-token` metadata | hosted path only |
 | `ListRuntimes` | list per-user runtime registry rows | landed |
-| `ResolveRuntimeRouteByID` | look up a selected `runtime_id` and source | hosted direct-dial path |
-| `EnsureHostedRuntime` | lazy-create hosted runtime if missing; idempotent reuse | hosted path |
-| `RuntimeChannel` | self-hosted runtime outbound bidi stream | D3 path |
-| `RunStrategy` / `PreviewRunStrategy` / `StopStrategy` / `GetStrategyStatus` | proxy strategy RPCs over `RuntimeChannel` | self-hosted path only |
-| `IssueRuntimeCredential` / `ListRuntimeCredentials` / `RevokeRuntimeCredential` | keypair credential lifecycle | D3 path |
+| `ResolveRuntimeRouteByID` | look up a selected `runtime_id` and source | route metadata only |
+| `EnsureHostedRuntime` | lazy-create hosted RuntimeChannel runtime if missing; idempotent reuse | hosted path |
+| `RuntimeChannel` | hosted/self-hosted/bare-debug runtime outbound bidi stream | dedicated listener |
+| `RunStrategy` / `PreviewRunStrategy` / `StopStrategy` / `GetStrategyStatus` | proxy strategy RPCs over `RuntimeChannel` | all runtime sources |
+| `IssueRuntimeCredential` / `ListRuntimeCredentials` / `RevokeRuntimeCredential` | keypair credential lifecycle | self-hosted path |
 
-## Runtime traffic paths (Phase D3)
+## Runtime Traffic Paths
 
-D3 intentionally runs **two paths**:
+Runtime traffic has one supported path now:
 
 | Runtime source | Handler path | Runtime process mode | Auth primitive |
 |---|---|---|---|
-| `hosted` | `quant-handler` → `ResolveRuntimeRouteByID` / `EnsureHostedRuntime` → direct gRPC dial to runtime | `RUNTIME_INGRESS_MODE=inbound` (default) | short-lived `caller_token` metadata |
-| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `RUNTIME_INGRESS_MODE=outbound` | Ed25519 signed HELLO + stream registry |
+| `hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker | hosted internal Ed25519 credential |
+| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker or bare machine | user-issued Ed25519 credential |
+| `bare` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start --user-id <id>` | debug-gated unsigned HELLO |
 
-Hosted containers are untouched by D3. The hosted provisioner does not need
-to set `RUNTIME_INGRESS_MODE`; the SDK default is `inbound`, so the D1
-direct-dial server and `CallerTokenInterceptor` continue to run.
+The `bare` source is accepted only when
+`runtime_platform.debug_bare_runtime_enabled=true`; production deployments
+should keep it false.
 
-Self-hosted containers MUST set `RUNTIME_INGRESS_MODE=outbound`. In this
-mode the runtime does not bind an inbound gRPC port, does not install the
-`CallerTokenInterceptor`, loads `/etc/hushine/runtime.cred`, opens
-`RuntimeChannel`, sends HEARTBEAT every 30s, and receives strategy calls as
-REQUEST frames. See task 4.2 in the D3 change for the SDK switch and task
-6.3 for handler-side `caller_token` branching.
-
-`RegisterRuntime(source=self_hosted)`, `PairRuntime`, `runtime_pairings`,
-and pairing-code generation were D1 scaffold-only surfaces and have been
-removed in D3. The supported self-hosted onboarding path is runtime
-credentials + outbound RuntimeChannel.
-
-## Provisioning (Phase D1 section 5)
+## Provisioning
 
 `EnsureHostedRuntime` is the lazy-creation entry point quant-handler
 calls on strategy start. Order of checks:
@@ -70,16 +58,16 @@ calls on strategy start. Order of checks:
 1. user_id required; `name` is display-only and may be omitted to generate `hosted-*`
 2. explicit `runtime_id` route lookup is used for strategy start/status/stop
 3. plan / quota / `resource_profile` checks fail-closed
-4. allocate `runtime_id` + port + token
+4. allocate `runtime_id` + hosted bootstrap credential
 5. call `Provisioner.Provision`
 6. wait up to `provisioning.registration_timeout_seconds` for the
-   runtime's section-4 self-register code to land a row
+   runtime's RuntimeChannel HELLO to land a row
 7. return route; on timeout, deprovision and fail closed
 
 ### Provisioner backends
 
 The `internal/provision/` package exposes a `Provisioner` interface so
-the service-layer logic above is backend-agnostic. D1 ships:
+the service-layer logic above is backend-agnostic. Current backends:
 
 - **NoOpProvisioner** (default) — refuses every call with
   `ErrNotConfigured`. Service surfaces this as `FailedPrecondition` so
@@ -92,10 +80,7 @@ the service-layer logic above is backend-agnostic. D1 ships:
 ```yaml
 provisioning:
   image: "hushine/strategy-runtime:executor-dev"   # built by strategy-service/scripts/build_strategy_runtime.sh
-  advertise_host: "127.0.0.1"             # what handler dials; LAN IP in cluster mode
-  port_range_base: 50100                  # gRPC port pool start
-  port_range_size: 200                    # pool size
-  registration_timeout_seconds: 30        # wait window for runtime self-register
+  registration_timeout_seconds: 30        # wait window for RuntimeChannel HELLO
   profiles:
     small:  { nano_cpus: "0.5", memory_mb: 512,  pids_limit: 256 }
     medium: { nano_cpus: "1.0", memory_mb: 1024, pids_limit: 512 }
@@ -117,14 +102,13 @@ The `0 = forbid` convention is the post-2026-05-03 fix; the previous
 `minNonZero` definition silently turned `max_self_hosted_runtimes: 0`
 into "unlimited" by inheriting the platform fallback.
 
-## D1 cutover rollout sequence
+## RuntimeChannel rollout sequence
 
-For D3 local smoke, `config.local.yaml` is already set to the Docker
+For local smoke, `config.local.yaml` is already set to the Docker
 backend and handler control-panel routing. Other environments should flip
 the cutover toggles in this order to avoid half-cutover states (handler
 routes via control-panel but provisioner is NoOp → fail-closed; or
-provisioner runs containers but handler dials the legacy fixed
-strategy-service → orphans):
+provisioner runs containers but handler is not pointed at control-panel):
 
 1. **Apply migrations**: `make ensure-dbs` at repo root (creates
    `control_panel` DB and applies `users.plan_code` to `account` DB).
@@ -132,9 +116,7 @@ strategy-service → orphans):
    ```bash
    bash strategy-service/scripts/build_strategy_runtime.sh dev
    ```
-   This builds both role images:
-   - `hushine/strategy-runtime:executor-dev` for hosted/self-hosted executor runtimes.
-   - `hushine/strategy-runtime:debugger-dev` for self-hosted debugger runtimes with `hushine-debug`.
+   This builds `hushine/strategy-runtime:executor-dev`.
 3. **Switch control-panel to docker backend** in
    `control-panel-service/config.local.yaml`:
    ```yaml
@@ -142,26 +124,20 @@ strategy-service → orphans):
      backend: "docker"     # was "noop"
      docker:
        network_mode: "bridge"                  # Docker Desktop friendly
-       control_panel_dial_addr: "host.docker.internal:50054"
+       control_panel_dial_addr: "host.docker.internal:50055"
        runtime_env:
          CORE_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
          # ... etc
    ```
 4. **Restart control-panel-service** so the new backend takes effect.
-5. **Smoke**: `cd control-panel-service && go run scripts/smoke_ensure_runtime.go -user <id>`
-   — validates EnsureHostedRuntime → docker run → self-register → token round-trip.
+5. **Smoke**: start a hosted runtime from the frontend or handler flow and
+   confirm `runtime_registry.status=active` after the RuntimeChannel HELLO.
 6. **Restart handler** after pointing
    `dependencies.control_panel_service_grpc` at this service. Strategy
-   traffic is always routed through RuntimeChannel now; there is no
-   handler-side direct strategy-service fallback.
-7. After observation window: optionally enable interceptor strict mode
-   on the runtime side via `RUNTIME_CALLER_TOKEN_ENFORCE=1` (default
-   true; flip to `0` if you want log-only during a long bake).
-
+   traffic is always routed through RuntimeChannel now.
 To roll back runtime provisioning, switch control-panel backend back to
 `noop` and restart control-panel-service. Handler strategy traffic still
-requires a registered runtime and RuntimeChannel route; the old direct
-strategy-service route has been removed.
+requires a registered runtime and RuntimeChannel route.
 
 ## D2 cutover rollout sequence (market-data control plane)
 
@@ -217,12 +193,7 @@ once between `pg_dump` backup and the rolling restart of the 3 callers
 Roll back: there is no in-product rollback after step 6. Restore from
 the `pg_dump` taken in step 2; revert the same PR; rebuild.
 
-## D3 self-hosted runtime onboarding
-
-D3 leaves existing hosted containers untouched. Hosted runtimes still use
-the D1 direct-dial path (`RUNTIME_INGRESS_MODE=inbound`, the default) and
-short-lived `caller_token`; only `source=self_hosted` routes go through the
-control-panel proxy and RuntimeChannel.
+## Runtime Onboarding
 
 Recommended smoke/onboarding sequence:
 
@@ -230,45 +201,31 @@ Recommended smoke/onboarding sequence:
    ```bash
    ./restart.sh
    ```
-   `config.local.yaml` points DB/Kafka/Jaeger at `192.168.88.10`, while
-   service-to-service gRPC stays on `127.0.0.1`.
-2. **Build the runtime image and prove hosted/default mode still works**:
+2. **Build the runtime image**:
    ```bash
-   USER_ID=<account.users.id> scripts/smoke_d3_hosted_runtime.sh
+   bash strategy-service/scripts/build_strategy_runtime.sh dev
    ```
-   This runs `EnsureHostedRuntime`, starts a normal Docker runtime, waits
-   for hosted self-registration, and validates the caller-token round trip.
 3. **Generate a self-hosted credential** in quant-frontend:
    Runtime Management -> Runtime Credentials -> Generate new credential.
    Download the `.cred` file once and keep it out of browser storage.
-4. **Start a self-hosted runtime locally**:
+4. **Start a self-hosted runtime**:
    ```bash
-   CREDENTIAL_FILE=$HOME/.hushine/runtime.cred \
-   CONTROL_PANEL_ADDR=host.docker.internal:50054 \
-   scripts/smoke_d3_self_hosted_runtime.sh
+   docker run --rm \
+     -v $HOME/.hushine/runtime.cred:/etc/hushine/runtime.cred:ro \
+     -e RUNTIME_CREDENTIAL_PATH=/etc/hushine/runtime.cred \
+     -e CONTROL_PANEL_SERVICE_GRPC_ADDR=host.docker.internal:50055 \
+     hushine/strategy-runtime:executor-dev
    ```
-5. **Start a remote self-hosted runtime** to simulate a user machine:
+5. **Start a bare debug runtime** only when the control-panel debug gate is enabled:
    ```bash
-   CREDENTIAL_FILE=$HOME/.hushine/runtime.cred \
-   REMOTE_HOST=192.168.88.10 \
-   REMOTE_USER=hushine-tech \
-   CONTROL_PANEL_ADDR=<mac-lan-ip>:50054 \
-   SYNC_IMAGE=1 \
-   scripts/smoke_d3_self_hosted_runtime.sh
+   cd strategy-service
+   uv run hushine-runtime start --config config.yaml --user-id <account.users.id>
    ```
-   `CONTROL_PANEL_ADDR` must be reachable from the remote Docker host. The
-   script copies the credential to
-   `/home/hushine-tech/.hushine/runtime.cred`, fixes permissions to `0600`,
-   optionally syncs the image, and runs the container with
-   `RUNTIME_INGRESS_MODE=outbound`.
 6. **Observe the stream**: the runtime registry should show
-   `source=self_hosted`, `status=active`, and `credential_key_id` populated.
-   Operator signals to watch are stream uptime, last-frame latency,
-   in-flight calls, and dropped-command counters/log lines from
-   `internal/runtimechannel`.
-7. **Run a backtest strategy from the frontend** with the handler
-   cutover flag enabled. Hosted users should still route through direct
-   dial; self-hosted users should route through the control-panel proxy.
+   `source=hosted`, `source=self_hosted`, or `source=bare` with
+   `status=active`. Operator signals to watch are stream uptime,
+   last-frame latency, in-flight calls, and dropped-command counters/log
+   lines from `internal/runtimechannel`.
 
 Credential loss or suspected leak uses the disaster-recovery flow in the
 next section: revoke the old credential, confirm streams close and runtime
@@ -318,9 +275,8 @@ loader (`strategy-runtime` task 4.1) MUST stay aligned with it.
 
 ### Failure modes — all fail-closed at boot
 
-The runtime SDK (per `RUNTIME_INGRESS_MODE=outbound` semantics) MUST
-exit with status 1 in any of these cases. There is NO fallback to
-anonymous registration:
+The runtime MUST exit with status 1 in any of these cases. There is no
+fallback to anonymous registration:
 
 - File missing at the configured path
 - File unreadable (permissions, FS error)
@@ -371,21 +327,16 @@ or run any platform-side recovery tool.
   and audit metadata, not signing material. Full control-panel compromise
   can still mint/revoke credentials and proxy strategy requests, so runtime
   credential controls do not replace normal service hardening and audit.
-- **Hosted path boundary**: `caller_token` remains hosted-only after D3.
-  It is not accepted as a self-hosted authentication primitive; self-hosted
-  admission is signed HELLO + live RuntimeChannel only.
-
 ## Auth model
 
-Phase D1 token-only:
-
-| Token | Issued by | Verified by | Lifecycle |
+| Credential | Issued by | Verified by | Lifecycle |
 |---|---|---|---|
-| `registration_token` | `RegisterRuntime` | `HeartbeatRuntime` | hosted runtime lifetime |
-| `caller_token` | `ResolveRuntimeRouteByID` / `EnsureHostedRuntime` | hosted runtime gRPC server | ≤60s; hosted-only after D3 |
-| runtime credential private key | `IssueRuntimeCredential` | `RuntimeChannel` HELLO signature verification | user-held; revoked via `RevokeRuntimeCredential` |
+| hosted internal runtime private key | `EnsureHostedRuntime` | `RuntimeChannel` HELLO signature verification | one runtime bootstrap; revoked when runtime ends |
+| self-hosted runtime private key | `IssueRuntimeCredential` | `RuntimeChannel` HELLO signature verification | user-held; revoked via `RevokeRuntimeCredential` |
+| bare debug user id | local `hushine-runtime start --user-id` | `RuntimeChannel` HELLO debug gate | only when `debug_bare_runtime_enabled=true` |
 
-mTLS is deferred to D3+ per `openspec/changes/phase-d1-runtime-control-plane/design.md` Decision 8.
+The RuntimeChannel listener supports server TLS and optional mTLS through
+the `runtime_channel_server.tls` config block.
 
 ## Database
 

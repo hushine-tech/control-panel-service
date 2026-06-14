@@ -150,13 +150,13 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		args = append(args, "--network", networkMode)
 	}
 
-	// Per-runtime env vars consumed by strategy-service/run_grpc_server.py.
-	// Hosted containers use outbound RuntimeChannel only. The runtime_id is
+	// Per-runtime env vars consumed by `hushine-runtime start`.
+	// Hosted containers use RuntimeChannel only. The runtime_id is
 	// provided so the first HELLO binds to the id allocated by control-panel;
 	// a later process restart still fails because the bootstrap credential is
 	// one-time-use and the resume token is not persisted.
 	args = append(args,
-		"-e", "RUNTIME_INGRESS_MODE=outbound",
+		"-e", "RUNTIME_SOURCE=hosted",
 		"-e", fmt.Sprintf("RUNTIME_RUNTIME_ID=%s", p.RuntimeID),
 		"-e", fmt.Sprintf("RUNTIME_NAME=%s", p.Name),
 		"-e", fmt.Sprintf("RUNTIME_RESOURCE_PROFILE=%s", p.ResourceProfileName),
@@ -176,9 +176,9 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 	//
 	// Platform-controlled keys are intentionally rejected here so a
 	// misconfigured `runtime_env` cannot shadow per-runtime values
-	// (RUNTIME_BIND_USER_ID=999 would otherwise pin every container to
-	// user 999; CONTROL_PANEL_SERVICE_GRPC_ADDR=evil would redirect
-	// self-register traffic).
+	// (RUNTIME_SOURCE=self_hosted would otherwise change admission shape;
+	// CONTROL_PANEL_SERVICE_GRPC_ADDR=evil would redirect RuntimeChannel
+	// traffic).
 	for k, v := range dc.RuntimeEnv {
 		if isPlatformReservedEnvKey(k) {
 			// We don't fail-fast on the operator's behalf — log via the
@@ -199,7 +199,7 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 // Reserved set:
 //   - RUNTIME_*                     — per-runtime identity / endpoint
 //   - CONTROL_PANEL_SERVICE_GRPC_ADDR — runtime → control-panel dial target
-//   - SERVER_GRPC_ADDR              — strategy-runtime listen address
+//   - SERVER_GRPC_ADDR              — legacy runtime server address
 func isPlatformReservedEnvKey(k string) bool {
 	switch k {
 	case "CONTROL_PANEL_SERVICE_GRPC_ADDR", "SERVER_GRPC_ADDR":

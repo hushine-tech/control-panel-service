@@ -110,17 +110,11 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 		t.Error("hosted RuntimeChannel proxy mode should not produce -p mapping")
 	}
 	// Per-runtime env vars.
-	assertHasEnv(t, args, "RUNTIME_INGRESS_MODE=outbound")
-	if envIsPresent(args, "RUNTIME_REGISTER_WITH_CONTROL_PANEL=1") {
-		t.Error("hosted runtime should connect through RuntimeChannel credential path")
-	}
+	assertHasEnv(t, args, "RUNTIME_SOURCE=hosted")
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
 	assertHasEnv(t, args, "RUNTIME_NAME=hosted-steady-river")
 	assertHasEnv(t, args, "RUNTIME_RESOURCE_PROFILE=small")
 	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
-	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
-		t.Error("outbound hosted runtime should not receive SERVER_GRPC_ADDR")
-	}
 	// Operator-supplied static env forwarded.
 	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
 	assertHasEnv(t, args, "KAFKA_BROKERS=127.0.0.1:19092")
@@ -173,7 +167,7 @@ func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *t
 		t.Fatalf("bridge hosted runtime should not publish a session port: %v", args)
 	}
 	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
-		t.Error("outbound hosted runtime should not receive SERVER_GRPC_ADDR")
+		t.Error("hosted runtime should not receive SERVER_GRPC_ADDR")
 	}
 }
 
@@ -215,7 +209,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
 	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
 	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
-		t.Error("reserved SERVER_GRPC_ADDR from runtime_env should not reach outbound hosted runtime")
+		t.Error("reserved SERVER_GRPC_ADDR from runtime_env should not reach hosted runtime")
 	}
 	// Forbidden runtime_env entries must NOT appear.
 	for _, forbidden := range []string{

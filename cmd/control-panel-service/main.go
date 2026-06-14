@@ -275,8 +275,9 @@ func main() {
 			marketDataRepo,
 			runtimeChannelSvc,
 			runtimechannel.KafkaLiveDeliveryConfig{
-				Brokers:         cfg.MarketData.KafkaBrokers,
-				OwnerInstanceID: runtimeChannelSvc.InstanceID(),
+				Brokers:               cfg.MarketData.KafkaBrokers,
+				OwnerInstanceID:       runtimeChannelSvc.InstanceID(),
+				NotificationPublisher: notificationPublisher,
 			},
 		)
 		go func() {
