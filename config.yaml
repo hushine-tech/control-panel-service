@@ -118,7 +118,6 @@ provisioning:
     # "host.docker.internal:50055" or routable LAN/service address.
     control_panel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
-    runtime_user_grpc_port: 50053
     runtime_env:
       CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
       ORDER_SERVICE_GRPC_ADDR: "127.0.0.1:50051"

@@ -190,12 +190,6 @@ type DockerProvisioningConfig struct {
 	//   <prefix>.runtime_id, <prefix>.user_id, <prefix>.name.
 	// Defaults to "hushine.runtime".
 	LabelPrefix string `yaml:"label_prefix"`
-
-	// RuntimeUserGRPCPort is the in-container gRPC port strategy-runtime
-	// listens on. Mapped to the per-runtime allocated host port via
-	// `-p HOST:CONTAINER`. Defaults to 50053 (the strategy-service
-	// default in run_grpc_server.py).
-	RuntimeUserGRPCPort int `yaml:"runtime_user_grpc_port"`
 }
 
 // Default returns a baseline config so env-driven deployments can start

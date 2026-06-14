@@ -58,9 +58,8 @@ func defaultCfg() config.ProvisioningConfig {
 		Image:         "hushine/strategy-runtime:executor-dev",
 		AdvertiseHost: "127.0.0.1",
 		Docker: config.DockerProvisioningConfig{
-			NetworkMode:         "host",
-			LabelPrefix:         "hushine.runtime",
-			RuntimeUserGRPCPort: 50053,
+			NetworkMode: "host",
+			LabelPrefix: "hushine.runtime",
 			RuntimeEnv: map[string]string{
 				"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
 				"KAFKA_BROKERS":          "127.0.0.1:19092",
@@ -153,7 +152,6 @@ func TestDockerProvisioner_Provision_InjectsHostedRuntimeCredentialJSON(t *testi
 func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Docker.NetworkMode = "bridge"
-	cfg.Docker.RuntimeUserGRPCPort = 50053
 	runner := &fakeRunner{output: []byte("container_xyz\n")}
 	prov := NewDockerProvisioner(runner, cfg, "control-panel:50055")
 
