@@ -42,8 +42,8 @@ type DockerProvisioner struct {
 	runner CommandRunner
 	cfg    config.ProvisioningConfig
 	// ControlPanelGRPC is what the runtime container needs to dial to
-	// self-register. Set at construction (the operator decides whether
-	// that is "127.0.0.1:50054" for host networking, "control-panel:50054"
+	// RuntimeChannel. Set at construction (the operator decides whether
+	// that is "127.0.0.1:50055" for host networking, "control-panel:50055"
 	// in a docker network, etc.).
 	controlPanelGRPC string
 }

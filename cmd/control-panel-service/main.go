@@ -47,12 +47,12 @@ func fallbackString(v, fallback string) string {
 }
 
 // portFromBindAddr extracts the ":<port>" suffix from a Go net bind
-// address (":50054", "0.0.0.0:50054", "127.0.0.1:50054"). Used to
-// derive a reasonable dial address for runtime containers in host
-// networking mode. Falls back to ":50054" if parsing is ambiguous.
+// address (":50055", "0.0.0.0:50055", "127.0.0.1:50055"). Used to
+// derive a reasonable RuntimeChannel dial address for runtime containers
+// in host networking mode. Falls back to ":50055" if parsing is ambiguous.
 func portFromBindAddr(bind string) string {
 	if bind == "" {
-		return ":50054"
+		return ":50055"
 	}
 	// strings package usage kept minimal so we don't add an import:
 	// find last ':' in string.

@@ -71,7 +71,7 @@ func defaultCfg() config.ProvisioningConfig {
 
 func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	runner := &fakeRunner{output: []byte("container_full_id_abc\n")}
-	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 
 	handle, err := prov.Provision(context.Background(), defaultPlan())
 	if err != nil {
@@ -117,7 +117,7 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
 	assertHasEnv(t, args, "RUNTIME_NAME=hosted-steady-river")
 	assertHasEnv(t, args, "RUNTIME_RESOURCE_PROFILE=small")
-	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50054")
+	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
 	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
 		t.Error("outbound hosted runtime should not receive SERVER_GRPC_ADDR")
 	}
@@ -133,7 +133,7 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 
 func TestDockerProvisioner_Provision_InjectsHostedRuntimeCredentialJSON(t *testing.T) {
 	runner := &fakeRunner{output: []byte("container_full_id_abc\n")}
-	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 	plan := defaultPlan()
 	plan.RuntimeCredentialKeyID = "hosted-key-1"
 	plan.RuntimeCredentialPrivateKeyPEM = "hosted-private-key"
@@ -161,7 +161,7 @@ func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *t
 	cfg.Docker.NetworkMode = "bridge"
 	cfg.Docker.RuntimeUserGRPCPort = 50053
 	runner := &fakeRunner{output: []byte("container_xyz\n")}
-	prov := NewDockerProvisioner(runner, cfg, "control-panel:50054")
+	prov := NewDockerProvisioner(runner, cfg, "control-panel:50055")
 
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if err != nil {
@@ -180,7 +180,7 @@ func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *t
 func TestDockerProvisioner_Provision_FailsWhenImageEmpty(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Image = ""
-	prov := NewDockerProvisioner(&fakeRunner{}, cfg, "127.0.0.1:50054")
+	prov := NewDockerProvisioner(&fakeRunner{}, cfg, "127.0.0.1:50055")
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("err = %v, want ErrNotConfigured", err)
@@ -196,14 +196,14 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 		// Forbidden — must be ignored.
 		"RUNTIME_BIND_USER_ID":            "999",
 		"RUNTIME_RUNTIME_ID":              "rt_attacker",
-		"CONTROL_PANEL_SERVICE_GRPC_ADDR": "evil:50054",
+		"CONTROL_PANEL_SERVICE_GRPC_ADDR": "evil:50055",
 		"SERVER_GRPC_ADDR":                ":1",
 		// Allowed — legit operator env.
 		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
 		"MY_CUSTOM_VAR":          "hello",
 	}
 	runner := &fakeRunner{output: []byte("container_xyz\n")}
-	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
 
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if err != nil {
@@ -213,7 +213,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 
 	// Platform values must remain.
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
-	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50054")
+	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
 	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
 		t.Error("reserved SERVER_GRPC_ADDR from runtime_env should not reach outbound hosted runtime")
 	}
@@ -221,7 +221,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 	for _, forbidden := range []string{
 		"RUNTIME_BIND_USER_ID=999",
 		"RUNTIME_RUNTIME_ID=rt_attacker",
-		"CONTROL_PANEL_SERVICE_GRPC_ADDR=evil:50054",
+		"CONTROL_PANEL_SERVICE_GRPC_ADDR=evil:50055",
 		"SERVER_GRPC_ADDR=:1",
 	} {
 		if envIsPresent(args, forbidden) {
@@ -269,7 +269,7 @@ func TestDockerProvisioner_Provision_DockerErrorWraps(t *testing.T) {
 		output: []byte("docker: Error response from daemon: image not found"),
 		err:    errors.New("exit status 125"),
 	}
-	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if !errors.Is(err, ErrProvisionFailed) {
 		t.Fatalf("err = %v, want ErrProvisionFailed", err)
@@ -291,7 +291,7 @@ func TestDockerProvisioner_Provision_DockerRunFailureRemovesPartialContainer(t *
 			nil,
 		},
 	}
-	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if !errors.Is(err, ErrProvisionFailed) {
@@ -308,7 +308,7 @@ func TestDockerProvisioner_Provision_DockerRunFailureRemovesPartialContainer(t *
 
 func TestDockerProvisioner_Deprovision_CallsDockerRm(t *testing.T) {
 	runner := &fakeRunner{output: []byte("")}
-	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50054")
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 	if err := prov.Deprovision(context.Background(), "container_xyz"); err != nil {
 		t.Fatalf("Deprovision: %v", err)
 	}
