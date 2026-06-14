@@ -45,6 +45,12 @@ type Repository interface {
 	// ending other runtimes.
 	CreateOrReplaceSelfHostedRuntime(ctx context.Context, r domain.Runtime) error
 
+	// CreateOrReplaceBareRuntime is the debug-only RuntimeChannel HELLO
+	// variant used by local bare-metal strategy-service starts. It is gated
+	// before repository admission by runtimechannel.AuthConfig and never uses
+	// credential_key_id.
+	CreateOrReplaceBareRuntime(ctx context.Context, r domain.Runtime) error
+
 	// GetRuntime fetches by primary key. Returns ErrNotFound on miss.
 	GetRuntime(ctx context.Context, runtimeID string) (domain.Runtime, error)
 

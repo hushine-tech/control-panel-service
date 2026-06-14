@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +117,74 @@ func TestTimescaleRepositoryCreateSelfHostedRuntimeConsumesDownloadedCredential(
 	}
 	if role != string(domain.CredentialRoleDebugger) {
 		t.Fatalf("runtime role = %q, want debugger", role)
+	}
+}
+
+func TestTimescaleRepositoryCreateBareRuntimeDoesNotUseCredential(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db := openRepositoryTestDB(t, ctx)
+	defer db.Close()
+	if err := createTempRuntimeRegistry(ctx, db); err != nil {
+		t.Fatalf("create temp runtime_registry: %v", err)
+	}
+
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	heartbeat := now
+	repo := &TimescaleRepository{db: db}
+	if err := repo.CreateOrReplaceBareRuntime(ctx, domain.Runtime{
+		RuntimeID:       "runtime-bare",
+		UserID:          42,
+		Name:            "bare-debug",
+		Source:          domain.RuntimeSourceBare,
+		Role:            domain.CredentialRoleExecutor,
+		ResourceProfile: "local",
+		Status:          domain.RuntimeStatusActive,
+		HeartbeatAt:     &heartbeat,
+		StartedAt:       &now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("CreateOrReplaceBareRuntime: %v", err)
+	}
+
+	var source, role string
+	var credentialKeyID sql.NullString
+	if err := db.QueryRowContext(ctx, `
+		SELECT source, role, credential_key_id
+		FROM runtime_registry WHERE runtime_id = 'runtime-bare'`,
+	).Scan(&source, &role, &credentialKeyID); err != nil {
+		t.Fatalf("query bare runtime: %v", err)
+	}
+	if source != domain.RuntimeSourceBare || role != string(domain.CredentialRoleDebugger) || credentialKeyID.Valid {
+		t.Fatalf("runtime = source:%q role:%q credential:%v, want bare/debugger/no credential", source, role, credentialKeyID)
+	}
+}
+
+func TestTimescaleRepositoryCreateBareRuntimeRejectsCredentialKey(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db := openRepositoryTestDB(t, ctx)
+	defer db.Close()
+	if err := createTempRuntimeRegistry(ctx, db); err != nil {
+		t.Fatalf("create temp runtime_registry: %v", err)
+	}
+
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	repo := &TimescaleRepository{db: db}
+	err := repo.CreateOrReplaceBareRuntime(ctx, domain.Runtime{
+		RuntimeID:       "runtime-bare",
+		CredentialKeyID: "key-should-not-exist",
+		UserID:          42,
+		Name:            "bare-debug",
+		Source:          domain.RuntimeSourceBare,
+		Role:            domain.CredentialRoleDebugger,
+		Status:          domain.RuntimeStatusActive,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err == nil || !strings.Contains(err.Error(), "credential_key_id must be empty") {
+		t.Fatalf("err = %v, want credential_key_id rejection", err)
 	}
 }
 

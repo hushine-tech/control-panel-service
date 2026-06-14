@@ -89,6 +89,12 @@ func (s *stubRepo) CreateOrReplaceHostedRuntime(_ context.Context, rt domain.Run
 	return s.createErr
 }
 
+func (s *stubRepo) CreateOrReplaceBareRuntime(_ context.Context, rt domain.Runtime) error {
+	cp := rt
+	s.createdRuntime = &cp
+	return s.createErr
+}
+
 func (s *stubRepo) UpdateRuntimeHeartbeat(_ context.Context, _ string, _ time.Time) error {
 	return nil
 }
@@ -221,7 +227,7 @@ func (s *stubRepo) ListRuntimeAdmissionFailuresByUser(_ context.Context, userID 
 func TestVerifyHelloValid(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	hello := signedHello(t, priv, now)
-	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if err != nil {
 		t.Fatalf("verifyHello: %v", err)
 	}
@@ -239,7 +245,7 @@ func TestVerifyHelloValid(t *testing.T) {
 func TestVerifyHelloAllowsDownloadedCredential(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
 	hello := signedHello(t, priv, now)
-	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if err != nil {
 		t.Fatalf("verifyHello: %v", err)
 	}
@@ -253,7 +259,7 @@ func TestVerifyHelloDerivesSourceAndRoleFromCredential(t *testing.T) {
 	repo.cred.Role = domain.CredentialRoleDebugger
 	hello := signedHello(t, priv, now)
 
-	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if err != nil {
 		t.Fatalf("verifyHello: %v", err)
 	}
@@ -268,7 +274,7 @@ func TestVerifyHelloDerivesHostedSourceFromHostedInternalCredential(t *testing.T
 	repo.cred.HostedInternal = true
 	hello := signedHello(t, priv, now)
 
-	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if err != nil {
 		t.Fatalf("verifyHello: %v", err)
 	}
@@ -287,7 +293,7 @@ func TestVerifyHelloGeneratesCustomNameWhenOmitted(t *testing.T) {
 	}
 	hello.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, payload))
 
-	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if err != nil {
 		t.Fatalf("verifyHello: %v", err)
 	}
@@ -302,7 +308,7 @@ func TestVerifyHelloGeneratesCustomNameWhenOmitted(t *testing.T) {
 func TestVerifyHelloRejectsExpiredTimestamp(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	hello := signedHello(t, priv, now.Add(-10*time.Minute))
-	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
@@ -312,10 +318,10 @@ func TestVerifyHelloRejectsReplay(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	cache := NewReplayCache(time.Minute, 16)
 	hello := signedHello(t, priv, now)
-	if _, err := verifyHello(context.Background(), repo, cache, func() time.Time { return now }, hello); err != nil {
+	if _, err := verifyHello(context.Background(), repo, cache, func() time.Time { return now }, AuthConfig{}, hello); err != nil {
 		t.Fatalf("first verifyHello: %v", err)
 	}
-	if _, err := verifyHello(context.Background(), repo, cache, func() time.Time { return now }, hello); !errors.Is(err, ErrReplay) {
+	if _, err := verifyHello(context.Background(), repo, cache, func() time.Time { return now }, AuthConfig{}, hello); !errors.Is(err, ErrReplay) {
 		t.Fatalf("second err = %v, want ErrReplay", err)
 	}
 }
@@ -323,7 +329,7 @@ func TestVerifyHelloRejectsReplay(t *testing.T) {
 func TestVerifyHelloRejectsRevokedKey(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusRevoked)
 	hello := signedHello(t, priv, now)
-	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
@@ -340,7 +346,7 @@ func TestVerifyHelloRejectsConsumedCredentialForDifferentRuntimeWithTerminalGuid
 	}
 	hello.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, payload))
 
-	_, err = verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err = verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
@@ -356,7 +362,7 @@ func TestVerifyHelloRejectsConsumedCredentialForSameRuntimeWithTerminalGuidance(
 	repo.cred.ConsumedAt = &consumedAt
 	hello := signedHello(t, priv, now)
 
-	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
@@ -369,7 +375,7 @@ func TestVerifyHelloRejectsExpiredCredentialWithTerminalGuidance(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusExpired)
 	hello := signedHello(t, priv, now)
 
-	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
@@ -382,9 +388,55 @@ func TestVerifyHelloRejectsSignatureMismatch(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	hello := signedHello(t, priv, now)
 	hello.Name = "tampered"
-	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, hello)
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+}
+
+func TestVerifyBareHelloRejectedWhenDebugGateDisabled(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	repo := &stubRepo{}
+	hello := bareHello(now)
+
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{}, hello)
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+	if repo.createdRuntime != nil {
+		t.Fatalf("bare runtime should not be registered when debug gate is disabled: %+v", repo.createdRuntime)
+	}
+}
+
+func TestVerifyBareHelloAcceptedWhenDebugGateEnabled(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	repo := &stubRepo{}
+	hello := bareHello(now)
+
+	got, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{AllowBareRuntime: true}, hello)
+	if err != nil {
+		t.Fatalf("verifyHello: %v", err)
+	}
+	if got.UserID != 99 || got.RuntimeID != "bare-runtime-1" || got.Source != domain.RuntimeSourceBare {
+		t.Fatalf("authenticated runtime = %+v, want bare runtime for user 99", got)
+	}
+	if got.Role != domain.CredentialRoleDebugger {
+		t.Fatalf("role = %q, want debugger", got.Role)
+	}
+	if got.KeyID != "" {
+		t.Fatalf("key_id = %q, want empty for bare runtime", got.KeyID)
+	}
+}
+
+func TestVerifyBareHelloRequiresUserID(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	repo := &stubRepo{}
+	hello := bareHello(now)
+	hello.UserId = 0
+
+	_, err := verifyHello(context.Background(), repo, NewReplayCache(time.Minute, 16), func() time.Time { return now }, AuthConfig{AllowBareRuntime: true}, hello)
+	if !errors.Is(err, ErrInvalidHello) {
+		t.Fatalf("err = %v, want ErrInvalidHello", err)
 	}
 }
 
@@ -415,6 +467,38 @@ func TestRuntimeChannelRegistersHostedInternalCredentialAsHostedRuntime(t *testi
 	}
 	if repo.createdRuntime.Source != domain.RuntimeSourceHosted || repo.createdRuntime.Role != domain.CredentialRoleExecutor {
 		t.Fatalf("registered source/role = %q/%q, want hosted/executor", repo.createdRuntime.Source, repo.createdRuntime.Role)
+	}
+}
+
+func TestRuntimeChannelRegistersBareRuntimeWhenDebugGateEnabled(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	repo := &stubRepo{}
+	svc := NewWithConfig(repo, Config{Auth: AuthConfig{AllowBareRuntime: true}})
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: bareHello(now)},
+	}
+
+	frame := waitForHelloAck(t, stream)
+	if frame.GetHelloAck().GetRuntimeId() != "bare-runtime-1" {
+		t.Fatalf("hello_ack runtime_id = %q, want bare-runtime-1", frame.GetHelloAck().GetRuntimeId())
+	}
+	stream.cancel()
+	_ = <-done
+
+	if repo.createdRuntime == nil {
+		t.Fatal("bare runtime was not registered")
+	}
+	if repo.createdRuntime.Source != domain.RuntimeSourceBare ||
+		repo.createdRuntime.UserID != 99 ||
+		repo.createdRuntime.Role != domain.CredentialRoleDebugger ||
+		repo.createdRuntime.CredentialKeyID != "" {
+		t.Fatalf("registered runtime = %+v, want bare debugger for user 99 without credential", repo.createdRuntime)
 	}
 }
 
@@ -1421,6 +1505,19 @@ func signedHello(t *testing.T, priv ed25519.PrivateKey, at time.Time) *cpv1.Runt
 	}
 	hello.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, payload))
 	return hello
+}
+
+func bareHello(at time.Time) *cpv1.RuntimeHello {
+	return &cpv1.RuntimeHello{
+		RuntimeId:       "bare-runtime-1",
+		Name:            "bare-debug",
+		Source:          domain.RuntimeSourceBare,
+		UserId:          99,
+		Capabilities:    []string{"strategy", "debug"},
+		ResourceProfile: "local",
+		Version:         "0.1.0",
+		IssuedAtUnixMs:  at.UnixMilli(),
+	}
 }
 
 func mustRegister(t *testing.T, registry *Registry, rt AuthenticatedRuntime, at time.Time) *runtimeStream {

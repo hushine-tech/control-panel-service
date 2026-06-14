@@ -344,6 +344,127 @@ func (r *TimescaleRepository) CreateOrReplaceSelfHostedRuntime(ctx context.Conte
 	return tx.Commit()
 }
 
+// CreateOrReplaceBareRuntime is the debug-only RuntimeChannel HELLO admission
+// path. It never consumes credentials; runtimechannel.AuthConfig gates access
+// before this method is called.
+func (r *TimescaleRepository) CreateOrReplaceBareRuntime(ctx context.Context, rt domain.Runtime) error {
+	if rt.Source != domain.RuntimeSourceBare {
+		return fmt.Errorf("CreateOrReplaceBareRuntime: source must be bare, got %q", rt.Source)
+	}
+	if rt.UserID <= 0 {
+		return fmt.Errorf("CreateOrReplaceBareRuntime: user_id must be > 0")
+	}
+	if strings.TrimSpace(rt.CredentialKeyID) != "" {
+		return fmt.Errorf("CreateOrReplaceBareRuntime: credential_key_id must be empty")
+	}
+	rt.Role = domain.CredentialRoleDebugger
+	rt = normalizeRuntimeForWrite(rt)
+	caps, err := marshalCapabilities(rt.Capabilities)
+	if err != nil {
+		return fmt.Errorf("marshal capabilities: %w", err)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existingRuntimeID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT runtime_id
+		FROM runtime_registry
+		WHERE user_id = $1
+		  AND role = 'debugger'
+		  AND runtime_id <> $2
+		  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')
+		ORDER BY updated_at DESC
+		LIMIT 1
+		FOR UPDATE`,
+		rt.UserID, rt.RuntimeID,
+	).Scan(&existingRuntimeID)
+	if err == nil {
+		return fmt.Errorf("%w: debugger runtime already active for user %d: %s", ErrConflict, rt.UserID, existingRuntimeID)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check active debugger runtime: %w", err)
+	}
+
+	err = tx.QueryRowContext(ctx, `
+		SELECT runtime_id
+		FROM runtime_registry
+		WHERE user_id = $1
+		  AND name = $2
+		  AND runtime_id <> $3
+		ORDER BY updated_at DESC
+		LIMIT 1
+		FOR UPDATE`,
+		rt.UserID, rt.Name, rt.RuntimeID,
+	).Scan(&existingRuntimeID)
+	if err == nil {
+		return fmt.Errorf("%w: runtime name already occupied by %s", ErrConflict, existingRuntimeID)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check bare runtime name: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO runtime_registry (
+			runtime_id, user_id, name, source, role, endpoint_host, grpc_port,
+			debug_port, capabilities, resource_profile, version, status,
+			token_hash, paired_at, started_at, ended_at, ended_reason,
+			heartbeat_at, created_at, updated_at, credential_key_id
+		) VALUES (
+			$1, NULLIF($2, 0)::BIGINT, $3, $4, $5, $6, $7,
+			NULLIF($8, 0)::INT, $9::JSONB, $10, $11, $12,
+			$13, $14, $15, $16, $17,
+			$18, $19, $20, NULL
+		)
+		ON CONFLICT (runtime_id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			name = EXCLUDED.name,
+			source = EXCLUDED.source,
+			role = EXCLUDED.role,
+			endpoint_host = EXCLUDED.endpoint_host,
+			grpc_port = EXCLUDED.grpc_port,
+			debug_port = EXCLUDED.debug_port,
+			capabilities = EXCLUDED.capabilities,
+			resource_profile = EXCLUDED.resource_profile,
+			version = EXCLUDED.version,
+			status = EXCLUDED.status,
+			token_hash = EXCLUDED.token_hash,
+			paired_at = EXCLUDED.paired_at,
+			started_at = EXCLUDED.started_at,
+			ended_at = EXCLUDED.ended_at,
+			ended_reason = EXCLUDED.ended_reason,
+			heartbeat_at = EXCLUDED.heartbeat_at,
+			credential_key_id = NULL,
+			updated_at = EXCLUDED.updated_at
+		WHERE runtime_registry.user_id = EXCLUDED.user_id
+		  AND runtime_registry.source = EXCLUDED.source
+		  AND runtime_registry.status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')`,
+		rt.RuntimeID, rt.UserID, rt.Name, rt.Source, string(rt.Role), rt.EndpointHost, rt.GRPCPort,
+		rt.DebugPort, string(caps), rt.ResourceProfile, rt.Version, rt.Status,
+		rt.TokenHash, nullableTime(rt.PairedAt), nullableTime(rt.StartedAt),
+		nullableTime(rt.EndedAt), rt.EndedReason, nullableTime(rt.HeartbeatAt),
+		rt.CreatedAt, rt.UpdatedAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrConflict
+		}
+		return err
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check bare runtime upsert result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: runtime_id already belongs to another bare runtime", ErrConflict)
+	}
+	return tx.Commit()
+}
+
 func consumeRuntimeCredentialForRuntimeTx(ctx context.Context, tx *sql.Tx, rt domain.Runtime, at time.Time) error {
 	keyID := strings.TrimSpace(rt.CredentialKeyID)
 	if keyID == "" {

@@ -29,6 +29,7 @@ type Service struct {
 	repo                Repository
 	registry            *Registry
 	replay              *ReplayCache
+	auth                AuthConfig
 	platform            PlatformDispatcher
 	dataTransfer        RuntimeDataTransfer
 	dataWindow          *RuntimeDataWindow
@@ -38,11 +39,23 @@ type Service struct {
 	streamCheckInterval time.Duration
 }
 
+type Config struct {
+	Auth AuthConfig
+}
+
 func New(repo Repository) *Service {
-	return NewWithInstanceID(repo, "")
+	return NewWithConfig(repo, Config{})
 }
 
 func NewWithInstanceID(repo Repository, instanceID string) *Service {
+	return newWithConfigAndInstanceID(repo, Config{}, instanceID)
+}
+
+func NewWithConfig(repo Repository, cfg Config) *Service {
+	return newWithConfigAndInstanceID(repo, cfg, "")
+}
+
+func newWithConfigAndInstanceID(repo Repository, cfg Config, instanceID string) *Service {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("control-panel-%d", time.Now().UnixNano())
 	}
@@ -50,6 +63,7 @@ func NewWithInstanceID(repo Repository, instanceID string) *Service {
 		repo:                repo,
 		registry:            NewRegistry(),
 		replay:              NewReplayCache(replayTTL, 8192),
+		auth:                cfg.Auth,
 		dataWindow:          NewRuntimeDataWindow(1024),
 		instanceID:          instanceID,
 		now:                 time.Now,
@@ -241,7 +255,7 @@ func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.Runtim
 		if first.GetHello() == nil {
 			return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.InvalidArgument, "HELLO frame missing payload")
 		}
-		rt, err := verifyHello(ctx, s.repo, s.replay, s.now, first.GetHello())
+		rt, err := verifyHello(ctx, s.repo, s.replay, s.now, s.auth, first.GetHello())
 		if err != nil {
 			s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
 			return AuthenticatedRuntime{}, "", time.Time{}, helloErrorToStatus(err)
@@ -553,6 +567,8 @@ func (s *Service) upsertRuntime(ctx context.Context, rt AuthenticatedRuntime) er
 		err = s.repo.CreateOrReplaceHostedRuntime(ctx, record)
 	case domain.RuntimeSourceSelfHosted:
 		err = s.repo.CreateOrReplaceSelfHostedRuntime(ctx, record)
+	case domain.RuntimeSourceBare:
+		err = s.repo.CreateOrReplaceBareRuntime(ctx, record)
 	default:
 		return errors.New("unsupported runtime source")
 	}

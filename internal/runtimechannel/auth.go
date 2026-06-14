@@ -38,6 +38,7 @@ type Repository interface {
 	TouchRuntimeCredentialUsed(ctx context.Context, keyID string, at time.Time) error
 	CreateOrReplaceHostedRuntime(ctx context.Context, r domain.Runtime) error
 	CreateOrReplaceSelfHostedRuntime(ctx context.Context, r domain.Runtime) error
+	CreateOrReplaceBareRuntime(ctx context.Context, r domain.Runtime) error
 	GetRuntime(ctx context.Context, runtimeID string) (domain.Runtime, error)
 	UpdateRuntimeHeartbeat(ctx context.Context, runtimeID string, at time.Time) error
 	RecordRuntimeConnectionOwner(ctx context.Context, runtimeID, instanceID string, at time.Time) error
@@ -54,6 +55,10 @@ type Repository interface {
 	MarkRuntimeCommandRunning(ctx context.Context, commandID string, at time.Time) (domain.RuntimeCommand, error)
 	CompleteRuntimeCommand(ctx context.Context, commandID, status string, result []byte, failureReason string, at time.Time) (domain.RuntimeCommand, error)
 	RuntimeCommandCircuitOpen(ctx context.Context, runtimeID string, since time.Time, threshold int64) (bool, int64, error)
+}
+
+type AuthConfig struct {
+	AllowBareRuntime bool
 }
 
 type AuthenticatedRuntime struct {
@@ -83,6 +88,8 @@ type helloPayload struct {
 	ResourceProfile string   `json:"resource_profile"`
 	RuntimeID       string   `json:"runtime_id"`
 	Name            string   `json:"name"`
+	Source          string   `json:"source"`
+	UserID          int64    `json:"user_id"`
 	Version         string   `json:"version"`
 }
 
@@ -107,11 +114,13 @@ func CanonicalHelloPayload(h *cpv1.RuntimeHello) ([]byte, error) {
 		ResourceProfile: h.GetResourceProfile(),
 		RuntimeID:       h.GetRuntimeId(),
 		Version:         h.GetVersion(),
+		Source:          h.GetSource(),
+		UserID:          h.GetUserId(),
 	}
 	return json.Marshal(p)
 }
 
-func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now func() time.Time, h *cpv1.RuntimeHello) (AuthenticatedRuntime, error) {
+func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now func() time.Time, cfg AuthConfig, h *cpv1.RuntimeHello) (AuthenticatedRuntime, error) {
 	if repo == nil {
 		return AuthenticatedRuntime{}, fmt.Errorf("%w: repository is not configured", ErrInvalidHello)
 	}
@@ -120,6 +129,12 @@ func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now f
 	}
 	if h == nil {
 		return AuthenticatedRuntime{}, fmt.Errorf("%w: hello is required", ErrInvalidHello)
+	}
+	if h.GetSource() == domain.RuntimeSourceBare {
+		return verifyBareHello(now, cfg, h)
+	}
+	if h.GetSource() != "" && h.GetSource() != domain.RuntimeSourceHosted && h.GetSource() != domain.RuntimeSourceSelfHosted {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: unsupported runtime source %q", ErrInvalidHello, h.GetSource())
 	}
 	if h.GetKeyId() == "" {
 		return AuthenticatedRuntime{}, fmt.Errorf("%w: key_id is required", ErrInvalidHello)
@@ -192,6 +207,9 @@ func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now f
 	if cred.HostedInternal {
 		source = domain.RuntimeSourceHosted
 	}
+	if h.GetSource() != "" && h.GetSource() != source {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: source %q does not match credential source %q", ErrPermissionDenied, h.GetSource(), source)
+	}
 	return AuthenticatedRuntime{
 		KeyID:           h.GetKeyId(),
 		UserID:          cred.UserID,
@@ -199,6 +217,47 @@ func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now f
 		Name:            name,
 		Source:          source,
 		Role:            role,
+		EndpointHost:    h.GetEndpointHost(),
+		GRPCPort:        h.GetGrpcPort(),
+		DebugPort:       h.GetDebugPort(),
+		Capabilities:    append([]string(nil), h.GetCapabilities()...),
+		ResourceProfile: h.GetResourceProfile(),
+		Version:         h.GetVersion(),
+		AuthenticatedAt: at,
+	}, nil
+}
+
+func verifyBareHello(now func() time.Time, cfg AuthConfig, h *cpv1.RuntimeHello) (AuthenticatedRuntime, error) {
+	at := now().UTC()
+	if !cfg.AllowBareRuntime {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: bare runtime requires debug gate", ErrPermissionDenied)
+	}
+	if h.GetUserId() <= 0 {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: user_id is required for bare runtime", ErrInvalidHello)
+	}
+	runtimeID := strings.TrimSpace(h.GetRuntimeId())
+	if runtimeID == "" {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: runtime_id is required for bare runtime", ErrInvalidHello)
+	}
+	name := strings.TrimSpace(h.GetName())
+	if name == "" {
+		name = "bare-" + runtimeID
+	}
+	if !validRuntimeChannelName(name) {
+		return AuthenticatedRuntime{}, fmt.Errorf("%w: name must match %s", ErrInvalidHello, runtimeChannelNameRe.String())
+	}
+	if h.GetIssuedAtUnixMs() > 0 {
+		issued := time.UnixMilli(h.GetIssuedAtUnixMs()).UTC()
+		if at.Sub(issued) > maxHelloClockSkew || issued.Sub(at) > maxHelloClockSkew {
+			return AuthenticatedRuntime{}, fmt.Errorf("%w: issued_at outside allowed clock skew", ErrPermissionDenied)
+		}
+	}
+	return AuthenticatedRuntime{
+		UserID:          h.GetUserId(),
+		RuntimeID:       runtimeID,
+		Name:            name,
+		Source:          domain.RuntimeSourceBare,
+		Role:            domain.CredentialRoleDebugger,
 		EndpointHost:    h.GetEndpointHost(),
 		GRPCPort:        h.GetGrpcPort(),
 		DebugPort:       h.GetDebugPort(),
