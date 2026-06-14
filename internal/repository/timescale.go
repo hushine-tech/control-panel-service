@@ -621,14 +621,15 @@ func (r *TimescaleRepository) CountRuntimesByUser(ctx context.Context, userID in
 	row := r.db.QueryRowContext(ctx, `
 		SELECT
 		    COUNT(*) FILTER (WHERE source = 'hosted')      AS hosted,
-		    COUNT(*) FILTER (WHERE source = 'self_hosted') AS self_hosted
+		    COUNT(*) FILTER (WHERE source = 'self_hosted') AS self_hosted,
+		    COUNT(*) FILTER (WHERE source = 'bare')        AS bare
 		FROM runtime_registry
 		WHERE user_id = $1
 		  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')`,
 		userID,
 	)
 	var counts domain.RuntimeUsageCounts
-	if err := row.Scan(&counts.Hosted, &counts.SelfHosted); err != nil {
+	if err := row.Scan(&counts.Hosted, &counts.SelfHosted, &counts.Bare); err != nil {
 		return domain.RuntimeUsageCounts{}, err
 	}
 	return counts, nil

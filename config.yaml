@@ -2,6 +2,14 @@ server:
   http_addr: ":8082"
   grpc_addr: ":50054"
 
+runtime_channel_server:
+  grpc_addr: ":50055"
+  tls:
+    enabled: true
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""
+
 database:
   host: "192.168.88.10"
   port: 5432
@@ -38,7 +46,7 @@ runtime_platform:
   default_plan_code: "pro"
   heartbeat_grace_seconds: 30
   death_grace_seconds: 300
-  caller_token_ttl_seconds: 60
+  debug_bare_runtime_enabled: false
 
 runtime_plans:
   # Plan limits use the same convention as runtime_platform above:

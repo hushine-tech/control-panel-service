@@ -11,20 +11,33 @@ import (
 )
 
 type Config struct {
-	Server          ServerConfig           `yaml:"server"`
-	Database        DatabaseConfig         `yaml:"database"`
-	MarketData      MarketDataConfig       `yaml:"market_data"`
-	Dependencies    DependenciesConfig     `yaml:"dependencies"`
-	RuntimePlatform RuntimePlatformConfig  `yaml:"runtime_platform"`
-	RuntimePlans    map[string]RuntimePlan `yaml:"runtime_plans"`
-	Provisioning    ProvisioningConfig     `yaml:"provisioning"`
-	Notification    NotificationConfig     `yaml:"notification"`
-	Log             elog.Config            `yaml:"log"`
+	Server               ServerConfig               `yaml:"server"`
+	RuntimeChannelServer RuntimeChannelServerConfig `yaml:"runtime_channel_server"`
+	Database             DatabaseConfig             `yaml:"database"`
+	MarketData           MarketDataConfig           `yaml:"market_data"`
+	Dependencies         DependenciesConfig         `yaml:"dependencies"`
+	RuntimePlatform      RuntimePlatformConfig      `yaml:"runtime_platform"`
+	RuntimePlans         map[string]RuntimePlan     `yaml:"runtime_plans"`
+	Provisioning         ProvisioningConfig         `yaml:"provisioning"`
+	Notification         NotificationConfig         `yaml:"notification"`
+	Log                  elog.Config                `yaml:"log"`
 }
 
 type ServerConfig struct {
 	HTTPAddr string `yaml:"http_addr"`
 	GRPCAddr string `yaml:"grpc_addr"`
+}
+
+type RuntimeChannelServerConfig struct {
+	GRPCAddr string                        `yaml:"grpc_addr"`
+	TLS      RuntimeChannelServerTLSConfig `yaml:"tls"`
+}
+
+type RuntimeChannelServerTLSConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	CertFile     string `yaml:"cert_file"`
+	KeyFile      string `yaml:"key_file"`
+	ClientCAFile string `yaml:"client_ca_file"`
 }
 
 type DatabaseConfig struct {
@@ -77,9 +90,9 @@ type RuntimePlatformConfig struct {
 	// watchdog terminally ends it and marks bound sessions recoverable.
 	// Must be > 0; falls back to 300 if unset.
 	DeathGraceSeconds int `yaml:"death_grace_seconds"`
-	// CallerTokenTTLSeconds is the lifetime of caller_token issued on each
-	// ResolveRuntimeRoute. Falls back to 60 if unset.
-	CallerTokenTTLSeconds int `yaml:"caller_token_ttl_seconds"`
+	// DebugBareRuntimeEnabled allows unsigned source=bare RuntimeChannel
+	// HELLO only for local/debug control-panel deployments.
+	DebugBareRuntimeEnabled bool `yaml:"debug_bare_runtime_enabled"`
 }
 
 // RuntimePlan describes a single per-user plan tier (free / developer / pro / etc.).
@@ -204,6 +217,12 @@ func Default() *Config {
 			HTTPAddr: ":8082",
 			GRPCAddr: ":50054",
 		},
+		RuntimeChannelServer: RuntimeChannelServerConfig{
+			GRPCAddr: ":50055",
+			TLS: RuntimeChannelServerTLSConfig{
+				Enabled: true,
+			},
+		},
 		Database: DatabaseConfig{
 			Host:     "192.168.88.10",
 			Port:     5432,
@@ -232,7 +251,7 @@ func Default() *Config {
 			DefaultPlanCode:            "pro",
 			HeartbeatGraceSeconds:      30,
 			DeathGraceSeconds:          300,
-			CallerTokenTTLSeconds:      60,
+			DebugBareRuntimeEnabled:    false,
 		},
 		RuntimePlans: defaultPlans(),
 		Provisioning: ProvisioningConfig{
@@ -328,6 +347,21 @@ func (c *Config) ApplyEnvOverrides() {
 	} else if v := os.Getenv("GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
 	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_GRPC_ADDR"); v != "" {
+		c.RuntimeChannelServer.GRPCAddr = v
+	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_ENABLED"); v != "" {
+		c.RuntimeChannelServer.TLS.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_CERT_FILE"); v != "" {
+		c.RuntimeChannelServer.TLS.CertFile = v
+	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_KEY_FILE"); v != "" {
+		c.RuntimeChannelServer.TLS.KeyFile = v
+	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_CLIENT_CA_FILE"); v != "" {
+		c.RuntimeChannelServer.TLS.ClientCAFile = v
+	}
 
 	if dsn := os.Getenv("TIMESCALEDB_DSN"); dsn != "" {
 		c.Database.parseDSN(dsn)
@@ -404,6 +438,9 @@ func (c *Config) ApplyEnvOverrides() {
 
 	if v := os.Getenv("RUNTIME_PLATFORM_DEFAULT_PLAN_CODE"); v != "" {
 		c.RuntimePlatform.DefaultPlanCode = v
+	}
+	if v := os.Getenv("RUNTIME_PLATFORM_DEBUG_BARE_RUNTIME_ENABLED"); v != "" {
+		c.RuntimePlatform.DebugBareRuntimeEnabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 	}
 }
 

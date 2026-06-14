@@ -58,6 +58,7 @@ func RuntimeTerminalStatusForReason(reason string) string {
 const (
 	RuntimeSourceHosted     = "hosted"
 	RuntimeSourceSelfHosted = "self_hosted"
+	RuntimeSourceBare       = "bare"
 )
 
 // Runtime is the canonical Go view of a runtime_registry row. Token-bearing
@@ -130,6 +131,7 @@ type DebugDatasetState struct {
 type RuntimeUsageCounts struct {
 	Hosted     int64 // count of hosted, non-ended runtimes
 	SelfHosted int64 // count of self_hosted, non-ended runtimes
+	Bare       int64 // count of bare, non-ended runtimes; not counted as self_hosted quota
 }
 
 // RuntimeChannelLease is a non-persistent-user-visible resume token for the
