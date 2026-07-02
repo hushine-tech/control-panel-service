@@ -39,7 +39,7 @@ var (
 	// through RuntimeChannel within the configured timeout. The runtime is
 	// likely broken; caller should treat this the same way it would treat
 	// an unhealthy runtime.
-	ErrRegistrationTimeout = errors.New("provision: runtime did not self-register in time")
+	ErrRegistrationTimeout = errors.New("provision: runtime did not open RuntimeChannel in time")
 )
 
 // Plan describes the runtime container the caller wants spun up. Filled
@@ -48,7 +48,7 @@ var (
 type Plan struct {
 	// RuntimeID is the platform-generated identity the container will
 	// register with. The provisioner forwards this via env var so the
-	// runtime's section-4 self-register code uses the same id.
+	// first RuntimeChannel HELLO uses the same id.
 	RuntimeID string
 
 	// UserID is the runtime owner. Name is the immutable user-visible label.
@@ -84,6 +84,10 @@ type Plan struct {
 	// exposed through user-facing credential APIs.
 	RuntimeCredentialKeyID         string
 	RuntimeCredentialPrivateKeyPEM string
+	RuntimeClientCertPEM           string
+	RuntimeClientKeyPEM            string
+	RuntimeServerCAPEM             string
+	RuntimeChannelTLSServerName    string
 }
 
 // Provisioner is the abstraction Service.EnsureHostedRuntime calls to

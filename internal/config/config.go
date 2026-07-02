@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	elog "github.com/hushine-tech/golang-lib/pkg/log"
 	"gopkg.in/yaml.v3"
@@ -34,10 +35,12 @@ type RuntimeChannelServerConfig struct {
 }
 
 type RuntimeChannelServerTLSConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	CertFile     string `yaml:"cert_file"`
-	KeyFile      string `yaml:"key_file"`
-	ClientCAFile string `yaml:"client_ca_file"`
+	Enabled         bool   `yaml:"enabled"`
+	CertFile        string `yaml:"cert_file"`
+	KeyFile         string `yaml:"key_file"`
+	ServerName      string `yaml:"server_name"`
+	ClientCAFile    string `yaml:"client_ca_file"`
+	ClientCAKeyFile string `yaml:"client_ca_key_file"`
 }
 
 type DatabaseConfig struct {
@@ -90,9 +93,15 @@ type RuntimePlatformConfig struct {
 	// watchdog terminally ends it and marks bound sessions recoverable.
 	// Must be > 0; falls back to 300 if unset.
 	DeathGraceSeconds int `yaml:"death_grace_seconds"`
-	// DebugBareRuntimeEnabled allows unsigned source=bare RuntimeChannel
-	// HELLO only for local/debug control-panel deployments.
+	// DebugBareRuntimeEnabled allows internal bare runtime certificate
+	// bootstrap only for local/debug control-panel deployments.
 	DebugBareRuntimeEnabled bool `yaml:"debug_bare_runtime_enabled"`
+	// BareBootstrapIPAllowlist limits which source IPs may request a short-
+	// lived bare runtime client certificate when debug bare runtime is enabled.
+	BareBootstrapIPAllowlist []string `yaml:"bare_bootstrap_ip_allowlist"`
+	// BareCertificateTTL controls the lifetime of bare runtime debugger
+	// client certificates. Must be positive; defaults to 8h.
+	BareCertificateTTL time.Duration `yaml:"bare_certificate_ttl"`
 }
 
 // RuntimePlan describes a single per-user plan tier (free / developer / pro / etc.).
@@ -169,15 +178,15 @@ type DockerProvisioningConfig struct {
 	// network and use RuntimeEnv to point at routable addresses.
 	NetworkMode string `yaml:"network_mode"`
 
-	// ControlPanelDialAddr is the value the runtime container should use
-	// to dial control-panel-service for self-registration + heartbeat.
-	// Distinct from `cfg.Server.GRPCAddr` because that is the BIND
-	// address (e.g. ":50054") and not a valid dial target.
+	// RuntimeChannelDialAddr is the value the runtime container should use
+	// to dial the dedicated RuntimeChannel listener on control-panel-service.
+	// Distinct from `cfg.RuntimeChannelServer.GRPCAddr` because that is the
+	// BIND address (e.g. ":50055") and not a valid container dial target.
 	//
-	// Defaults: host networking → "127.0.0.1:50054". Bridge / custom
+	// Defaults: host networking → "127.0.0.1:50055". Bridge / custom
 	// networks → operator MUST set explicitly (e.g.
-	// "host.docker.internal:50054" or a service DNS name).
-	ControlPanelDialAddr string `yaml:"control_panel_dial_addr"`
+	// "host.docker.internal:50055" or a service DNS name).
+	RuntimeChannelDialAddr string `yaml:"runtime_channel_dial_addr"`
 
 	// RuntimeEnv is a static map of env vars forwarded to every runtime
 	// container as `-e KEY=VALUE`. Used for upstream service addresses
@@ -244,6 +253,8 @@ func Default() *Config {
 			HeartbeatGraceSeconds:      30,
 			DeathGraceSeconds:          300,
 			DebugBareRuntimeEnabled:    false,
+			BareBootstrapIPAllowlist:   []string{"127.0.0.1/32"},
+			BareCertificateTTL:         8 * time.Hour,
 		},
 		RuntimePlans: defaultPlans(),
 		Provisioning: ProvisioningConfig{
@@ -351,8 +362,14 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_KEY_FILE"); v != "" {
 		c.RuntimeChannelServer.TLS.KeyFile = v
 	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_SERVER_NAME"); v != "" {
+		c.RuntimeChannelServer.TLS.ServerName = v
+	}
 	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_CLIENT_CA_FILE"); v != "" {
 		c.RuntimeChannelServer.TLS.ClientCAFile = v
+	}
+	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_CLIENT_CA_KEY_FILE"); v != "" {
+		c.RuntimeChannelServer.TLS.ClientCAKeyFile = v
 	}
 
 	if dsn := os.Getenv("TIMESCALEDB_DSN"); dsn != "" {
@@ -433,6 +450,14 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("RUNTIME_PLATFORM_DEBUG_BARE_RUNTIME_ENABLED"); v != "" {
 		c.RuntimePlatform.DebugBareRuntimeEnabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("RUNTIME_PLATFORM_BARE_BOOTSTRAP_IP_ALLOWLIST"); v != "" {
+		c.RuntimePlatform.BareBootstrapIPAllowlist = splitCSV(v)
+	}
+	if v := os.Getenv("RUNTIME_PLATFORM_BARE_CERTIFICATE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.RuntimePlatform.BareCertificateTTL = d
+		}
 	}
 }
 

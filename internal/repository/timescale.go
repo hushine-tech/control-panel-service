@@ -344,9 +344,9 @@ func (r *TimescaleRepository) CreateOrReplaceSelfHostedRuntime(ctx context.Conte
 	return tx.Commit()
 }
 
-// CreateOrReplaceBareRuntime is the debug-only RuntimeChannel HELLO admission
-// path. It never consumes credentials; runtimechannel.AuthConfig gates access
-// before this method is called.
+// CreateOrReplaceBareRuntime is the debug-gated local RuntimeChannel HELLO
+// admission path. It never consumes user credentials; runtimechannel.AuthConfig
+// gates access before this method is called.
 func (r *TimescaleRepository) CreateOrReplaceBareRuntime(ctx context.Context, rt domain.Runtime) error {
 	if rt.Source != domain.RuntimeSourceBare {
 		return fmt.Errorf("CreateOrReplaceBareRuntime: source must be bare, got %q", rt.Source)
@@ -357,7 +357,9 @@ func (r *TimescaleRepository) CreateOrReplaceBareRuntime(ctx context.Context, rt
 	if strings.TrimSpace(rt.CredentialKeyID) != "" {
 		return fmt.Errorf("CreateOrReplaceBareRuntime: credential_key_id must be empty")
 	}
-	rt.Role = domain.CredentialRoleDebugger
+	if rt.Role == "" {
+		rt.Role = domain.CredentialRoleExecutor
+	}
 	rt = normalizeRuntimeForWrite(rt)
 	caps, err := marshalCapabilities(rt.Capabilities)
 	if err != nil {
@@ -371,25 +373,6 @@ func (r *TimescaleRepository) CreateOrReplaceBareRuntime(ctx context.Context, rt
 	defer func() { _ = tx.Rollback() }()
 
 	var existingRuntimeID string
-	err = tx.QueryRowContext(ctx, `
-		SELECT runtime_id
-		FROM runtime_registry
-		WHERE user_id = $1
-		  AND role = 'debugger'
-		  AND runtime_id <> $2
-		  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')
-		ORDER BY updated_at DESC
-		LIMIT 1
-		FOR UPDATE`,
-		rt.UserID, rt.RuntimeID,
-	).Scan(&existingRuntimeID)
-	if err == nil {
-		return fmt.Errorf("%w: debugger runtime already active for user %d: %s", ErrConflict, rt.UserID, existingRuntimeID)
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check active debugger runtime: %w", err)
-	}
-
 	err = tx.QueryRowContext(ctx, `
 		SELECT runtime_id
 		FROM runtime_registry
@@ -441,8 +424,7 @@ func (r *TimescaleRepository) CreateOrReplaceBareRuntime(ctx context.Context, rt
 			credential_key_id = NULL,
 			updated_at = EXCLUDED.updated_at
 		WHERE runtime_registry.user_id = EXCLUDED.user_id
-		  AND runtime_registry.source = EXCLUDED.source
-		  AND runtime_registry.status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')`,
+		  AND runtime_registry.source = EXCLUDED.source`,
 		rt.RuntimeID, rt.UserID, rt.Name, rt.Source, string(rt.Role), rt.EndpointHost, rt.GRPCPort,
 		rt.DebugPort, string(caps), rt.ResourceProfile, rt.Version, rt.Status,
 		rt.TokenHash, nullableTime(rt.PairedAt), nullableTime(rt.StartedAt),
@@ -1158,12 +1140,29 @@ func isUniqueViolation(err error) bool {
 
 // ── Runtime credentials (Phase D3) ──────────────────────────────────────────
 
+const runtimeCredentialSelectColumns = `
+	key_id, user_id, public_key_pem, label, role, status,
+	created_at, downloaded_at, consumed_at, consumed_runtime_id,
+	expires_at, last_used_at, revoked_at, hosted_internal,
+	client_cert_pem, client_cert_fingerprint, client_cert_expires_at, issuer`
+
 func (r *TimescaleRepository) CreateRuntimeCredential(ctx context.Context, c domain.RuntimeCredential) error {
+	if c.Issuer == "" {
+		if c.HostedInternal {
+			c.Issuer = domain.RuntimeCredentialIssuerHostedInternal
+		} else {
+			c.Issuer = domain.RuntimeCredentialIssuerUser
+		}
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO runtime_credentials (
-			key_id, user_id, public_key_pem, label, role, status, created_at, downloaded_at, hosted_internal
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		c.KeyID, c.UserID, c.PublicKeyPEM, c.Label, string(c.Role), string(c.Status), c.CreatedAt.UTC(), nullableTime(c.DownloadedAt), c.HostedInternal,
+			key_id, user_id, public_key_pem, label, role, status, created_at,
+			downloaded_at, hosted_internal, client_cert_pem,
+			client_cert_fingerprint, client_cert_expires_at, issuer
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		c.KeyID, c.UserID, c.PublicKeyPEM, c.Label, string(c.Role), string(c.Status), c.CreatedAt.UTC(),
+		nullableTime(c.DownloadedAt), c.HostedInternal, c.ClientCertPEM, c.ClientCertFingerprint,
+		nullableTime(c.ClientCertExpiresAt), c.Issuer,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -1175,10 +1174,7 @@ func (r *TimescaleRepository) CreateRuntimeCredential(ctx context.Context, c dom
 }
 
 func (r *TimescaleRepository) GetRuntimeCredential(ctx context.Context, keyID string) (domain.RuntimeCredential, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT key_id, user_id, public_key_pem, label, role, status,
-		       created_at, downloaded_at, consumed_at, consumed_runtime_id,
-		       expires_at, last_used_at, revoked_at, hosted_internal
+	row := r.db.QueryRowContext(ctx, `SELECT `+runtimeCredentialSelectColumns+`
 		FROM runtime_credentials
 		WHERE key_id = $1`,
 		keyID,
@@ -1191,9 +1187,7 @@ func (r *TimescaleRepository) GetRuntimeCredential(ctx context.Context, keyID st
 }
 
 func (r *TimescaleRepository) ListRuntimeCredentialsByUser(ctx context.Context, userID int64, includeInactive bool) ([]domain.RuntimeCredential, error) {
-	q := `SELECT key_id, user_id, public_key_pem, label, role, status,
-	             created_at, downloaded_at, consumed_at, consumed_runtime_id,
-	             expires_at, last_used_at, revoked_at, hosted_internal
+	q := `SELECT ` + runtimeCredentialSelectColumns + `
 	      FROM runtime_credentials
 	      WHERE user_id = $1
 	        AND hosted_internal = FALSE`
@@ -1238,9 +1232,7 @@ func (r *TimescaleRepository) ListRuntimeCredentialsByUserPage(ctx context.Conte
 	}
 	listArgs := append([]any{}, args...)
 	listArgs = append(listArgs, limit+1, offset)
-	q := `SELECT key_id, user_id, public_key_pem, label, role, status,
-	             created_at, downloaded_at, consumed_at, consumed_runtime_id,
-	             expires_at, last_used_at, revoked_at, hosted_internal
+	q := `SELECT ` + runtimeCredentialSelectColumns + `
 	      FROM runtime_credentials` + where +
 		fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, len(listArgs)-1, len(listArgs))
 	rows, err := r.db.QueryContext(ctx, q, listArgs...)
@@ -1308,10 +1300,7 @@ func (r *TimescaleRepository) RevokeRuntimeCredential(ctx context.Context, keyID
 	}
 
 	// Re-read and return.
-	row := tx.QueryRowContext(ctx, `
-		SELECT key_id, user_id, public_key_pem, label, role, status,
-		       created_at, downloaded_at, consumed_at, consumed_runtime_id,
-		       expires_at, last_used_at, revoked_at, hosted_internal
+	row := tx.QueryRowContext(ctx, `SELECT `+runtimeCredentialSelectColumns+`
 		FROM runtime_credentials WHERE key_id = $1`,
 		keyID,
 	)
@@ -1341,11 +1330,12 @@ func scanCredential(row credentialRowScanner) (domain.RuntimeCredential, error) 
 	var c domain.RuntimeCredential
 	var status string
 	var role string
-	var downloadedAt, consumedAt, expiresAt, lastUsed, revokedAt sql.NullTime
+	var downloadedAt, consumedAt, expiresAt, lastUsed, revokedAt, clientCertExpiresAt sql.NullTime
 	if err := row.Scan(
 		&c.KeyID, &c.UserID, &c.PublicKeyPEM, &c.Label, &role, &status,
 		&c.CreatedAt, &downloadedAt, &consumedAt, &c.ConsumedRuntimeID,
 		&expiresAt, &lastUsed, &revokedAt, &c.HostedInternal,
+		&c.ClientCertPEM, &c.ClientCertFingerprint, &clientCertExpiresAt, &c.Issuer,
 	); err != nil {
 		return domain.RuntimeCredential{}, err
 	}
@@ -1370,6 +1360,13 @@ func scanCredential(row credentialRowScanner) (domain.RuntimeCredential, error) 
 	if revokedAt.Valid {
 		t := revokedAt.Time
 		c.RevokedAt = &t
+	}
+	if clientCertExpiresAt.Valid {
+		t := clientCertExpiresAt.Time
+		c.ClientCertExpiresAt = &t
+	}
+	if c.Issuer == "" {
+		c.Issuer = domain.RuntimeCredentialIssuerUser
 	}
 	return c, nil
 }

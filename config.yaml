@@ -8,7 +8,9 @@ runtime_channel_server:
     enabled: true
     cert_file: ""
     key_file: ""
+    server_name: "runtime-channel.local"
     client_ca_file: ""
+    client_ca_key_file: ""
 
 database:
   host: "192.168.88.10"
@@ -47,6 +49,8 @@ runtime_platform:
   heartbeat_grace_seconds: 30
   death_grace_seconds: 300
   debug_bare_runtime_enabled: false
+  bare_bootstrap_ip_allowlist: ["127.0.0.1/32"]
+  bare_certificate_ttl: "8h"
 
 runtime_plans:
   # Plan limits use the same convention as runtime_platform above:
@@ -116,7 +120,7 @@ provisioning:
     # Default for host networking is "127.0.0.1:<runtime_channel_bind_port>".
     # Bridge / custom networks REQUIRE explicit value:
     # "host.docker.internal:50055" or routable LAN/service address.
-    control_panel_dial_addr: "host.docker.internal:50055"
+    runtime_channel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
     runtime_env:
       CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"

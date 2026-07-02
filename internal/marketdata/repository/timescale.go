@@ -965,7 +965,8 @@ func (r *TimescaleRepository) UpsertMarketDataHistoryRequest(
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE market_data_history_requests
 			SET account_id = COALESCE($2, account_id),
-			    status = CASE WHEN status = 'cancelled' THEN 'pending' ELSE status END,
+			    status = CASE WHEN status = 'error' THEN 'pending' ELSE status END,
+			    last_error = CASE WHEN status = 'error' THEN '' ELSE last_error END,
 			    updated_at = NOW()
 			WHERE request_id = $1`,
 			existingID, accountID,

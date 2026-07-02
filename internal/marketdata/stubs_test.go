@@ -650,6 +650,10 @@ func (s *stubRepo) UpsertMarketDataHistoryRequest(
 			if accountID != nil {
 				h.AccountID = accountID
 			}
+			if h.Status == domain.HistoryRequestError {
+				h.Status = domain.HistoryRequestPending
+				h.LastError = ""
+			}
 			h.UpdatedAt = time.Now()
 			s.historyByID[id] = h
 			return h, nil

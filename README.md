@@ -34,7 +34,7 @@ make proto            # regenerate gen/controlpanelv1 from proto/
 | `EnsureHostedRuntime` | lazy-create hosted RuntimeChannel runtime if missing; idempotent reuse | hosted path |
 | `RuntimeChannel` | hosted/self-hosted/bare-debug runtime outbound bidi stream | dedicated listener |
 | `RunStrategy` / `PreviewRunStrategy` / `StopStrategy` / `GetStrategyStatus` | proxy strategy RPCs over `RuntimeChannel` | all runtime sources |
-| `IssueRuntimeCredential` / `ListRuntimeCredentials` / `RevokeRuntimeCredential` | keypair credential lifecycle | self-hosted path |
+| `IssueRuntimeCredential` / `ListRuntimeCredentials` / `RevokeRuntimeCredential` | runtime credential lifecycle: HELLO signing key + optional mTLS client certificate metadata | self-hosted path |
 
 ## Runtime Traffic Paths
 
@@ -42,13 +42,19 @@ Runtime traffic has one supported path now:
 
 | Runtime source | Handler path | Runtime process mode | Auth primitive |
 |---|---|---|---|
-| `hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker | hosted internal Ed25519 credential |
-| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker or bare machine | user-issued Ed25519 credential |
-| `bare` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start --user-id <id>` | debug-gated unsigned HELLO |
+| `hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker | hosted internal credential + provisioned mTLS bundle |
+| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker or bare machine | user-issued credential + mTLS bundle when TLS is enabled |
+| `bare` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start --user-id <id>` | debug-gated mTLS client certificate bootstrap |
 
 The `bare` source is accepted only when
 `runtime_platform.debug_bare_runtime_enabled=true`; production deployments
 should keep it false.
+
+Backtest market data also uses this route now. RuntimeChannel runtimes call
+`marketdata.FetchBacktestPage`; control-panel-service reads `{exchange}_{year}`
+market-data tables and returns pages of at most `8192` bars. Large backtests are
+therefore streamed page by page instead of being pushed to the runtime as one
+dataset blob.
 
 ## Provisioning
 
@@ -124,7 +130,7 @@ provisioner runs containers but handler is not pointed at control-panel):
      backend: "docker"     # was "noop"
      docker:
        network_mode: "bridge"                  # Docker Desktop friendly
-       control_panel_dial_addr: "host.docker.internal:50055"
+       runtime_channel_dial_addr: "host.docker.internal:50055"
        runtime_env:
          CORE_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
          # ... etc
@@ -209,17 +215,17 @@ Recommended smoke/onboarding sequence:
    Runtime Management -> Runtime Credentials -> Generate new credential.
    Download the `.cred` file once and keep it out of browser storage.
 4. **Start a self-hosted runtime**:
-   ```bash
-   docker run --rm \
-     -v $HOME/.hushine/runtime.cred:/etc/hushine/runtime.cred:ro \
-     -e RUNTIME_CREDENTIAL_PATH=/etc/hushine/runtime.cred \
-     -e CONTROL_PANEL_SERVICE_GRPC_ADDR=host.docker.internal:50055 \
-     hushine/strategy-runtime:executor-dev
-   ```
+     ```bash
+     docker run --rm \
+       -v $HOME/.hushine/runtime.cred:/etc/hushine/runtime.cred:ro \
+       -e RUNTIME_CREDENTIAL_PATH=/etc/hushine/runtime.cred \
+       -e RUNTIME_CHANNEL_GRPC_ADDR=host.docker.internal:50055 \
+       hushine/strategy-runtime:executor-dev
+     ```
 5. **Start a bare debug runtime** only when the control-panel debug gate is enabled:
    ```bash
    cd strategy-service
-   uv run hushine-runtime start --config config.yaml --user-id <account.users.id>
+   uv run hushine-runtime start --config config.yaml --runtime-channel-addr 127.0.0.1:50055 --user-id <account.users.id>
    ```
 6. **Observe the stream**: the runtime registry should show
    `source=hosted`, `source=self_hosted`, or `source=bare` with
@@ -233,11 +239,13 @@ rows cancel, generate a new `.cred`, then restart the runtime container.
 
 ## Runtime credential file contract (Phase D3)
 
-A self-hosted strategy-runtime container reads its Ed25519 credential
-from a JSON file at startup. This section is the canonical reference for
-the file path / permissions / schema / failure modes; the UI download
-flow (`/settings/runtime-credentials` in `quant-frontend`) and the SDK
-loader (`strategy-runtime` task 4.1) MUST stay aligned with it.
+A self-hosted strategy-runtime container reads its runtime credential from a JSON
+file at startup. The Ed25519 key signs RuntimeChannel HELLO for replay-resistant
+runtime identity; the optional mTLS fields materialize the client certificate
+bundle used by the RuntimeChannel TLS connection. This section is the canonical
+reference for the file path / permissions / schema / failure modes; the UI
+download flow (`/settings/runtime-credentials` in `quant-frontend`) and the SDK
+loader MUST stay aligned with it.
 
 ### File path
 
@@ -265,13 +273,21 @@ loader (`strategy-runtime` task 4.1) MUST stay aligned with it.
 {
   "version": 1,
   "key_id": "<base64url-encoded id>",
-  "private_key_pem": "<Ed25519 private key in PEM (PKCS#8)>"
+  "private_key_pem": "<Ed25519 private key in PEM (PKCS#8)>",
+  "client_cert_pem": "<optional RuntimeChannel client certificate PEM>",
+  "client_key_pem": "<optional RuntimeChannel client private key PEM>",
+  "server_ca_pem": "<optional RuntimeChannel server CA PEM>",
+  "server_name": "runtime-channel.local"
 }
 ```
 
 - `version` is mandatory. `version != 1` → fail-closed at boot.
-- Reserved for future extensions: `algorithm`, `expires_at`,
-  `endpoint_hint`. SDK MAY ignore unknown fields when `version == 1`.
+- `client_cert_pem`, `client_key_pem`, and `server_ca_pem` are consumed as a
+  bundle: when all three are present the runtime writes them to local files and
+  enables mTLS for RuntimeChannel. If TLS is required by deployment config and
+  the bundle is missing or incomplete, startup fails before HELLO.
+- Reserved for future extensions: `algorithm`, `expires_at`, `endpoint_hint`.
+  SDK MAY ignore unknown fields when `version == 1`.
 
 ### Failure modes — all fail-closed at boot
 
@@ -284,6 +300,7 @@ fallback to anonymous registration:
 - `version` field absent or `!= 1`
 - `key_id` absent / empty
 - `private_key_pem` absent / not parseable as PKCS#8 Ed25519
+- TLS is enabled and the mTLS bundle is incomplete or cannot be materialized
 
 The exit message names the path and the specific field that failed
 validation. Operators see the cause proximate to the symptom rather
@@ -331,9 +348,9 @@ or run any platform-side recovery tool.
 
 | Credential | Issued by | Verified by | Lifecycle |
 |---|---|---|---|
-| hosted internal runtime private key | `EnsureHostedRuntime` | `RuntimeChannel` HELLO signature verification | one runtime bootstrap; revoked when runtime ends |
-| self-hosted runtime private key | `IssueRuntimeCredential` | `RuntimeChannel` HELLO signature verification | user-held; revoked via `RevokeRuntimeCredential` |
-| bare debug user id | local `hushine-runtime start --user-id` | `RuntimeChannel` HELLO debug gate | only when `debug_bare_runtime_enabled=true` |
+| hosted internal runtime credential | `EnsureHostedRuntime` | server TLS + mTLS when enabled, then RuntimeChannel HELLO signature verification | one runtime bootstrap; revoked when runtime ends |
+| self-hosted runtime credential | `IssueRuntimeCredential` | server TLS + mTLS when enabled, then RuntimeChannel HELLO signature verification | user-held; revoked via `RevokeRuntimeCredential` |
+| bare debug user id | local `hushine-runtime start --user-id` | mTLS client identity + `RuntimeChannel` HELLO debug gate | only when `debug_bare_runtime_enabled=true` and bootstrap IP is allowlisted |
 
 The RuntimeChannel listener supports server TLS and optional mTLS through
 the `runtime_channel_server.tls` config block.
@@ -343,14 +360,15 @@ the `runtime_channel_server.tls` config block.
 Owned tables in the `control_panel` database (single-instance TimescaleDB):
 
 - `runtime_registry` — every runtime the control plane knows about;
-  `source=hosted/self_hosted`, `role=executor/debugger`, per-user permanent
+  `source=hosted/self_hosted/bare`, `role=executor/debugger`, per-user permanent
   display-name uniqueness, terminal lifecycle timestamps/reasons, and
   RuntimeChannel connection owner fields. Runtime routing is always by
   `runtime_id`; `name` is display only.
-- `runtime_credentials` — Ed25519 public keys and audit metadata for
-  RuntimeChannel HELLO verification: `role`, `status`,
+- `runtime_credentials` — Ed25519 public keys plus mTLS client certificate
+  metadata for RuntimeChannel identity: `role`, `status`,
   `downloaded_at`, `consumed_at`, `consumed_runtime_id`, `expires_at`,
-  `revoked_at`, and `hosted_internal`. Private keys are returned once and
+  `revoked_at`, `hosted_internal`, `client_cert_fingerprint`,
+  `client_cert_expires_at`, and `issuer`. Private keys are returned once and
   never stored.
 - `runtime_commands` — durable runtime command queue for start/stop/finish,
   shutdown, and status-affecting operations. Rows include target
@@ -360,7 +378,10 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
   authorization derived from the strategy input universe and bound to
   `(session_id, runtime_id, market, symbol, interval, environment)`.
 - `stream_delivery_leases` — delivery worker ownership/heartbeat/expiry for
-  RuntimeChannel live-data transfer.
+  RuntimeChannel live-data transfer; progress columns track the last delivered
+  topic/partition/offset/time.
+- `stream_delivery_failures` — non-sensitive delivery diagnostics and rollups
+  for failed RuntimeChannel market-data delivery.
 - `market_data_writer_leases` — scraper write ownership for
   `(exchange, market, kind, symbol, interval, year)` before records enter
   `{exchange}_{year}` databases.
@@ -371,6 +392,15 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
   while a strategy is consuming it.
 - `market_data_history_requests` — finite historical backfill / coverage
   requests.
+- `market_data_coverage_segments` — coverage index for backtest preflight,
+  Market Data timelines, and download-and-run decisions.
+- `runtime_channel_leases` — hashed RuntimeChannel resume tokens; raw tokens
+  never leave the runtime process. Bare debug rows may have empty
+  `credential_key_id`.
+- `runtime_admission_failures` — HELLO/RESUME failure rollups for UI/operator
+  diagnosis.
+- `runtime_debug_datasets` — self-hosted debugger dataset metadata; bars stay
+  in runtime memory.
 - `schema_migrations` — applied-migration ledger.
 
 `runtime_pairings` is not part of the final D3 schema. Historical migration

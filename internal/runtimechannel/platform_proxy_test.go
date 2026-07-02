@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
@@ -452,6 +453,88 @@ func TestPlatformProxyFetchKlinesReturnsStructPayload(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyFetchBacktestPageUsesFixedPageSize(t *testing.T) {
+	query := &fakeKlineQuery{rows: makeKlineRows(9000, 1000, 1000)}
+	proxy := NewPlatformProxy(nil, nil, nil)
+	proxy.SetMarketDataQuery(query)
+
+	payload, err := anypb.New(mustStruct(t, map[string]any{
+		"exchange":            "binance",
+		"market":              "futures",
+		"kind":                "kline",
+		"symbol":              "ETHUSDT",
+		"interval":            "1s",
+		"start_after_time_ms": float64(0),
+		"end_time_ms":         float64(10_000_000),
+		"limit":               float64(999999),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"marketdata.FetchBacktestPage",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+	if len(query.calls) != 1 {
+		t.Fatalf("query calls = %d, want 1", len(query.calls))
+	}
+	if query.calls[0].Limit != 8192 {
+		t.Fatalf("query limit = %d, want 8192", query.calls[0].Limit)
+	}
+	got := resp.(*structpb.Struct)
+	if got.Fields["limit"].GetNumberValue() != 8192 {
+		t.Fatalf("response limit = %v, want 8192", got.Fields["limit"].GetNumberValue())
+	}
+	if !got.Fields["has_more"].GetBoolValue() {
+		t.Fatal("has_more = false, want true for full page")
+	}
+	if got.Fields["next_cursor_time_ms"].GetNumberValue() != 8192000 {
+		t.Fatalf("next cursor = %v, want 8192000", got.Fields["next_cursor_time_ms"].GetNumberValue())
+	}
+}
+
+func TestPlatformProxyFetchBacktestPageAppliesCursor(t *testing.T) {
+	query := &fakeKlineQuery{rows: makeKlineRows(3, 1000, 1000)}
+	proxy := NewPlatformProxy(nil, nil, nil)
+	proxy.SetMarketDataQuery(query)
+
+	payload, err := anypb.New(mustStruct(t, map[string]any{
+		"exchange":            "binance",
+		"market":              "futures",
+		"kind":                "kline",
+		"symbol":              "ETHUSDT",
+		"interval":            "1s",
+		"start_after_time_ms": float64(1000),
+		"end_time_ms":         float64(5000),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"FetchBacktestPage",
+		payload,
+	); err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+	if len(query.calls) != 1 {
+		t.Fatalf("query calls = %d, want 1", len(query.calls))
+	}
+	call := query.calls[0]
+	if call.StartTimeMS != 2000 {
+		t.Fatalf("StartTimeMS = %d, want 2000", call.StartTimeMS)
+	}
+	if call.EndTimeMS != 5000 {
+		t.Fatalf("EndTimeMS = %d, want 5000", call.EndTimeMS)
+	}
+}
+
 func TestPlatformProxyDeliverDatasetSendsChunksAndEnd(t *testing.T) {
 	account := &fakeAccountPlatformClient{
 		session: &accountv1.StrategySessionEntry{
@@ -679,6 +762,93 @@ func TestPlatformProxyPublishNotificationRejectsDifferentRuntimeSession(t *testi
 	}
 }
 
+func TestPlatformProxyAllowsCleanupCallsForStoppedSession(t *testing.T) {
+	account := &fakeAccountPlatformClient{
+		session: &accountv1.StrategySessionEntry{
+			SessionId: "sess-stopped",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "stopped",
+		},
+	}
+	marketData := &fakeMarketDataPlatformServer{}
+	proxy := NewPlatformProxy(account, nil, marketData)
+
+	leasePayload, err := anypb.New(&mdv1.ReleaseMarketDataLeaseRequest{
+		SessionId: "sess-stopped",
+		StreamId:  99,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"marketdata.ReleaseMarketDataLease",
+		leasePayload,
+	); err != nil {
+		t.Fatalf("ReleaseMarketDataLease on stopped session: %v", err)
+	}
+	if marketData.releaseLeaseReq.GetSessionId() != "sess-stopped" {
+		t.Fatalf("release lease req = %+v", marketData.releaseLeaseReq)
+	}
+
+	walletPayload, err := anypb.New(&accountv1.UpdateAccountWalletStateRequest{
+		AccountId:      7,
+		SessionId:      "sess-stopped",
+		SnapshotReason: accountSnapshotReasonStrategyEnd,
+		Futures:        &accountv1.FuturesWallet{WalletBalance: 1000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.UpdateAccountWalletState",
+		walletPayload,
+	); err != nil {
+		t.Fatalf("strategy_end wallet update on stopped session: %v", err)
+	}
+	if account.walletStateUpdateReq.GetSnapshotReason() != accountSnapshotReasonStrategyEnd {
+		t.Fatalf("wallet update req = %+v", account.walletStateUpdateReq)
+	}
+}
+
+func TestPlatformProxyRejectsNonCleanupWalletUpdateForStoppedSession(t *testing.T) {
+	account := &fakeAccountPlatformClient{
+		session: &accountv1.StrategySessionEntry{
+			SessionId: "sess-stopped",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "stopped",
+		},
+	}
+	proxy := NewPlatformProxy(account, nil, nil)
+	payload, err := anypb.New(&accountv1.UpdateAccountWalletStateRequest{
+		AccountId:      7,
+		SessionId:      "sess-stopped",
+		SnapshotReason: 1,
+		Futures:        &accountv1.FuturesWallet{WalletBalance: 1000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"account.UpdateAccountWalletState",
+		payload,
+	)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+	if account.walletStateUpdateReq != nil {
+		t.Fatalf("non-cleanup wallet update should not reach core: %+v", account.walletStateUpdateReq)
+	}
+}
+
 func TestRuntimeLogMessageIncludesAuthenticatedRuntime(t *testing.T) {
 	st := mustStruct(t, map[string]any{
 		"level":   "INFO",
@@ -854,18 +1024,72 @@ func (fakeOrderPlatformClient) ResolveOrderAttempt(context.Context, *orderv1.Res
 	return &orderv1.ResolveOrderAttemptResponse{}, nil
 }
 
+type fakeMarketDataPlatformServer struct {
+	releaseLeaseReq                *mdv1.ReleaseMarketDataLeaseRequest
+	releaseSessionSubscriptionsReq *mdv1.ReleaseSessionMarketDataSubscriptionsRequest
+}
+
+func (fakeMarketDataPlatformServer) GetMarketDataStreamStatus(context.Context, *mdv1.GetMarketDataStreamStatusRequest) (*mdv1.GetMarketDataStreamStatusResponse, error) {
+	return &mdv1.GetMarketDataStreamStatusResponse{}, nil
+}
+
+func (fakeMarketDataPlatformServer) CreateOrRenewMarketDataLease(context.Context, *mdv1.CreateOrRenewMarketDataLeaseRequest) (*mdv1.CreateOrRenewMarketDataLeaseResponse, error) {
+	return &mdv1.CreateOrRenewMarketDataLeaseResponse{}, nil
+}
+
+func (f *fakeMarketDataPlatformServer) ReleaseMarketDataLease(_ context.Context, req *mdv1.ReleaseMarketDataLeaseRequest) (*mdv1.ReleaseMarketDataLeaseResponse, error) {
+	f.releaseLeaseReq = req
+	return &mdv1.ReleaseMarketDataLeaseResponse{}, nil
+}
+
+func (fakeMarketDataPlatformServer) CreateSessionMarketDataSubscriptions(context.Context, *mdv1.CreateSessionMarketDataSubscriptionsRequest) (*mdv1.CreateSessionMarketDataSubscriptionsResponse, error) {
+	return &mdv1.CreateSessionMarketDataSubscriptionsResponse{}, nil
+}
+
+func (f *fakeMarketDataPlatformServer) ReleaseSessionMarketDataSubscriptions(_ context.Context, req *mdv1.ReleaseSessionMarketDataSubscriptionsRequest) (*mdv1.ReleaseSessionMarketDataSubscriptionsResponse, error) {
+	f.releaseSessionSubscriptionsReq = req
+	return &mdv1.ReleaseSessionMarketDataSubscriptionsResponse{}, nil
+}
+
 type fakeKlineQuery struct {
-	rows []KlineRow
+	rows  []KlineRow
+	calls []KlineQuery
 }
 
 func (f *fakeKlineQuery) FetchKlines(_ context.Context, req KlineQuery) ([]KlineRow, error) {
+	f.calls = append(f.calls, req)
 	out := make([]KlineRow, 0, len(f.rows))
 	for _, row := range f.rows {
 		if row.OpenTime >= req.StartTimeMS && row.OpenTime < req.EndTimeMS {
 			out = append(out, row)
+			if req.Limit > 0 && len(out) >= req.Limit {
+				break
+			}
 		}
 	}
 	return out, nil
+}
+
+func makeKlineRows(n int, startMS int64, stepMS int64) []KlineRow {
+	rows := make([]KlineRow, 0, n)
+	for i := 0; i < n; i++ {
+		open := startMS + int64(i)*stepMS
+		rows = append(rows, KlineRow{
+			Exchange:  "binance",
+			Market:    "futures",
+			Symbol:    "ETHUSDT",
+			Interval:  "1s",
+			OpenTime:  open,
+			CloseTime: open + stepMS - 1,
+			Timestamp: open,
+			Open:      1000,
+			High:      1001,
+			Low:       999,
+			Close:     1000,
+			Volume:    1,
+		})
+	}
+	return rows
 }
 
 type captureDatasetDeliverer struct {

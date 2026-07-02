@@ -130,11 +130,18 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 		"expires_at",
 		"revoked_at",
 		"hosted_internal",
+		"client_cert_pem",
+		"client_cert_fingerprint",
+		"client_cert_expires_at",
+		"issuer",
 	}
 	for _, column := range requiredCredentialColumns {
 		if !columnExists(ctx, t, db, schema, "runtime_credentials", column) {
 			t.Fatalf("runtime_credentials.%s is missing after migrations", column)
 		}
+	}
+	if constraintExists(ctx, t, db, schema, "runtime_channel_leases", "runtime_channel_leases_credential_key_id_check") {
+		t.Fatal("runtime_channel_leases must allow empty credential_key_id for bare debug runtimes")
 	}
 
 	requiredCommandColumns := []string{
@@ -284,6 +291,25 @@ func constraintDefinition(ctx context.Context, t *testing.T, db *sql.DB, schema,
 		t.Fatalf("read constraint %s: %v", constraintName, err)
 	}
 	return def
+}
+
+func constraintExists(ctx context.Context, t *testing.T, db *sql.DB, schema, table, constraintName string) bool {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_constraint c
+			JOIN pg_class tbl ON tbl.oid = c.conrelid
+			JOIN pg_namespace n ON n.oid = tbl.relnamespace
+			WHERE n.nspname = $1
+			  AND tbl.relname = $2
+			  AND c.conname = $3
+		)`, schema, table, constraintName).Scan(&exists)
+	if err != nil {
+		t.Fatalf("check constraint %s: %v", constraintName, err)
+	}
+	return exists
 }
 
 func quoteIdent(s string) string {

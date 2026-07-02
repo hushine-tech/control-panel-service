@@ -106,6 +106,49 @@ func TestCreateMarketDataRequest_HistoricalScope(t *testing.T) {
 	}
 }
 
+func TestCreateMarketDataRequest_HistoricalRetriesErrorRequest(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	first, err := svc.CreateMarketDataRequest(ctx, &mdv1.CreateMarketDataRequestRequest{
+		UserId:           42,
+		Key:              liveKey(),
+		Scope:            "historical",
+		RequestedStartAt: timestamppb.New(start),
+		RequestedEndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("first historical Create: %v", err)
+	}
+	requestID := first.GetRequest().GetRequestId()
+	if _, err := repo.UpdateMarketDataHistoryRequestState(ctx, requestID, domain.HistoryRequestError, nil, nil, "transient migration conflict"); err != nil {
+		t.Fatalf("mark historical request error: %v", err)
+	}
+
+	second, err := svc.CreateMarketDataRequest(ctx, &mdv1.CreateMarketDataRequestRequest{
+		UserId:           42,
+		Key:              liveKey(),
+		Scope:            "historical",
+		RequestedStartAt: timestamppb.New(start),
+		RequestedEndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("retry historical Create: %v", err)
+	}
+	if second.GetRequest().GetRequestId() != requestID {
+		t.Fatalf("retry request_id = %d, want original %d", second.GetRequest().GetRequestId(), requestID)
+	}
+	if second.GetRequest().GetStatus() != string(domain.HistoryRequestPending) {
+		t.Fatalf("retry status = %q, want pending", second.GetRequest().GetStatus())
+	}
+	if second.GetRequest().GetLastError() != "" {
+		t.Fatalf("retry last_error = %q, want empty", second.GetRequest().GetLastError())
+	}
+}
+
 func TestCreateMarketDataRequest_HistoricalRejectsLiveDelivery(t *testing.T) {
 	svc := newSvc()
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)

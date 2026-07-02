@@ -6,9 +6,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -144,6 +146,14 @@ func (s *Signer) SignRuntimeClientCertificate(req SignRequest) ([]byte, *x509.Ce
 		return nil, nil, fmt.Errorf("parse signed runtime client certificate: %w", err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), cert, nil
+}
+
+func Fingerprint(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	sum := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func IdentityFromCertificate(cert *x509.Certificate) (RuntimeIdentity, error) {

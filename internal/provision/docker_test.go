@@ -113,7 +113,7 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
 	assertHasEnv(t, args, "RUNTIME_NAME=hosted-steady-river")
 	assertHasEnv(t, args, "RUNTIME_RESOURCE_PROFILE=small")
-	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055")
 	// Operator-supplied static env forwarded.
 	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
 	assertHasEnv(t, args, "KAFKA_BROKERS=127.0.0.1:19092")
@@ -149,6 +149,29 @@ func TestDockerProvisioner_Provision_InjectsHostedRuntimeCredentialJSON(t *testi
 	}
 }
 
+func TestDockerProvisioner_Provision_InjectsRuntimeMTLSFiles(t *testing.T) {
+	runner := &fakeRunner{output: []byte("container_full_id_abc\n")}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+	plan := defaultPlan()
+	plan.RuntimeClientCertPEM = "client-cert"
+	plan.RuntimeClientKeyPEM = "client-key"
+	plan.RuntimeServerCAPEM = "server-ca"
+	plan.RuntimeChannelTLSServerName = "runtime-channel.local"
+
+	_, err := prov.Provision(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	args := runner.calls[0].args
+
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_ENABLED=true")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_CLIENT_CERT_FILE=/etc/hushine/runtime-client.pem")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_CLIENT_KEY_FILE=/etc/hushine/runtime-client.key")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_ROOT_CERT_FILE=/etc/hushine/control-panel-ca.pem")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_SERVER_NAME=runtime-channel.local")
+	assertHasEnvPrefix(t, args, "RUNTIME_CHANNEL_TLS_BUNDLE_JSON=")
+}
+
 func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Docker.NetworkMode = "bridge"
@@ -169,6 +192,22 @@ func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *t
 	}
 }
 
+func TestDockerProvisioner_Provision_BridgeHostDockerInternalAddsHostGateway(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Docker.NetworkMode = "bridge"
+	runner := &fakeRunner{output: []byte("container_xyz\n")}
+	prov := NewDockerProvisioner(runner, cfg, "host.docker.internal:50055")
+
+	_, err := prov.Provision(context.Background(), defaultPlan())
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	args := runner.calls[0].args
+	assertFlagValue(t, args, "--network", "bridge")
+	assertFlagValue(t, args, "--add-host", "host.docker.internal:host-gateway")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_GRPC_ADDR=host.docker.internal:50055")
+}
+
 func TestDockerProvisioner_Provision_FailsWhenImageEmpty(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Image = ""
@@ -180,16 +219,16 @@ func TestDockerProvisioner_Provision_FailsWhenImageEmpty(t *testing.T) {
 }
 
 // Operator-supplied runtime_env MUST NOT be able to shadow platform-
-// controlled env vars (RUNTIME_*, CONTROL_PANEL_SERVICE_GRPC_ADDR,
+// controlled env vars (RUNTIME_*, RUNTIME_CHANNEL_GRPC_ADDR,
 // SERVER_GRPC_ADDR). Defense against operator footgun (#20).
 func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Docker.RuntimeEnv = map[string]string{
 		// Forbidden — must be ignored.
-		"RUNTIME_BIND_USER_ID":            "999",
-		"RUNTIME_RUNTIME_ID":              "rt_attacker",
-		"CONTROL_PANEL_SERVICE_GRPC_ADDR": "evil:50055",
-		"SERVER_GRPC_ADDR":                ":1",
+		"RUNTIME_BIND_USER_ID":      "999",
+		"RUNTIME_RUNTIME_ID":        "rt_attacker",
+		"RUNTIME_CHANNEL_GRPC_ADDR": "evil:50055",
+		"SERVER_GRPC_ADDR":          ":1",
 		// Allowed — legit operator env.
 		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
 		"MY_CUSTOM_VAR":          "hello",
@@ -205,7 +244,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 
 	// Platform values must remain.
 	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
-	assertHasEnv(t, args, "CONTROL_PANEL_SERVICE_GRPC_ADDR=127.0.0.1:50055")
+	assertHasEnv(t, args, "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055")
 	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
 		t.Error("reserved SERVER_GRPC_ADDR from runtime_env should not reach hosted runtime")
 	}
@@ -213,7 +252,7 @@ func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
 	for _, forbidden := range []string{
 		"RUNTIME_BIND_USER_ID=999",
 		"RUNTIME_RUNTIME_ID=rt_attacker",
-		"CONTROL_PANEL_SERVICE_GRPC_ADDR=evil:50055",
+		"RUNTIME_CHANNEL_GRPC_ADDR=evil:50055",
 		"SERVER_GRPC_ADDR=:1",
 	} {
 		if envIsPresent(args, forbidden) {
@@ -254,6 +293,16 @@ func envValue(args []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func assertHasEnvPrefix(t *testing.T, args []string, prefix string) {
+	t.Helper()
+	for i, a := range args {
+		if a == "-e" && i+1 < len(args) && strings.HasPrefix(args[i+1], prefix) {
+			return
+		}
+	}
+	t.Fatalf("env prefix %q missing in args: %v", prefix, args)
 }
 
 func TestDockerProvisioner_Provision_DockerErrorWraps(t *testing.T) {
@@ -314,6 +363,58 @@ func TestDockerProvisioner_Deprovision_CallsDockerRm(t *testing.T) {
 	want := []string{"rm", "-f", "container_xyz"}
 	if !equalStringSlice(call.args, want) {
 		t.Errorf("args = %v, want %v", call.args, want)
+	}
+}
+
+func TestDockerProvisioner_DiagnosticsIncludesInspectAndTailLogs(t *testing.T) {
+	runner := &fakeRunner{
+		multiOut: [][]byte{
+			[]byte("state=exited exit=1 error= started=2026-06-19T05:17:29Z finished=2026-06-19T05:17:30Z\n"),
+			[]byte("Failed to spawn: hushine-runtime\n"),
+		},
+	}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+
+	diag, err := prov.Diagnostics(context.Background(), "container_xyz")
+	if err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	if !strings.Contains(diag, "inspect: state=exited exit=1") {
+		t.Fatalf("diag = %q, want inspect output", diag)
+	}
+	if !strings.Contains(diag, "logs: Failed to spawn: hushine-runtime") {
+		t.Fatalf("diag = %q, want logs output", diag)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %d, want inspect + logs", len(runner.calls))
+	}
+	assertFlagValue(t, runner.calls[0].args, "--format", "state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}")
+	wantLogs := []string{"logs", "--tail", "80", "container_xyz"}
+	if !equalStringSlice(runner.calls[1].args, wantLogs) {
+		t.Fatalf("logs args = %v, want %v", runner.calls[1].args, wantLogs)
+	}
+}
+
+func TestDockerProvisioner_DiagnosticsRedactsSensitiveLogValues(t *testing.T) {
+	runner := &fakeRunner{
+		multiOut: [][]byte{
+			[]byte("state=exited exit=1 error= started=2026-06-19T05:17:29Z finished=2026-06-19T05:17:30Z\n"),
+			[]byte("API_SECRET=super-secret token: runtime-token password=plain private_key_pem\":\"pem-value\"\n"),
+		},
+	}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+
+	diag, err := prov.Diagnostics(context.Background(), "container_xyz")
+	if err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	for _, leaked := range []string{"super-secret", "runtime-token", "password=plain", "pem-value"} {
+		if strings.Contains(diag, leaked) {
+			t.Fatalf("diag leaked sensitive value %q: %s", leaked, diag)
+		}
+	}
+	if !strings.Contains(diag, "API_SECRET=<redacted>") || !strings.Contains(diag, "token: <redacted>") {
+		t.Fatalf("diag = %q, want redacted markers", diag)
 	}
 }
 

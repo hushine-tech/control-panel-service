@@ -156,8 +156,62 @@ func TestTimescaleRepositoryCreateBareRuntimeDoesNotUseCredential(t *testing.T) 
 	).Scan(&source, &role, &credentialKeyID); err != nil {
 		t.Fatalf("query bare runtime: %v", err)
 	}
-	if source != domain.RuntimeSourceBare || role != string(domain.CredentialRoleDebugger) || credentialKeyID.Valid {
-		t.Fatalf("runtime = source:%q role:%q credential:%v, want bare/debugger/no credential", source, role, credentialKeyID)
+	if source != domain.RuntimeSourceBare || role != string(domain.CredentialRoleExecutor) || credentialKeyID.Valid {
+		t.Fatalf("runtime = source:%q role:%q credential:%v, want bare/executor/no credential", source, role, credentialKeyID)
+	}
+}
+
+func TestTimescaleRepositoryCreateBareRuntimeReactivatesTerminalSameRuntime(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db := openRepositoryTestDB(t, ctx)
+	defer db.Close()
+	if err := createTempRuntimeRegistry(ctx, db); err != nil {
+		t.Fatalf("create temp runtime_registry: %v", err)
+	}
+
+	endedAt := time.Date(2026, 6, 14, 9, 0, 0, 0, time.UTC)
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO runtime_registry (
+			runtime_id, user_id, name, source, role, status,
+			ended_at, ended_reason, created_at, updated_at
+		) VALUES (
+			'runtime-bare', 42, 'bare-debug', 'bare', 'executor', 'ended',
+			$1, 'heartbeat_stale', $1, $1
+		)`, endedAt)
+	if err != nil {
+		t.Fatalf("insert ended bare runtime: %v", err)
+	}
+
+	now := endedAt.Add(time.Hour)
+	heartbeat := now
+	repo := &TimescaleRepository{db: db}
+	if err := repo.CreateOrReplaceBareRuntime(ctx, domain.Runtime{
+		RuntimeID:       "runtime-bare",
+		UserID:          42,
+		Name:            "bare-debug",
+		Source:          domain.RuntimeSourceBare,
+		Role:            domain.CredentialRoleExecutor,
+		ResourceProfile: "local",
+		Status:          domain.RuntimeStatusActive,
+		HeartbeatAt:     &heartbeat,
+		StartedAt:       &now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("CreateOrReplaceBareRuntime: %v", err)
+	}
+
+	var status, endedReason string
+	var ended sql.NullTime
+	if err := db.QueryRowContext(ctx, `
+		SELECT status, ended_at, ended_reason
+		FROM runtime_registry WHERE runtime_id = 'runtime-bare'`,
+	).Scan(&status, &ended, &endedReason); err != nil {
+		t.Fatalf("query runtime: %v", err)
+	}
+	if status != domain.RuntimeStatusActive || ended.Valid || endedReason != "" {
+		t.Fatalf("runtime status=%q ended=%v reason=%q, want active/non-ended", status, ended.Valid, endedReason)
 	}
 }
 
@@ -383,6 +437,9 @@ func TestTimescaleRepositoryListCredentialsIncludesConsumedByDefault(t *testing.
 	if len(creds) != 1 || creds[0].KeyID != "key-consumed" || creds[0].ConsumedRuntimeID != "runtime-consumer" {
 		t.Fatalf("creds = %+v, want consumed only", creds)
 	}
+	if creds[0].Issuer != domain.RuntimeCredentialIssuerUser {
+		t.Fatalf("credential issuer = %q, want user", creds[0].Issuer)
+	}
 }
 
 func TestTimescaleRepositoryRuntimeChannelLeaseAndAdmissionFailure(t *testing.T) {
@@ -420,6 +477,25 @@ func TestTimescaleRepositoryRuntimeChannelLeaseAndAdmissionFailure(t *testing.T)
 	}
 	if err := repo.TouchRuntimeChannelLease(ctx, "runtime-1", "lease-hash", now.Add(time.Minute)); err != nil {
 		t.Fatalf("TouchRuntimeChannelLease: %v", err)
+	}
+	if err := repo.CreateRuntimeChannelLease(ctx, domain.RuntimeChannelLease{
+		RuntimeID:       "runtime-bare",
+		UserID:          43,
+		CredentialKeyID: "",
+		LeaseHash:       "bare-lease-hash",
+		IssuedAt:        now,
+		ExpiresAt:       now.Add(time.Hour),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("CreateRuntimeChannelLease bare: %v", err)
+	}
+	bareLease, err := repo.GetRuntimeChannelLeaseByHash(ctx, "bare-lease-hash")
+	if err != nil {
+		t.Fatalf("GetRuntimeChannelLeaseByHash bare: %v", err)
+	}
+	if bareLease.RuntimeID != "runtime-bare" || bareLease.UserID != 43 || bareLease.CredentialKeyID != "" {
+		t.Fatalf("bare lease = %+v", bareLease)
 	}
 
 	for i := 0; i < 2; i++ {
@@ -619,7 +695,17 @@ func createTempRuntimeRegistry(ctx context.Context, db *sql.DB) error {
 			credential_key_id TEXT,
 			connection_owner_instance_id TEXT NOT NULL DEFAULT '',
 			connection_owner_acquired_at TIMESTAMPTZ,
-			connection_owner_heartbeat_at TIMESTAMPTZ
+			connection_owner_heartbeat_at TIMESTAMPTZ,
+			debug_workspace_host_path TEXT NOT NULL DEFAULT '',
+			debug_workspace_container_path TEXT NOT NULL DEFAULT '',
+			debug_template_path TEXT NOT NULL DEFAULT '',
+			debug_archived_template_path TEXT NOT NULL DEFAULT '',
+			debug_vscode_launch_created BOOLEAN NOT NULL DEFAULT FALSE,
+			debug_vscode_launch_preserved BOOLEAN NOT NULL DEFAULT FALSE,
+			debug_pycharm_doc_created BOOLEAN NOT NULL DEFAULT FALSE,
+			debug_pycharm_doc_preserved BOOLEAN NOT NULL DEFAULT FALSE,
+			debug_workspace_prepared_at TIMESTAMPTZ,
+			debug_workspace_last_error TEXT NOT NULL DEFAULT ''
 		) ON COMMIT PRESERVE ROWS`)
 	if err != nil {
 		return fmt.Errorf("create table: %w", err)
@@ -643,7 +729,11 @@ func createTempRuntimeCredentials(ctx context.Context, db *sql.DB) error {
 			expires_at TIMESTAMPTZ,
 			last_used_at TIMESTAMPTZ,
 			revoked_at TIMESTAMPTZ,
-			hosted_internal BOOLEAN NOT NULL DEFAULT FALSE
+			hosted_internal BOOLEAN NOT NULL DEFAULT FALSE,
+			client_cert_pem TEXT NOT NULL DEFAULT '',
+			client_cert_fingerprint TEXT NOT NULL DEFAULT '',
+			client_cert_expires_at TIMESTAMPTZ,
+			issuer TEXT NOT NULL DEFAULT 'user'
 		) ON COMMIT PRESERVE ROWS`)
 	if err != nil {
 		return fmt.Errorf("create runtime_credentials: %w", err)

@@ -257,7 +257,7 @@ func verifyBareHello(now func() time.Time, cfg AuthConfig, h *cpv1.RuntimeHello)
 		RuntimeID:       runtimeID,
 		Name:            name,
 		Source:          domain.RuntimeSourceBare,
-		Role:            domain.CredentialRoleDebugger,
+		Role:            domain.CredentialRoleExecutor,
 		EndpointHost:    h.GetEndpointHost(),
 		GRPCPort:        h.GetGrpcPort(),
 		DebugPort:       h.GetDebugPort(),

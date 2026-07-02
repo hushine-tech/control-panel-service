@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -286,13 +288,61 @@ func (g *ControlPanelGRPCService) IssueRuntimeCredential(ctx context.Context, re
 	if err != nil {
 		return nil, mapCredentialError(err)
 	}
-	return &cpv1.IssueRuntimeCredentialResponse{
+	resp := &cpv1.IssueRuntimeCredentialResponse{
 		KeyId:         issued.KeyID,
 		PrivateKeyPem: issued.PrivateKeyPEM,
 		PublicKeyPem:  issued.PublicKeyPEM,
 		CreatedAt:     timestamppb.New(issued.CreatedAt),
 		Role:          string(issued.Role),
+		ClientCertPem: issued.ClientCertPEM,
+		ClientKeyPem:  issued.ClientKeyPEM,
+		ServerCaPem:   issued.ServerCAPEM,
+	}
+	if issued.ClientCertExpiresAt != nil {
+		resp.ClientCertExpiresAt = timestamppb.New(*issued.ClientCertExpiresAt)
+	}
+	return resp, nil
+}
+
+func (g *ControlPanelGRPCService) BootstrapBareRuntimeCertificate(ctx context.Context, req *cpv1.BootstrapBareRuntimeCertificateRequest) (*cpv1.BootstrapBareRuntimeCertificateResponse, error) {
+	if g.svc == nil {
+		return nil, status.Error(codes.FailedPrecondition, "runtime service is not configured")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	res, err := g.svc.BootstrapBareRuntimeCertificate(ctx, BootstrapBareRuntimeCertificateArgs{
+		UserID:          req.GetUserId(),
+		RuntimeID:       req.GetRuntimeId(),
+		Name:            req.GetName(),
+		CSRPEM:          req.GetCsrPem(),
+		RemoteIP:        remoteIPFromContext(ctx),
+		Capabilities:    append([]string(nil), req.GetCapabilities()...),
+		ResourceProfile: req.GetResourceProfile(),
+		Version:         req.GetVersion(),
+	})
+	if err != nil {
+		return nil, mapErrorToStatus(err)
+	}
+	return &cpv1.BootstrapBareRuntimeCertificateResponse{
+		RuntimeId:           res.RuntimeID,
+		Name:                res.Name,
+		ClientCertPem:       res.ClientCertPEM,
+		ServerCaPem:         res.ServerCAPEM,
+		ClientCertExpiresAt: timestamppb.New(res.ClientCertExpiresAt),
 	}, nil
+}
+
+func remoteIPFromContext(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return ""
+	}
+	addr := p.Addr.String()
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (g *ControlPanelGRPCService) ListRuntimeCredentials(ctx context.Context, req *cpv1.ListRuntimeCredentialsRequest) (*cpv1.ListRuntimeCredentialsResponse, error) {
@@ -569,15 +619,17 @@ func notificationEventType(category, severity string) string {
 
 func credentialToProto(c domain.RuntimeCredential) *cpv1.RuntimeCredential {
 	out := &cpv1.RuntimeCredential{
-		KeyId:             c.KeyID,
-		UserId:            c.UserID,
-		Label:             c.Label,
-		Status:            string(c.Status),
-		PublicKeyPem:      c.PublicKeyPEM,
-		CreatedAt:         timestamppb.New(c.CreatedAt),
-		Role:              string(c.Role),
-		ConsumedRuntimeId: c.ConsumedRuntimeID,
-		HostedInternal:    c.HostedInternal,
+		KeyId:                 c.KeyID,
+		UserId:                c.UserID,
+		Label:                 c.Label,
+		Status:                string(c.Status),
+		PublicKeyPem:          c.PublicKeyPEM,
+		CreatedAt:             timestamppb.New(c.CreatedAt),
+		Role:                  string(c.Role),
+		ConsumedRuntimeId:     c.ConsumedRuntimeID,
+		HostedInternal:        c.HostedInternal,
+		ClientCertFingerprint: c.ClientCertFingerprint,
+		Issuer:                c.Issuer,
 	}
 	if c.DownloadedAt != nil {
 		out.DownloadedAt = timestamppb.New(*c.DownloadedAt)
@@ -593,6 +645,9 @@ func credentialToProto(c domain.RuntimeCredential) *cpv1.RuntimeCredential {
 	}
 	if c.RevokedAt != nil {
 		out.RevokedAt = timestamppb.New(*c.RevokedAt)
+	}
+	if c.ClientCertExpiresAt != nil {
+		out.ClientCertExpiresAt = timestamppb.New(*c.ClientCertExpiresAt)
 	}
 	return out
 }
@@ -628,6 +683,8 @@ func mapCredentialError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, credential.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, credential.ErrCertificateSignerUnavailable):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}

@@ -46,13 +46,13 @@ service ControlPanelService {
   // uses on the strategy-start path. Idempotent semantics:
   //
   //   * Resolve plan, check quota / profile, allocate a hosted runtime via
-  //     the configured provisioner backend, wait for the runtime to
-  //     self-register, then return it. Runtime routing is by runtime_id only;
-  //     name is display-only.
+  //     the configured provisioner backend, wait for RuntimeChannel HELLO,
+  //     then return it. Runtime routing is by runtime_id only; name is
+  //     display-only.
   //
   // Fail-closed: returns RESOURCE_EXHAUSTED when plan / quota / profile
   // checks reject; FailedPrecondition when the provisioner backend is
-  // misconfigured or the runtime never self-registers within the
+  // misconfigured or the runtime never opens RuntimeChannel within the
   // configured timeout. NEVER silently returns a shared / different
   // user's runtime.
   //
@@ -73,6 +73,11 @@ service ControlPanelService {
   // authenticated user's id; quant-handler enforces that the JWT subject
   // matches the request user_id.
   rpc IssueRuntimeCredential(IssueRuntimeCredentialRequest) returns (IssueRuntimeCredentialResponse);
+
+  // BootstrapBareRuntimeCertificate signs a short-lived debugger client
+  // certificate for internal bare runtime startup. It is only available when
+  // debug bare runtime bootstrap is enabled and the caller IP is allowlisted.
+  rpc BootstrapBareRuntimeCertificate(BootstrapBareRuntimeCertificateRequest) returns (BootstrapBareRuntimeCertificateResponse);
 
   // ListRuntimeCredentials returns the active credentials owned by the
   // calling user. Consumed credentials are returned by default so users can
@@ -369,6 +374,30 @@ message IssueRuntimeCredentialResponse {
   google.protobuf.Timestamp created_at = 4;
   // Runtime role authorized by this credential: "executor" or "debugger".
   string role = 5;
+  // RuntimeChannel mTLS client certificate bundle. The private key is
+  // returned exactly once with this response and is never persisted.
+  string client_cert_pem = 6;
+  string client_key_pem = 7;
+  string server_ca_pem = 8;
+  google.protobuf.Timestamp client_cert_expires_at = 9;
+}
+
+message BootstrapBareRuntimeCertificateRequest {
+  int64 user_id = 1;
+  string runtime_id = 2;
+  string name = 3;
+  string csr_pem = 4;
+  repeated string capabilities = 5;
+  string resource_profile = 6;
+  string version = 7;
+}
+
+message BootstrapBareRuntimeCertificateResponse {
+  string runtime_id = 1;
+  string name = 2;
+  string client_cert_pem = 3;
+  string server_ca_pem = 4;
+  google.protobuf.Timestamp client_cert_expires_at = 5;
 }
 
 message ListRuntimeCredentialsRequest {
@@ -436,6 +465,9 @@ message RuntimeCredential {
   string consumed_runtime_id = 12;
   google.protobuf.Timestamp expires_at = 13;
   bool hosted_internal = 14;
+  string client_cert_fingerprint = 15;
+  google.protobuf.Timestamp client_cert_expires_at = 16;
+  string issuer = 17;
 }
 
 message RevokeRuntimeCredentialRequest {
@@ -483,6 +515,7 @@ enum FrameType {
   FRAME_TYPE_HELLO_ACK = 18;
   FRAME_TYPE_RESUME = 19;
   FRAME_TYPE_HEARTBEAT_ACK = 20;
+  FRAME_TYPE_ORDER_UPDATE_BATCH = 21;
 }
 
 message RuntimeFrame {
@@ -516,6 +549,7 @@ message RuntimeFrame {
     RuntimeHelloAck hello_ack = 27;
     RuntimeResume resume = 28;
     RuntimeHeartbeatAck heartbeat_ack = 29;
+    RuntimeOrderUpdateBatch order_update_batch = 30;
   }
 }
 
@@ -641,6 +675,13 @@ message RuntimeLiveKlineBatch {
   string stream_key = 2;
   int64 sequence = 3;
   repeated google.protobuf.Any klines = 4;
+}
+
+message RuntimeOrderUpdateBatch {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 sequence = 3;
+  repeated google.protobuf.Any events = 4;
 }
 
 message RuntimeDataAck {

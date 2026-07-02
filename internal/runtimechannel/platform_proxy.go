@@ -21,6 +21,11 @@ import (
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 )
 
+const (
+	accountSnapshotReasonStrategyEnd = 3
+	backtestPageSize                 = 8192
+)
+
 type AccountPlatformClient interface {
 	GetAccount(ctx context.Context, in *accountv1.GetAccountRequest, opts ...grpc.CallOption) (*accountv1.GetAccountResponse, error)
 	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
@@ -146,7 +151,8 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if strings.TrimSpace(req.GetSessionId()) == "" {
 			return nil, status.Error(codes.InvalidArgument, "session_id is required")
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+		allowTerminalSession := req.GetSnapshotReason() == accountSnapshotReasonStrategyEnd
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), allowTerminalSession); err != nil {
 			return nil, err
 		}
 		return p.requireAccount().UpdateAccountWalletState(ctx, req)
@@ -199,7 +205,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if req.GetRuntimeId() != "" && req.GetRuntimeId() != rt.RuntimeID {
 			return nil, status.Error(codes.PermissionDenied, "session runtime_id does not match authenticated runtime")
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
 			return nil, err
 		}
 		req.RuntimeId = rt.RuntimeID
@@ -252,6 +258,21 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		}
 		return klineRowsToStruct(rows)
 
+	case "marketdata.FetchBacktestPage":
+		req, err := unpackBacktestPagePayload(payload)
+		if err != nil {
+			return nil, err
+		}
+		query := p.requireKlineQuery()
+		if query == nil {
+			return nil, status.Error(codes.FailedPrecondition, "market-data query is not configured")
+		}
+		rows, err := query.FetchKlines(ctx, req)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "fetch backtest page: %v", err)
+		}
+		return klineRowsToBacktestPageStruct(req, rows)
+
 	case "marketdata.DeliverDataset":
 		req, err := unpackDatasetDeliveryPayload(payload)
 		if err != nil {
@@ -285,7 +306,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
 			return nil, err
 		}
 		return p.requireMarketData().ReleaseMarketDataLease(ctx, req)
@@ -314,7 +335,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "subscription runtime_id does not match authenticated runtime")
 		}
 		req.RuntimeId = rt.RuntimeID
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
 			return nil, err
 		}
 		return p.requireMarketData().ReleaseSessionMarketDataSubscriptions(ctx, req)
@@ -421,7 +442,7 @@ func (p *PlatformProxy) ensureAccountOwner(ctx context.Context, rt Authenticated
 	return nil
 }
 
-func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt AuthenticatedRuntime, sessionID string) error {
+func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt AuthenticatedRuntime, sessionID string, allowTerminal ...bool) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return status.Error(codes.InvalidArgument, "session_id is required")
@@ -450,6 +471,9 @@ func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt Authenticated
 	case "running", "stopping":
 		return nil
 	default:
+		if len(allowTerminal) > 0 && allowTerminal[0] {
+			return nil
+		}
 		return status.Errorf(codes.FailedPrecondition, "session %s is not active: %s", sessionID, session.GetStatus())
 	}
 }
@@ -497,6 +521,8 @@ func canonicalPlatformMethod(method string) string {
 		return "marketdata.GetMarketDataStreamStatus"
 	case "FetchKlines":
 		return "marketdata.FetchKlines"
+	case "FetchBacktestPage", "marketdata.FetchBacktestPage":
+		return "marketdata.FetchBacktestPage"
 	case "DeliverDataset", "marketdata.DeliverDataset":
 		return "marketdata.DeliverDataset"
 	case "CreateOrRenewMarketDataLease", "marketdata.v1.MarketDataControlPlaneService/CreateOrRenewMarketDataLease", "controlpanel.marketdata.v1.MarketDataControlPlaneService/CreateOrRenewMarketDataLease":
@@ -551,6 +577,37 @@ func unpackKlineQueryPayload(payload *anypb.Any) (KlineQuery, error) {
 		StartTimeMS: int64(numberField(fields, "start_time_ms")),
 		EndTimeMS:   int64(numberField(fields, "end_time_ms")),
 		Limit:       int(numberField(fields, "limit")),
+	}, nil
+}
+
+func unpackBacktestPagePayload(payload *anypb.Any) (KlineQuery, error) {
+	st := &structpb.Struct{}
+	if err := unpackRuntimePayload(payload, st); err != nil {
+		return KlineQuery{}, err
+	}
+	fields := st.GetFields()
+	interval := strings.ToLower(strings.TrimSpace(stringField(fields, "interval")))
+	stepMS, err := intervalStepMS(interval)
+	if err != nil {
+		return KlineQuery{}, status.Errorf(codes.InvalidArgument, "backtest page interval: %v", err)
+	}
+	startAfter := int64(numberField(fields, "start_after_time_ms"))
+	startMS := startAfter
+	if startMS > 0 {
+		startMS += stepMS
+	}
+	exchange := strings.ToLower(strings.TrimSpace(stringField(fields, "exchange")))
+	if exchange == "" {
+		exchange = "binance"
+	}
+	return KlineQuery{
+		Exchange:    exchange,
+		Market:      strings.ToLower(strings.TrimSpace(stringField(fields, "market"))),
+		Symbol:      strings.ToUpper(strings.TrimSpace(stringField(fields, "symbol"))),
+		Interval:    interval,
+		StartTimeMS: startMS,
+		EndTimeMS:   int64(numberField(fields, "end_time_ms")),
+		Limit:       backtestPageSize,
 	}, nil
 }
 
@@ -742,6 +799,22 @@ func klineRowsToStruct(rows []KlineRow) (*structpb.Struct, error) {
 		"klines": structpb.NewListValue(&structpb.ListValue{Values: values}).AsInterface(),
 		"count":  float64(len(rows)),
 	})
+}
+
+func klineRowsToBacktestPageStruct(req KlineQuery, rows []KlineRow) (*structpb.Struct, error) {
+	page, err := klineRowsToStruct(rows)
+	if err != nil {
+		return nil, err
+	}
+	nextCursor := int64(0)
+	if len(rows) > 0 {
+		nextCursor = rows[len(rows)-1].OpenTime
+	}
+	page.Fields["stream_key"] = structpb.NewStringValue(datasetIDForKlineStream(req))
+	page.Fields["next_cursor_time_ms"] = structpb.NewNumberValue(float64(nextCursor))
+	page.Fields["has_more"] = structpb.NewBoolValue(len(rows) == backtestPageSize)
+	page.Fields["limit"] = structpb.NewNumberValue(float64(backtestPageSize))
+	return page, nil
 }
 
 func stringField(fields map[string]*structpb.Value, name string) string {

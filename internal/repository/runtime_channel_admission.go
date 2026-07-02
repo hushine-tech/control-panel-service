@@ -14,7 +14,7 @@ const runtimeChannelLeaseSelectColumns = `
 	last_used_at, revoked_at, created_at, updated_at`
 
 func (r *TimescaleRepository) CreateRuntimeChannelLease(ctx context.Context, lease domain.RuntimeChannelLease) error {
-	if lease.RuntimeID == "" || lease.UserID <= 0 || lease.CredentialKeyID == "" || lease.LeaseHash == "" {
+	if lease.RuntimeID == "" || lease.UserID <= 0 || lease.LeaseHash == "" {
 		return ErrConflict
 	}
 	if lease.IssuedAt.IsZero() {

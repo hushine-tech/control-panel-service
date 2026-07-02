@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 )
@@ -98,6 +99,62 @@ func TestDeliverDatasetChunkSendsRuntimeChannelDataFrame(t *testing.T) {
 		frame.GetDatasetChunk().GetSequence() != 1 ||
 		!frame.GetDatasetChunk().GetEnd() {
 		t.Fatalf("dataset chunk = %+v", frame.GetDatasetChunk())
+	}
+}
+
+func TestDeliverOrderLifecycleBatchSendsRuntimeChannelDataFrame(t *testing.T) {
+	svc := NewWithInstanceID(&stubRepo{}, "cp-1")
+	svc.SetClock(func() time.Time { return time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC) })
+	stream, err := svc.registry.Register(AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "rt-1",
+		Role:      domain.CredentialRoleExecutor,
+	}, svc.now().UTC())
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	var sent []*cpv1.RuntimeFrame
+	stream.setSender(func(frame *cpv1.RuntimeFrame) error {
+		sent = append(sent, frame)
+		return nil
+	})
+	packed, err := anypb.New(&orderv1.OrderLifecycleEventEntry{
+		EventId:   100,
+		SessionId: "sess-1",
+		AccountId: 7,
+		VenueId:   10,
+		EventType: "fill",
+	})
+	if err != nil {
+		t.Fatalf("anypb.New: %v", err)
+	}
+
+	err = svc.DeliverOrderLifecycleBatch(context.Background(), OrderLifecycleDeliveryBatch{
+		UserID:    42,
+		RuntimeID: "rt-1",
+		SessionID: "sess-1",
+		Sequence:  100,
+		Events:    []*anypb.Any{packed},
+	})
+	if err != nil {
+		t.Fatalf("DeliverOrderLifecycleBatch: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("sent frames = %d, want 1", len(sent))
+	}
+	frame := sent[0]
+	if frame.GetFrameType() != cpv1.FrameType_FRAME_TYPE_ORDER_UPDATE_BATCH {
+		t.Fatalf("frame_type = %v, want ORDER_UPDATE_BATCH", frame.GetFrameType())
+	}
+	if frame.GetOrderUpdateBatch().GetSessionId() != "sess-1" ||
+		frame.GetOrderUpdateBatch().GetStreamKey() != "order_lifecycle" ||
+		frame.GetOrderUpdateBatch().GetSequence() != 100 {
+		t.Fatalf("order update batch = %+v", frame.GetOrderUpdateBatch())
+	}
+	if len(frame.GetOrderUpdateBatch().GetEvents()) != 1 {
+		t.Fatalf("events = %d, want 1", len(frame.GetOrderUpdateBatch().GetEvents()))
 	}
 }
 

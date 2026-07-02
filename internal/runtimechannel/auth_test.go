@@ -2,14 +2,19 @@ package runtimechannel
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +24,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -27,6 +34,7 @@ import (
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
@@ -420,8 +428,8 @@ func TestVerifyBareHelloAcceptedWhenDebugGateEnabled(t *testing.T) {
 	if got.UserID != 99 || got.RuntimeID != "bare-runtime-1" || got.Source != domain.RuntimeSourceBare {
 		t.Fatalf("authenticated runtime = %+v, want bare runtime for user 99", got)
 	}
-	if got.Role != domain.CredentialRoleDebugger {
-		t.Fatalf("role = %q, want debugger", got.Role)
+	if got.Role != domain.CredentialRoleExecutor {
+		t.Fatalf("role = %q, want executor", got.Role)
 	}
 	if got.KeyID != "" {
 		t.Fatalf("key_id = %q, want empty for bare runtime", got.KeyID)
@@ -470,6 +478,30 @@ func TestRuntimeChannelRegistersHostedInternalCredentialAsHostedRuntime(t *testi
 	}
 }
 
+func TestRuntimeChannelRejectsHelloWhenTLSIdentityDoesNotMatch(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
+	svc := New(repo)
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	stream.ctx = contextWithRuntimePeerIdentity(t, stream.ctx, runtimecert.RuntimeIdentity{
+		RuntimeID: "different-runtime",
+		UserID:    42,
+		Source:    domain.RuntimeSourceSelfHosted,
+		Role:      string(domain.CredentialRoleExecutor),
+		Name:      "desk",
+	})
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+	if err := <-done; status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Handle err = %v, want PermissionDenied", err)
+	}
+}
+
 func TestRuntimeChannelRegistersBareRuntimeWhenDebugGateEnabled(t *testing.T) {
 	now := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
 	repo := &stubRepo{}
@@ -496,9 +528,9 @@ func TestRuntimeChannelRegistersBareRuntimeWhenDebugGateEnabled(t *testing.T) {
 	}
 	if repo.createdRuntime.Source != domain.RuntimeSourceBare ||
 		repo.createdRuntime.UserID != 99 ||
-		repo.createdRuntime.Role != domain.CredentialRoleDebugger ||
+		repo.createdRuntime.Role != domain.CredentialRoleExecutor ||
 		repo.createdRuntime.CredentialKeyID != "" {
-		t.Fatalf("registered runtime = %+v, want bare debugger for user 99 without credential", repo.createdRuntime)
+		t.Fatalf("registered runtime = %+v, want bare executor for user 99 without credential", repo.createdRuntime)
 	}
 }
 
@@ -729,7 +761,7 @@ func TestRuntimeChannelTerminalRuntimeRejectsFingerprintResume(t *testing.T) {
 	}
 }
 
-func TestRuntimeChannelHeartbeatRotatesFingerprint(t *testing.T) {
+func TestRuntimeChannelHeartbeatRefreshesFingerprintWithoutRotating(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
 	svc := NewWithInstanceID(repo, "cp-heartbeat")
 	svc.SetClock(func() time.Time { return now })
@@ -758,11 +790,24 @@ func TestRuntimeChannelHeartbeatRotatesFingerprint(t *testing.T) {
 	}
 	hbAck := waitForFrameType(t, stream, cpv1.FrameType_FRAME_TYPE_HEARTBEAT_ACK)
 	next := hbAck.GetHeartbeatAck().GetFingerprint()
-	if next == "" || next == first {
-		t.Fatalf("heartbeat ack fingerprint = %q, want rotated", next)
+	if next != first {
+		t.Fatalf("heartbeat ack fingerprint = %q, want original fingerprint", next)
 	}
-	if repo.rotatedRuntimeID != "runtime-1" || repo.rotatedLeaseHash != hashRuntimeChannelToken(next) {
-		t.Fatalf("rotated lease runtime/hash = %q/%q, want runtime-1 hash(next)", repo.rotatedRuntimeID, repo.rotatedLeaseHash)
+	if repo.rotatedRuntimeID != "runtime-1" || repo.rotatedLeaseHash != hashRuntimeChannelToken(first) {
+		t.Fatalf("refreshed lease runtime/hash = %q/%q, want runtime-1 original hash", repo.rotatedRuntimeID, repo.rotatedLeaseHash)
+	}
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HEARTBEAT,
+		Payload: &cpv1.RuntimeFrame_Heartbeat{
+			Heartbeat: &cpv1.Heartbeat{
+				SentAtUnixMs: now.Add(2 * time.Second).UnixMilli(),
+				Fingerprint:  first,
+			},
+		},
+	}
+	secondAck := waitForFrameType(t, stream, cpv1.FrameType_FRAME_TYPE_HEARTBEAT_ACK)
+	if got := secondAck.GetHeartbeatAck().GetFingerprint(); got != first {
+		t.Fatalf("second heartbeat ack fingerprint = %q, want original fingerprint", got)
 	}
 	stream.cancel()
 	_ = <-done
@@ -803,6 +848,21 @@ func TestRegistryRejectsSameCredentialForDifferentRuntime(t *testing.T) {
 	}
 	if _, err := registry.Register(AuthenticatedRuntime{KeyID: "key-1", RuntimeID: "runtime-b"}, now); !errors.Is(err, ErrRuntimeCredentialConnected) {
 		t.Fatalf("second Register err = %v, want ErrRuntimeCredentialConnected", err)
+	}
+}
+
+func TestRegistryAllowsMultipleBareRuntimesWithoutCredentialKey(t *testing.T) {
+	registry := NewRegistry()
+	now := time.Unix(1_700_000_000, 0)
+	if _, err := registry.Register(AuthenticatedRuntime{RuntimeID: "bare-a", Source: domain.RuntimeSourceBare}, now); err != nil {
+		t.Fatalf("first bare Register: %v", err)
+	}
+	if _, err := registry.Register(AuthenticatedRuntime{RuntimeID: "bare-b", Source: domain.RuntimeSourceBare}, now); err != nil {
+		t.Fatalf("second bare Register: %v", err)
+	}
+	snap := registry.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("snapshot len = %d, want 2: %+v", len(snap), snap)
 	}
 }
 
@@ -1029,6 +1089,53 @@ func TestInvokeStrategyUnaryByRuntimeIDSupportsGetStrategyStatus(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("InvokeStrategyUnaryByRuntimeID: %v", err)
+	}
+}
+
+func TestInvokeStrategyUnaryByRuntimeIDDoesNotAbortTimedOutStatusPoll(t *testing.T) {
+	svc := New(&stubRepo{cred: domain.RuntimeCredential{KeyID: "key-1"}})
+	now := time.Unix(1_700_000_000, 0)
+	stream := mustRegister(t, svc.registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-status-timeout",
+		Name:      "default",
+		Source:    domain.RuntimeSourceHosted,
+	}, now)
+	sent := make(chan *cpv1.RuntimeFrame, 2)
+	stream.setSender(func(frame *cpv1.RuntimeFrame) error {
+		sent <- frame
+		return nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.InvokeStrategyUnaryByRuntimeID(
+			ctx,
+			42,
+			"runtime-status-timeout",
+			"GetStrategyStatus",
+			&strategyv1.GetStrategyStatusRequest{SessionId: "sess-1", UserId: 42, RuntimeId: "runtime-status-timeout"},
+			&strategyv1.GetStrategyStatusResponse{},
+		)
+	}()
+
+	req := <-sent
+	if req.GetFrameType() != cpv1.FrameType_FRAME_TYPE_REQUEST || req.GetRequest().GetMethod() != "GetStrategyStatus" {
+		t.Fatalf("sent frame = %+v, want GetStrategyStatus request", req)
+	}
+	if err := <-done; status.Code(err) != codes.DeadlineExceeded {
+		t.Fatalf("status poll err = %v, want DeadlineExceeded", err)
+	}
+	select {
+	case frame := <-sent:
+		if frame.GetFrameType() == cpv1.FrameType_FRAME_TYPE_ABORT {
+			t.Fatalf("timed out GetStrategyStatus sent abort frame: %+v", frame)
+		}
+		t.Fatalf("unexpected extra frame after status timeout: %+v", frame)
+	default:
 	}
 }
 
@@ -1302,6 +1409,69 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequest(t *testing.T) 
 	}
 }
 
+func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
+	svc := New(repo)
+	called := make(chan struct{}, 1)
+	dispatcher := &fakePlatformDispatcher{
+		resp:   &accountv1.UpdateSessionResponse{},
+		called: called,
+	}
+	svc.SetPlatformDispatcher(dispatcher)
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+	waitForHelloAck(t, stream)
+
+	updateReq := &accountv1.UpdateSessionRequest{
+		SessionId:     "sess-finished",
+		Status:        "finished",
+		BarsProcessed: 2047,
+		Error:         "",
+	}
+	payload, err := anypb.New(updateReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_STATUS_PATCH,
+		Payload: &cpv1.RuntimeFrame_StatusPatch{
+			StatusPatch: &cpv1.RuntimeStatusPatch{
+				RuntimeId: "runtime-1",
+				SessionId: "sess-finished",
+				Status:    "finished",
+				Payload:   payload,
+			},
+		},
+	}
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("runtime status patch was not dispatched")
+	}
+	if dispatcher.method != "account.UpdateSession" {
+		t.Fatalf("dispatcher method = %q, want account.UpdateSession", dispatcher.method)
+	}
+	got := &accountv1.UpdateSessionRequest{}
+	if err := dispatcher.payload.UnmarshalTo(got); err != nil {
+		t.Fatalf("unpack dispatched update: %v", err)
+	}
+	if got.GetSessionId() != "sess-finished" || got.GetStatus() != "finished" || got.GetBarsProcessed() != 2047 || got.GetRuntimeId() != "runtime-1" {
+		t.Fatalf("dispatched update = %+v", got)
+	}
+	stream.cancel()
+	if err := <-done; status.Code(err) != codes.Unavailable {
+		t.Fatalf("Handle err = %v, want Unavailable after cancel", err)
+	}
+}
+
 func TestRuntimeChannelNoFrameTimeoutDeclaresStreamDead(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := New(repo)
@@ -1383,16 +1553,25 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequestWithTraceContex
 }
 
 type fakePlatformDispatcher struct {
-	rt     AuthenticatedRuntime
-	method string
-	resp   proto.Message
-	ctx    context.Context
+	rt      AuthenticatedRuntime
+	method  string
+	payload *anypb.Any
+	resp    proto.Message
+	ctx     context.Context
+	called  chan struct{}
 }
 
 func (f *fakePlatformDispatcher) DispatchRuntimeRequest(ctx context.Context, rt AuthenticatedRuntime, method string, payload *anypb.Any) (proto.Message, error) {
 	f.ctx = ctx
 	f.rt = rt
 	f.method = method
+	f.payload = payload
+	if f.called != nil {
+		select {
+		case f.called <- struct{}{}:
+		default:
+		}
+	}
 	if payload == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing payload")
 	}
@@ -1467,6 +1646,87 @@ func (s *fakeRuntimeChannelStream) SetHeader(metadata.MD) error  { return nil }
 func (s *fakeRuntimeChannelStream) SetTrailer(metadata.MD)       {}
 func (s *fakeRuntimeChannelStream) SendMsg(any) error            { return nil }
 func (s *fakeRuntimeChannelStream) RecvMsg(any) error            { return nil }
+
+func contextWithRuntimePeerIdentity(t *testing.T, ctx context.Context, id runtimecert.RuntimeIdentity) context.Context {
+	t.Helper()
+	caCertPEM, caKeyPEM := mustRuntimeChannelTestCA(t)
+	signer, err := runtimecert.NewSignerFromPEM(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatalf("NewSignerFromPEM: %v", err)
+	}
+	csrPEM := mustRuntimeChannelCSR(t, id.RuntimeID)
+	_, cert, err := signer.SignRuntimeClientCertificate(runtimecert.SignRequest{
+		CSRPEM:    csrPEM,
+		RuntimeID: id.RuntimeID,
+		UserID:    id.UserID,
+		Source:    id.Source,
+		Role:      id.Role,
+		Name:      id.Name,
+		TTL:       time.Hour,
+		Now:       time.Unix(1_700_000_000, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("SignRuntimeClientCertificate: %v", err)
+	}
+	return peer.NewContext(ctx, &peer.Peer{
+		AuthInfo: credentials.TLSInfo{
+			State: tls.ConnectionState{
+				PeerCertificates: []*x509.Certificate{cert},
+			},
+		},
+	})
+}
+
+func mustRuntimeChannelCSR(t *testing.T, commonName string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate runtime key: %v", err)
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: commonName},
+	}, key)
+	if err != nil {
+		t.Fatalf("create csr: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+}
+
+func mustRuntimeChannelTestCA(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ca key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          serialForRuntimeChannelTest(t),
+		Subject:               pkix.Name{CommonName: "hushine-runtime-client-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create ca: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal ca key: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func serialForRuntimeChannelTest(t *testing.T) *big.Int {
+	t.Helper()
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+	return serial
+}
 
 func waitForHelloAck(t *testing.T, stream *fakeRuntimeChannelStream) *cpv1.RuntimeFrame {
 	t.Helper()

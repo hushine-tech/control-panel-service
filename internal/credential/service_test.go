@@ -2,15 +2,22 @@ package credential
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"math/big"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 )
 
 // stubRepo is an in-memory Repository for unit tests.
@@ -100,10 +107,59 @@ func (c *stubCloser) CloseStreamsForKey(_ context.Context, keyID string) (int, i
 	return c.streams, c.runtimes, nil
 }
 
+func newCredentialServiceWithSigner(t *testing.T, repo *stubRepo, closer RevokeStreamCloser) *Service {
+	t.Helper()
+	caCertPEM, caKeyPEM := mustCredentialTestCA(t)
+	signer, err := runtimecert.NewSignerFromPEM(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatalf("NewSignerFromPEM: %v", err)
+	}
+	svc := New(repo, closer)
+	svc.SetCertificateSigner(signer)
+	svc.SetRuntimeServerCAPEM([]byte("runtime-channel-server-ca"))
+	return svc
+}
+
+func mustCredentialTestCA(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ca key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          serialForCredentialTest(t),
+		Subject:               pkix.Name{CommonName: "hushine-runtime-client-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create ca: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal ca key: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func serialForCredentialTest(t *testing.T) *big.Int {
+	t.Helper()
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+	return serial
+}
+
 // ── Issue ──────────────────────────────────────────────────────────────────
 
 func TestIssue_HappyPath(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	res, err := svc.Issue(context.Background(), IssueArgs{UserID: 42, Label: "home VPS", Role: domain.CredentialRoleExecutor})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -165,8 +221,128 @@ func TestIssue_HappyPath(t *testing.T) {
 	}
 }
 
-func TestIssue_CanCreateDebuggerCredential(t *testing.T) {
+func TestIssue_ReturnsRuntimeClientCertificateBundle(t *testing.T) {
+	repo := newStubRepo()
+	svc := newCredentialServiceWithSigner(t, repo, nil)
+
+	res, err := svc.Issue(context.Background(), IssueArgs{
+		UserID: 42,
+		Label:  "desk",
+		Role:   domain.CredentialRoleDebugger,
+	})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if res.ClientCertPEM == "" || res.ClientKeyPEM == "" || res.ServerCAPEM == "" {
+		t.Fatalf("bundle missing cert/key/ca: %+v", res)
+	}
+	if res.ServerCAPEM != "runtime-channel-server-ca" {
+		t.Fatalf("ServerCAPEM = %q, want runtime channel server CA", res.ServerCAPEM)
+	}
+	if res.ClientCertExpiresAt == nil {
+		t.Fatal("client cert expiry missing")
+	}
+	stored := repo.creds[res.KeyID]
+	if stored.ClientCertFingerprint == "" || stored.ClientCertExpiresAt == nil {
+		t.Fatalf("stored credential missing cert metadata: %+v", stored)
+	}
+	if stored.Issuer != domain.RuntimeCredentialIssuerUser {
+		t.Fatalf("stored issuer = %q, want user", stored.Issuer)
+	}
+}
+
+func TestIssue_SelfHostedCertificateUsesDefaultRuntimeID(t *testing.T) {
+	repo := newStubRepo()
+	svc := newCredentialServiceWithSigner(t, repo, nil)
+
+	res, err := svc.Issue(context.Background(), IssueArgs{
+		UserID: 42,
+		Label:  "desk",
+		Role:   domain.CredentialRoleExecutor,
+	})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	cert := mustParseCredentialTestCertificate(t, []byte(res.ClientCertPEM))
+	id, err := runtimecert.IdentityFromCertificate(cert)
+	if err != nil {
+		t.Fatalf("IdentityFromCertificate: %v", err)
+	}
+	wantRuntimeID := "selfhosted-" + res.KeyID
+	if id.RuntimeID != wantRuntimeID {
+		t.Fatalf("cert runtime_id = %q, want %q", id.RuntimeID, wantRuntimeID)
+	}
+	if id.UserID != 42 || id.Source != domain.RuntimeSourceSelfHosted || id.Role != string(domain.CredentialRoleExecutor) {
+		t.Fatalf("cert identity = %+v", id)
+	}
+}
+
+func TestIssueHostedInternalRuntimeCredential_CertificateUsesRuntimeID(t *testing.T) {
+	repo := newStubRepo()
+	svc := newCredentialServiceWithSigner(t, repo, nil)
+
+	res, err := svc.IssueHostedInternalRuntimeCredential(context.Background(), 42, "rt-hosted-1", "hosted-test")
+	if err != nil {
+		t.Fatalf("IssueHostedInternalRuntimeCredential: %v", err)
+	}
+	cert := mustParseCredentialTestCertificate(t, []byte(res.ClientCertPEM))
+	id, err := runtimecert.IdentityFromCertificate(cert)
+	if err != nil {
+		t.Fatalf("IdentityFromCertificate: %v", err)
+	}
+	if id.RuntimeID != "rt-hosted-1" {
+		t.Fatalf("cert runtime_id = %q, want rt-hosted-1", id.RuntimeID)
+	}
+	if id.UserID != 42 || id.Source != domain.RuntimeSourceHosted || id.Role != string(domain.CredentialRoleExecutor) {
+		t.Fatalf("cert identity = %+v", id)
+	}
+	if res.KeyID == id.RuntimeID {
+		t.Fatalf("hosted cert runtime_id unexpectedly equals key_id %q", res.KeyID)
+	}
+}
+
+func TestIssue_RejectsMissingCertificateSigner(t *testing.T) {
 	svc := New(newStubRepo(), nil)
+	svc.SetRuntimeServerCAPEM([]byte("runtime-channel-server-ca"))
+	_, err := svc.Issue(context.Background(), IssueArgs{UserID: 42, Role: domain.CredentialRoleExecutor})
+	if !errors.Is(err, ErrCertificateSignerUnavailable) {
+		t.Fatalf("err = %v, want ErrCertificateSignerUnavailable", err)
+	}
+}
+
+func mustParseCredentialTestCertificate(t *testing.T, certPEM []byte) *x509.Certificate {
+	t.Helper()
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatal("certificate PEM block missing")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	return cert
+}
+
+func TestIssue_RejectsMissingRuntimeServerCA(t *testing.T) {
+	caCertPEM, caKeyPEM := mustCredentialTestCA(t)
+	signer, err := runtimecert.NewSignerFromPEM(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatalf("NewSignerFromPEM: %v", err)
+	}
+	svc := New(newStubRepo(), nil)
+	svc.SetCertificateSigner(signer)
+
+	_, err = svc.Issue(context.Background(), IssueArgs{UserID: 42, Role: domain.CredentialRoleExecutor})
+	if !errors.Is(err, ErrCertificateSignerUnavailable) {
+		t.Fatalf("err = %v, want ErrCertificateSignerUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "runtime server ca") {
+		t.Fatalf("err = %v, want runtime server ca", err)
+	}
+}
+
+func TestIssue_CanCreateDebuggerCredential(t *testing.T) {
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	res, err := svc.Issue(context.Background(), IssueArgs{UserID: 42, Label: "debug laptop", Role: domain.CredentialRoleDebugger})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -177,7 +353,7 @@ func TestIssue_CanCreateDebuggerCredential(t *testing.T) {
 }
 
 func TestIssue_RejectsInvalidRole(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	_, err := svc.Issue(context.Background(), IssueArgs{UserID: 42, Role: "admin"})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Errorf("err = %v, want ErrInvalidArgument", err)
@@ -185,7 +361,7 @@ func TestIssue_RejectsInvalidRole(t *testing.T) {
 }
 
 func TestIssue_RejectsZeroUserID(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	_, err := svc.Issue(context.Background(), IssueArgs{UserID: 0, Role: domain.CredentialRoleExecutor})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Errorf("err = %v, want ErrInvalidArgument", err)
@@ -193,7 +369,7 @@ func TestIssue_RejectsZeroUserID(t *testing.T) {
 }
 
 func TestIssue_TrimsLabel(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	res, err := svc.Issue(context.Background(), IssueArgs{UserID: 1, Label: "   spaced   ", Role: domain.CredentialRoleExecutor})
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -207,7 +383,7 @@ func TestIssue_TrimsLabel(t *testing.T) {
 
 func TestList_ExcludesRevokedByDefault(t *testing.T) {
 	repo := newStubRepo()
-	svc := New(repo, nil)
+	svc := newCredentialServiceWithSigner(t, repo, nil)
 	a, _ := svc.Issue(context.Background(), IssueArgs{UserID: 7, Role: domain.CredentialRoleExecutor})
 	b, _ := svc.Issue(context.Background(), IssueArgs{UserID: 7, Label: "second", Role: domain.CredentialRoleExecutor})
 	if _, err := svc.Revoke(context.Background(), 7, b.KeyID); err != nil {
@@ -278,7 +454,7 @@ func TestList_RejectsZeroUserID(t *testing.T) {
 func TestRevoke_HappyPath(t *testing.T) {
 	repo := newStubRepo()
 	closer := &stubCloser{streams: 2, runtimes: 3}
-	svc := New(repo, closer)
+	svc := newCredentialServiceWithSigner(t, repo, closer)
 	issued, _ := svc.Issue(context.Background(), IssueArgs{UserID: 9, Role: domain.CredentialRoleExecutor})
 
 	res, err := svc.Revoke(context.Background(), 9, issued.KeyID)
@@ -305,7 +481,7 @@ func TestRevoke_NotFound(t *testing.T) {
 }
 
 func TestRevoke_PermissionDenied(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	issued, _ := svc.Issue(context.Background(), IssueArgs{UserID: 1, Role: domain.CredentialRoleExecutor})
 	_, err := svc.Revoke(context.Background(), 99, issued.KeyID)
 	if !errors.Is(err, ErrPermissionDenied) {
@@ -314,7 +490,7 @@ func TestRevoke_PermissionDenied(t *testing.T) {
 }
 
 func TestRevoke_Idempotent(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	issued, _ := svc.Issue(context.Background(), IssueArgs{UserID: 1, Role: domain.CredentialRoleExecutor})
 	_, err := svc.Revoke(context.Background(), 1, issued.KeyID)
 	if err != nil {
@@ -332,7 +508,7 @@ func TestRevoke_Idempotent(t *testing.T) {
 // ── Get ────────────────────────────────────────────────────────────────────
 
 func TestGet_HappyPath(t *testing.T) {
-	svc := New(newStubRepo(), nil)
+	svc := newCredentialServiceWithSigner(t, newStubRepo(), nil)
 	issued, _ := svc.Issue(context.Background(), IssueArgs{UserID: 1, Role: domain.CredentialRoleExecutor})
 	got, err := svc.Get(context.Background(), issued.KeyID)
 	if err != nil {

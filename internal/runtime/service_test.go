@@ -2,8 +2,15 @@ package runtime
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +21,72 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
 )
 
 var fixedNow = time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+
+func mustRuntimeCertSigner(t *testing.T) *runtimecert.Signer {
+	t.Helper()
+	caCertPEM, caKeyPEM := mustRuntimeServiceTestCA(t)
+	signer, err := runtimecert.NewSignerFromPEM(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatalf("NewSignerFromPEM: %v", err)
+	}
+	return signer
+}
+
+func mustRuntimeCSRPEM(t *testing.T, commonName string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate runtime key: %v", err)
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: commonName},
+	}, key)
+	if err != nil {
+		t.Fatalf("create csr: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
+}
+
+func mustRuntimeServiceTestCA(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ca key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          serialForRuntimeServiceTest(t),
+		Subject:               pkix.Name{CommonName: "hushine-runtime-client-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create ca: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal ca key: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+}
+
+func serialForRuntimeServiceTest(t *testing.T) *big.Int {
+	t.Helper()
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+	return serial
+}
 
 func insertConnectedRuntime(t *testing.T, repo *stubRepo, rt domain.Runtime, atOpt ...time.Time) domain.Runtime {
 	t.Helper()
@@ -238,6 +307,60 @@ func TestGetRuntime_OwnershipChecked(t *testing.T) {
 	_, err = svc.GetRuntime(context.Background(), GetRuntimeArgs{UserID: 7, RuntimeID: rt.RuntimeID})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-user err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestBootstrapBareRuntimeCertificateRejectsIPOutsideAllowlist(t *testing.T) {
+	repo := newStubRepo()
+	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{
+		DebugBareRuntimeEnabled:  true,
+		BareBootstrapIPAllowlist: []string{"127.0.0.1/32"},
+		BareCertificateTTL:       time.Hour,
+	}, fixedNow)
+	svc.runtimeCertSigner = mustRuntimeCertSigner(t)
+	svc.runtimeServerCAPEM = []byte("runtime-channel-server-ca")
+
+	_, err := svc.BootstrapBareRuntimeCertificate(context.Background(), BootstrapBareRuntimeCertificateArgs{
+		UserID:    42,
+		RuntimeID: "bare-42-test",
+		Name:      "bare-debug-test",
+		CSRPEM:    string(mustRuntimeCSRPEM(t, "bare-42-test")),
+		RemoteIP:  "10.0.0.10",
+	})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+}
+
+func TestBootstrapBareRuntimeCertificateIssuesExecutorCredential(t *testing.T) {
+	repo := newStubRepo()
+	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{
+		DebugBareRuntimeEnabled:  true,
+		BareBootstrapIPAllowlist: []string{"127.0.0.1/32"},
+		BareCertificateTTL:       time.Hour,
+	}, fixedNow)
+	svc.runtimeCertSigner = mustRuntimeCertSigner(t)
+	svc.runtimeServerCAPEM = []byte("runtime-channel-server-ca")
+
+	res, err := svc.BootstrapBareRuntimeCertificate(context.Background(), BootstrapBareRuntimeCertificateArgs{
+		UserID:    42,
+		RuntimeID: "bare-42-test",
+		Name:      "bare-debug-test",
+		CSRPEM:    string(mustRuntimeCSRPEM(t, "bare-42-test")),
+		RemoteIP:  "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("BootstrapBareRuntimeCertificate: %v", err)
+	}
+	if res.ClientCertPEM == "" || res.ServerCAPEM == "" {
+		t.Fatalf("bootstrap response missing cert material: %+v", res)
+	}
+	if res.ServerCAPEM != "runtime-channel-server-ca" {
+		t.Fatalf("ServerCAPEM = %q, want runtime channel server CA", res.ServerCAPEM)
+	}
+	cred := repo.credsByRuntime["bare-42-test"]
+	if cred.Role != domain.CredentialRoleExecutor || cred.Issuer != domain.RuntimeCredentialIssuerBareDebug {
+		t.Fatalf("credential = %+v, want bare executor issuer", cred)
 	}
 }
 
@@ -1011,6 +1134,7 @@ func TestEnsureHostedRuntime_InjectsHostedInternalCredential(t *testing.T) {
 	}
 	svc := makeServiceWithProvisioner(repo, "pro", prov, fixedNow, 5)
 	svc.hostedCredentialIssuer = issuer
+	svc.runtimeChannelTLSServerName = "runtime-channel.local"
 
 	_, err := svc.EnsureHostedRuntime(context.Background(), EnsureHostedRuntimeArgs{
 		UserID: 42, Name: "hosted-credential-test", ResourceProfile: "small",
@@ -1026,6 +1150,9 @@ func TestEnsureHostedRuntime_InjectsHostedInternalCredential(t *testing.T) {
 	}
 	if prov.lastPlan.RuntimeCredentialPrivateKeyPEM != "hosted-private-key" {
 		t.Fatalf("plan credential private key not injected")
+	}
+	if prov.lastPlan.RuntimeChannelTLSServerName != "runtime-channel.local" {
+		t.Fatalf("plan TLS server name = %q", prov.lastPlan.RuntimeChannelTLSServerName)
 	}
 }
 
@@ -1488,6 +1615,36 @@ func TestEnsureHostedRuntime_RegistrationTimeout(t *testing.T) {
 	}
 	if prov.deprovisions != 1 {
 		t.Errorf("provisioner deprovisions = %d, want 1 (cleanup on timeout)", prov.deprovisions)
+	}
+}
+
+func TestEnsureHostedRuntime_RegistrationTimeoutIncludesProvisionerDiagnostics(t *testing.T) {
+	repo := newStubRepo()
+	prov := &fakeProvisioner{
+		repo:        repo,
+		onProvision: "ok_no_register",
+		diagnostics: "inspect: state=exited exit=1 | logs: Failed to spawn: hushine-runtime",
+	}
+	svc := makeServiceWithProvisioner(repo, "pro", prov, fixedNow, 1)
+	svc.SetClock(time.Now)
+
+	_, err := svc.EnsureHostedRuntime(context.Background(), EnsureHostedRuntimeArgs{
+		UserID: 42, Name: "diag", ResourceProfile: "small",
+	})
+	if !errors.Is(err, ErrRegistrationTimeout) {
+		t.Fatalf("err = %v, want ErrRegistrationTimeout", err)
+	}
+	if !strings.Contains(err.Error(), "runtime diagnostics: inspect: state=exited exit=1") {
+		t.Fatalf("err = %v, want diagnostics", err)
+	}
+	if !strings.Contains(err.Error(), "Failed to spawn: hushine-runtime") {
+		t.Fatalf("err = %v, want container logs", err)
+	}
+	if prov.diagnosticsCalls != 1 {
+		t.Fatalf("diagnostics calls = %d, want 1", prov.diagnosticsCalls)
+	}
+	if prov.deprovisions != 1 {
+		t.Fatalf("deprovisions = %d, want 1", prov.deprovisions)
 	}
 }
 

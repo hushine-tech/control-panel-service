@@ -3,10 +3,12 @@ package runtimechannel
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +66,53 @@ func TestServerTLSCredentialsRejectsInvalidClientCA(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no valid certificates") {
 		t.Fatalf("err = %v, want invalid client ca rejection", err)
+	}
+}
+
+func TestServerTLSCredentialsRequiresClientCertificateWhenClientCAConfigured(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeTestCertificate(t, dir)
+
+	creds, err := ServerTLSCredentials(ServerTLSConfig{
+		Enabled:      true,
+		CertFile:     certFile,
+		KeyFile:      keyFile,
+		ClientCAFile: certFile,
+	})
+	if err != nil {
+		t.Fatalf("ServerTLSCredentials: %v", err)
+	}
+
+	serverConn, clientConn := net.Pipe()
+	serverErr := make(chan error, 1)
+	go func() {
+		_, _, err := creds.ServerHandshake(serverConn)
+		serverErr <- err
+	}()
+
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		t.Fatal("server cert did not parse as root")
+	}
+	client := tls.Client(clientConn, &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
+		ServerName: "localhost",
+	})
+	_ = client.Handshake()
+	_ = client.Close()
+
+	select {
+	case err := <-serverErr:
+		if err == nil {
+			t.Fatal("server handshake succeeded without client certificate")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server handshake did not finish")
 	}
 }
 

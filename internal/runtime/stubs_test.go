@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,9 @@ type fakeProvisioner struct {
 	deprovisions       int
 	deprovisionHandles []string
 	deprovisionErr     error
+	diagnostics        string
+	diagnosticsErr     error
+	diagnosticsCalls   int
 }
 
 type fakeHostedCredentialIssuer struct {
@@ -150,6 +154,15 @@ func (f *fakeHostedCredentialIssuer) IssueHostedInternalRuntimeCredential(_ cont
 	if issued.PrivateKeyPEM == "" {
 		issued.PrivateKeyPEM = "private-key-pem"
 	}
+	if issued.ClientCertPEM == "" {
+		issued.ClientCertPEM = "client-cert-pem"
+	}
+	if issued.ClientKeyPEM == "" {
+		issued.ClientKeyPEM = "client-key-pem"
+	}
+	if issued.ServerCAPEM == "" {
+		issued.ServerCAPEM = "server-ca-pem"
+	}
 	issued.Role = domain.CredentialRoleExecutor
 	issued.HostedInternal = true
 	return issued, nil
@@ -161,18 +174,27 @@ func (f *fakeProvisioner) Deprovision(_ context.Context, handle string) error {
 	return f.deprovisionErr
 }
 
+func (f *fakeProvisioner) Diagnostics(_ context.Context, _ string) (string, error) {
+	f.diagnosticsCalls++
+	return f.diagnostics, f.diagnosticsErr
+}
+
 // stubRepo is the in-memory repository.Repository used by service tests.
 // It is intentionally permissive: every method is straightforward and only
 // implements the invariants the service code depends on (NotFound on miss,
 // Conflict on duplicate hosted slot / credential binding).
 type stubRepo struct {
-	mu       sync.Mutex
-	runtimes map[string]domain.Runtime
+	mu             sync.Mutex
+	runtimes       map[string]domain.Runtime
+	credentials    map[string]domain.RuntimeCredential
+	credsByRuntime map[string]domain.RuntimeCredential
 }
 
 func newStubRepo() *stubRepo {
 	return &stubRepo{
-		runtimes: map[string]domain.Runtime{},
+		runtimes:       map[string]domain.Runtime{},
+		credentials:    map[string]domain.RuntimeCredential{},
+		credsByRuntime: map[string]domain.RuntimeCredential{},
 	}
 }
 
@@ -594,9 +616,10 @@ func makeService(repo *stubRepo, planCode string, plans map[string]config.Runtim
 	}
 	resolver := plan.NewResolver(constLookup{code: planCode}, plans, platform)
 	svc := New(repo, resolver, Config{
-		HeartbeatGrace: time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
-		DeathGrace:     time.Duration(platform.DeathGraceSeconds) * time.Second,
-		SessionClient:  &fakeSessionClient{},
+		HeartbeatGrace:  time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
+		DeathGrace:      time.Duration(platform.DeathGraceSeconds) * time.Second,
+		SessionClient:   &fakeSessionClient{},
+		RuntimePlatform: platform,
 	})
 	clock := now
 	svc.SetClock(func() time.Time { return clock })
@@ -677,7 +700,16 @@ func (c constLookup) GetUserPlanCode(_ context.Context, _ int64) (string, error)
 // out so stubRepo satisfies the full repository.Repository interface keeps
 // the runtime tests untouched.
 
-func (s *stubRepo) CreateRuntimeCredential(_ context.Context, _ domain.RuntimeCredential) error {
+func (s *stubRepo) CreateRuntimeCredential(_ context.Context, cred domain.RuntimeCredential) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.credentials[cred.KeyID]; ok {
+		return repository.ErrConflict
+	}
+	s.credentials[cred.KeyID] = cred
+	if cred.Issuer == domain.RuntimeCredentialIssuerBareDebug && strings.HasPrefix(cred.KeyID, "bare-") {
+		s.credsByRuntime[strings.TrimPrefix(cred.KeyID, "bare-")] = cred
+	}
 	return nil
 }
 

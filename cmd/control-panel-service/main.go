@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
 	"github.com/hushine-tech/control-panel-service/internal/runtime"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 )
@@ -67,6 +69,45 @@ func portFromBindAddr(bind string) string {
 		return ":" + bind
 	}
 	return bind[i:]
+}
+
+func runtimeClientCertSignerFromConfig(tlsCfg config.RuntimeChannelServerTLSConfig) (*runtimecert.Signer, error) {
+	certFile := strings.TrimSpace(tlsCfg.ClientCAFile)
+	keyFile := strings.TrimSpace(tlsCfg.ClientCAKeyFile)
+	if certFile == "" && keyFile == "" {
+		return nil, nil
+	}
+	if certFile == "" {
+		return nil, fmt.Errorf("runtime_channel_server.tls.client_ca_file is required when client_ca_key_file is set")
+	}
+	if keyFile == "" {
+		return nil, fmt.Errorf("runtime_channel_server.tls.client_ca_key_file is required when client_ca_file is set")
+	}
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime channel client ca file: %w", err)
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime channel client ca key file: %w", err)
+	}
+	signer, err := runtimecert.NewSignerFromPEM(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("load runtime channel client ca signer: %w", err)
+	}
+	return signer, nil
+}
+
+func runtimeServerCAPEMFromConfig(tlsCfg config.RuntimeChannelServerTLSConfig) ([]byte, error) {
+	certFile := strings.TrimSpace(tlsCfg.CertFile)
+	if certFile == "" {
+		return nil, nil
+	}
+	serverCAPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime channel server ca file: %w", err)
+	}
+	return serverCAPEM, nil
 }
 
 func main() {
@@ -154,7 +195,7 @@ func main() {
 		provisioner = provision.NoOpProvisioner{}
 		logger.Info(ctx, "system", "provisioner: noop (EnsureHostedRuntime will fail closed)")
 	case "docker":
-		dialAddr := cfg.Provisioning.Docker.ControlPanelDialAddr
+		dialAddr := cfg.Provisioning.Docker.RuntimeChannelDialAddr
 		if dialAddr == "" {
 			network := fallbackString(cfg.Provisioning.Docker.NetworkMode, "host")
 			if network == "host" {
@@ -162,10 +203,10 @@ func main() {
 				// 127.0.0.1 + the bind port works.
 				dialAddr = "127.0.0.1" + portFromBindAddr(cfg.RuntimeChannelServer.GRPCAddr)
 				logger.Info(ctx, "system", fmt.Sprintf(
-					"provisioning.docker.control_panel_dial_addr unset; defaulted to %q for host networking", dialAddr,
+					"provisioning.docker.runtime_channel_dial_addr unset; defaulted to %q for host networking", dialAddr,
 				))
 			} else {
-				log.Fatalf("provisioning.docker.control_panel_dial_addr is required when network_mode=%q (no safe default)", network)
+				log.Fatalf("provisioning.docker.runtime_channel_dial_addr is required when network_mode=%q (no safe default)", network)
 			}
 		}
 		provisioner = provision.NewDockerProvisioner(
@@ -174,7 +215,7 @@ func main() {
 			dialAddr,
 		)
 		logger.Info(ctx, "system", fmt.Sprintf(
-			"provisioner: docker image=%s network=%s control_panel_dial_addr=%s",
+			"provisioner: docker image=%s network=%s runtime_channel_dial_addr=%s",
 			cfg.Provisioning.Image,
 			fallbackString(cfg.Provisioning.Docker.NetworkMode, "host"),
 			dialAddr,
@@ -190,6 +231,26 @@ func main() {
 		},
 	})
 	credentialSvc := credential.New(repo, runtimeChannelSvc)
+	runtimeCertSigner, err := runtimeClientCertSignerFromConfig(cfg.RuntimeChannelServer.TLS)
+	if err != nil {
+		log.Fatalf("init runtime client cert signer: %v", err)
+	}
+	if runtimeCertSigner != nil {
+		credentialSvc.SetCertificateSigner(runtimeCertSigner)
+		logger.Info(ctx, "system", "runtime client certificate signer enabled")
+	} else {
+		logger.Warn(ctx, "system", "runtime client certificate signer disabled; runtime credential issuing will fail closed")
+	}
+	runtimeServerCAPEM, err := runtimeServerCAPEMFromConfig(cfg.RuntimeChannelServer.TLS)
+	if err != nil {
+		log.Fatalf("init runtime channel server ca bundle: %v", err)
+	}
+	if len(runtimeServerCAPEM) > 0 {
+		credentialSvc.SetRuntimeServerCAPEM(runtimeServerCAPEM)
+		logger.Info(ctx, "system", "runtime channel server ca bundle enabled")
+	} else {
+		logger.Warn(ctx, "system", "runtime channel server ca bundle disabled; runtime credential issuing will fail closed")
+	}
 
 	// ── Notification publisher ─────────────────────────────────────────────
 	var notificationPublisher cpnotify.Publisher = cpnotify.NoopPublisher{}
@@ -205,18 +266,26 @@ func main() {
 	} else {
 		logger.Info(ctx, "system", "notification publisher disabled")
 	}
+	runtimeChannelSvc.SetNotificationPublisher(notificationPublisher)
 
 	// ── Runtime control-plane service + gRPC handler ───────────────────────
-	runtimeSvc := runtime.New(repo, planResolver, runtime.Config{
-		HeartbeatGrace:         time.Duration(cfg.RuntimePlatform.HeartbeatGraceSeconds) * time.Second,
-		DeathGrace:             time.Duration(cfg.RuntimePlatform.DeathGraceSeconds) * time.Second,
-		Provisioning:           cfg.Provisioning,
-		Provisioner:            provisioner,
-		SessionClient:          accClient.ServiceClient(),
-		RuntimeStreamCloser:    runtimeChannelSvc,
-		HostedCredentialIssuer: credentialSvc,
-		NotificationPublisher:  notificationPublisher,
-	})
+	runtimeCfg := runtime.Config{
+		HeartbeatGrace:              time.Duration(cfg.RuntimePlatform.HeartbeatGraceSeconds) * time.Second,
+		DeathGrace:                  time.Duration(cfg.RuntimePlatform.DeathGraceSeconds) * time.Second,
+		RuntimePlatform:             cfg.RuntimePlatform,
+		Provisioning:                cfg.Provisioning,
+		Provisioner:                 provisioner,
+		SessionClient:               accClient.ServiceClient(),
+		RuntimeStreamCloser:         runtimeChannelSvc,
+		HostedCredentialIssuer:      credentialSvc,
+		NotificationPublisher:       notificationPublisher,
+		RuntimeServerCAPEM:          runtimeServerCAPEM,
+		RuntimeChannelTLSServerName: cfg.RuntimeChannelServer.TLS.ServerName,
+	}
+	if runtimeCertSigner != nil {
+		runtimeCfg.RuntimeCertSigner = runtimeCertSigner
+	}
+	runtimeSvc := runtime.New(repo, planResolver, runtimeCfg)
 	watchdogEvery := time.Duration(cfg.RuntimePlatform.HeartbeatGraceSeconds) * time.Second / 2
 	if watchdogEvery < 5*time.Second {
 		watchdogEvery = 5 * time.Second
@@ -288,6 +357,22 @@ func main() {
 		logger.Info(ctx, "system", fmt.Sprintf("market-data live delivery enabled brokers=%v", cfg.MarketData.KafkaBrokers))
 	} else {
 		logger.Info(ctx, "system", "market-data live delivery disabled")
+	}
+	if orderClient != nil {
+		orderLifecycleWorker := runtimechannel.NewOrderLifecycleDeliveryWorker(
+			marketDataRepo,
+			orderClient,
+			runtimeChannelSvc,
+			runtimechannel.OrderLifecycleDeliveryConfig{},
+		)
+		go func() {
+			if err := orderLifecycleWorker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn(ctx, "system", fmt.Sprintf("order lifecycle delivery worker stopped: %v", err))
+			}
+		}()
+		logger.Info(ctx, "system", "order lifecycle RuntimeChannel delivery enabled")
+	} else {
+		logger.Warn(ctx, "system", "order lifecycle RuntimeChannel delivery disabled: order.v1 client is not configured")
 	}
 
 	// ── HTTP Server (health + readiness) ──────────────────────────────────────

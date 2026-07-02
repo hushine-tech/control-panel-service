@@ -22,6 +22,8 @@ const (
 	EventRuntimeRecovered          = "runtime.recovered"
 	EventRuntimeHeartbeatLost      = "runtime.heartbeat_lost"
 	EventRuntimeHeartbeatRecovered = "runtime.heartbeat_recovered"
+	EventRuntimeDataDelayed        = "runtime.data_delayed"
+	EventRuntimeDataDropped        = "runtime.data_dropped"
 	EventRuntimeLiveDataDropped    = "runtime.live_data_dropped"
 	EventSessionStarted            = "session.started"
 	EventSessionStopped            = "session.stopped"

@@ -18,6 +18,8 @@ type RuntimeDataTransfer interface {
 	TransferLiveKlineBatch(ctx context.Context, batch LiveKlineDeliveryBatch) error
 }
 
+const orderLifecycleStreamKey = "order_lifecycle"
+
 type LiveKlineDeliveryBatch struct {
 	UserID    int64
 	RuntimeID string
@@ -39,6 +41,18 @@ type DatasetChunkDelivery struct {
 	Sequence  int64
 	Payload   []byte
 	End       bool
+}
+
+type OrderLifecycleDeliveryBatch struct {
+	UserID    int64
+	RuntimeID string
+	SessionID string
+	Sequence  int64
+	Events    []*anypb.Any
+}
+
+type OrderLifecycleDeliverer interface {
+	DeliverOrderLifecycleBatch(ctx context.Context, batch OrderLifecycleDeliveryBatch) error
 }
 
 func (s *Service) RunLiveDeliveryLoop(ctx context.Context, source LiveBatchSource) error {
@@ -91,6 +105,38 @@ func (s *Service) DeliverLiveKlineBatch(ctx context.Context, batch LiveKlineDeli
 			batch.Sequence = seq
 			return s.dataTransfer.TransferLiveKlineBatch(ctx, batch)
 		}
+		return status.Error(codes.Unavailable, s.missingRuntimeStreamReason(batch.UserID, batch.RuntimeID))
+	}
+	return stream.sendFrame(frame)
+}
+
+func (s *Service) DeliverOrderLifecycleBatch(ctx context.Context, batch OrderLifecycleDeliveryBatch) error {
+	if s == nil {
+		return status.Error(codes.FailedPrecondition, "runtime channel service is not configured")
+	}
+	if batch.UserID <= 0 || batch.RuntimeID == "" || batch.SessionID == "" {
+		return status.Error(codes.InvalidArgument, "user_id, runtime_id, and session_id are required")
+	}
+	if len(batch.Events) == 0 {
+		return nil
+	}
+	seq := batch.Sequence
+	if seq <= 0 {
+		seq = int64(len(batch.Events))
+	}
+	frame := &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_ORDER_UPDATE_BATCH,
+		Payload: &cpv1.RuntimeFrame_OrderUpdateBatch{
+			OrderUpdateBatch: &cpv1.RuntimeOrderUpdateBatch{
+				SessionId: batch.SessionID,
+				StreamKey: orderLifecycleStreamKey,
+				Sequence:  seq,
+				Events:    batch.Events,
+			},
+		},
+	}
+	stream := s.registry.FindByRuntimeID(batch.UserID, batch.RuntimeID)
+	if stream == nil {
 		return status.Error(codes.Unavailable, s.missingRuntimeStreamReason(batch.UserID, batch.RuntimeID))
 	}
 	return stream.sendFrame(frame)

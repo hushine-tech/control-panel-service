@@ -20,24 +20,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ControlPanelService_ListRuntimes_FullMethodName                 = "/controlpanel.v1.ControlPanelService/ListRuntimes"
-	ControlPanelService_GetRuntime_FullMethodName                   = "/controlpanel.v1.ControlPanelService/GetRuntime"
-	ControlPanelService_EndRuntime_FullMethodName                   = "/controlpanel.v1.ControlPanelService/EndRuntime"
-	ControlPanelService_ResolveRuntimeRouteByID_FullMethodName      = "/controlpanel.v1.ControlPanelService/ResolveRuntimeRouteByID"
-	ControlPanelService_EnsureHostedRuntime_FullMethodName          = "/controlpanel.v1.ControlPanelService/EnsureHostedRuntime"
-	ControlPanelService_IssueRuntimeCredential_FullMethodName       = "/controlpanel.v1.ControlPanelService/IssueRuntimeCredential"
-	ControlPanelService_ListRuntimeCredentials_FullMethodName       = "/controlpanel.v1.ControlPanelService/ListRuntimeCredentials"
-	ControlPanelService_ListRuntimeAdmissionFailures_FullMethodName = "/controlpanel.v1.ControlPanelService/ListRuntimeAdmissionFailures"
-	ControlPanelService_RevokeRuntimeCredential_FullMethodName      = "/controlpanel.v1.ControlPanelService/RevokeRuntimeCredential"
-	ControlPanelService_RuntimeChannel_FullMethodName               = "/controlpanel.v1.ControlPanelService/RuntimeChannel"
-	ControlPanelService_PrepareDebugWorkspace_FullMethodName        = "/controlpanel.v1.ControlPanelService/PrepareDebugWorkspace"
-	ControlPanelService_LoadDebugDataset_FullMethodName             = "/controlpanel.v1.ControlPanelService/LoadDebugDataset"
-	ControlPanelService_GetRuntimeDebugDataset_FullMethodName       = "/controlpanel.v1.ControlPanelService/GetRuntimeDebugDataset"
-	ControlPanelService_PublishRuntimeNotification_FullMethodName   = "/controlpanel.v1.ControlPanelService/PublishRuntimeNotification"
-	ControlPanelService_RunStrategy_FullMethodName                  = "/controlpanel.v1.ControlPanelService/RunStrategy"
-	ControlPanelService_PreviewRunStrategy_FullMethodName           = "/controlpanel.v1.ControlPanelService/PreviewRunStrategy"
-	ControlPanelService_StopStrategy_FullMethodName                 = "/controlpanel.v1.ControlPanelService/StopStrategy"
-	ControlPanelService_GetStrategyStatus_FullMethodName            = "/controlpanel.v1.ControlPanelService/GetStrategyStatus"
+	ControlPanelService_ListRuntimes_FullMethodName                    = "/controlpanel.v1.ControlPanelService/ListRuntimes"
+	ControlPanelService_GetRuntime_FullMethodName                      = "/controlpanel.v1.ControlPanelService/GetRuntime"
+	ControlPanelService_EndRuntime_FullMethodName                      = "/controlpanel.v1.ControlPanelService/EndRuntime"
+	ControlPanelService_ResolveRuntimeRouteByID_FullMethodName         = "/controlpanel.v1.ControlPanelService/ResolveRuntimeRouteByID"
+	ControlPanelService_EnsureHostedRuntime_FullMethodName             = "/controlpanel.v1.ControlPanelService/EnsureHostedRuntime"
+	ControlPanelService_IssueRuntimeCredential_FullMethodName          = "/controlpanel.v1.ControlPanelService/IssueRuntimeCredential"
+	ControlPanelService_BootstrapBareRuntimeCertificate_FullMethodName = "/controlpanel.v1.ControlPanelService/BootstrapBareRuntimeCertificate"
+	ControlPanelService_ListRuntimeCredentials_FullMethodName          = "/controlpanel.v1.ControlPanelService/ListRuntimeCredentials"
+	ControlPanelService_ListRuntimeAdmissionFailures_FullMethodName    = "/controlpanel.v1.ControlPanelService/ListRuntimeAdmissionFailures"
+	ControlPanelService_RevokeRuntimeCredential_FullMethodName         = "/controlpanel.v1.ControlPanelService/RevokeRuntimeCredential"
+	ControlPanelService_RuntimeChannel_FullMethodName                  = "/controlpanel.v1.ControlPanelService/RuntimeChannel"
+	ControlPanelService_PrepareDebugWorkspace_FullMethodName           = "/controlpanel.v1.ControlPanelService/PrepareDebugWorkspace"
+	ControlPanelService_LoadDebugDataset_FullMethodName                = "/controlpanel.v1.ControlPanelService/LoadDebugDataset"
+	ControlPanelService_GetRuntimeDebugDataset_FullMethodName          = "/controlpanel.v1.ControlPanelService/GetRuntimeDebugDataset"
+	ControlPanelService_PublishRuntimeNotification_FullMethodName      = "/controlpanel.v1.ControlPanelService/PublishRuntimeNotification"
+	ControlPanelService_RunStrategy_FullMethodName                     = "/controlpanel.v1.ControlPanelService/RunStrategy"
+	ControlPanelService_PreviewRunStrategy_FullMethodName              = "/controlpanel.v1.ControlPanelService/PreviewRunStrategy"
+	ControlPanelService_StopStrategy_FullMethodName                    = "/controlpanel.v1.ControlPanelService/StopStrategy"
+	ControlPanelService_GetStrategyStatus_FullMethodName               = "/controlpanel.v1.ControlPanelService/GetStrategyStatus"
 )
 
 // ControlPanelServiceClient is the client API for ControlPanelService service.
@@ -75,13 +76,13 @@ type ControlPanelServiceClient interface {
 	// uses on the strategy-start path. Idempotent semantics:
 	//
 	//   - Resolve plan, check quota / profile, allocate a hosted runtime via
-	//     the configured provisioner backend, wait for the runtime to
-	//     self-register, then return it. Runtime routing is by runtime_id only;
-	//     name is display-only.
+	//     the configured provisioner backend, wait for RuntimeChannel HELLO,
+	//     then return it. Runtime routing is by runtime_id only; name is
+	//     display-only.
 	//
 	// Fail-closed: returns RESOURCE_EXHAUSTED when plan / quota / profile
 	// checks reject; FailedPrecondition when the provisioner backend is
-	// misconfigured or the runtime never self-registers within the
+	// misconfigured or the runtime never opens RuntimeChannel within the
 	// configured timeout. NEVER silently returns a shared / different
 	// user's runtime.
 	//
@@ -99,6 +100,10 @@ type ControlPanelServiceClient interface {
 	// authenticated user's id; quant-handler enforces that the JWT subject
 	// matches the request user_id.
 	IssueRuntimeCredential(ctx context.Context, in *IssueRuntimeCredentialRequest, opts ...grpc.CallOption) (*IssueRuntimeCredentialResponse, error)
+	// BootstrapBareRuntimeCertificate signs a short-lived debugger client
+	// certificate for internal bare runtime startup. It is only available when
+	// debug bare runtime bootstrap is enabled and the caller IP is allowlisted.
+	BootstrapBareRuntimeCertificate(ctx context.Context, in *BootstrapBareRuntimeCertificateRequest, opts ...grpc.CallOption) (*BootstrapBareRuntimeCertificateResponse, error)
 	// ListRuntimeCredentials returns the active credentials owned by the
 	// calling user. Consumed credentials are returned by default so users can
 	// see which runtime consumed a bootstrap token. Revoked / expired inactive
@@ -206,6 +211,16 @@ func (c *controlPanelServiceClient) IssueRuntimeCredential(ctx context.Context, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IssueRuntimeCredentialResponse)
 	err := c.cc.Invoke(ctx, ControlPanelService_IssueRuntimeCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *controlPanelServiceClient) BootstrapBareRuntimeCertificate(ctx context.Context, in *BootstrapBareRuntimeCertificateRequest, opts ...grpc.CallOption) (*BootstrapBareRuntimeCertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BootstrapBareRuntimeCertificateResponse)
+	err := c.cc.Invoke(ctx, ControlPanelService_BootstrapBareRuntimeCertificate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -370,13 +385,13 @@ type ControlPanelServiceServer interface {
 	// uses on the strategy-start path. Idempotent semantics:
 	//
 	//   - Resolve plan, check quota / profile, allocate a hosted runtime via
-	//     the configured provisioner backend, wait for the runtime to
-	//     self-register, then return it. Runtime routing is by runtime_id only;
-	//     name is display-only.
+	//     the configured provisioner backend, wait for RuntimeChannel HELLO,
+	//     then return it. Runtime routing is by runtime_id only; name is
+	//     display-only.
 	//
 	// Fail-closed: returns RESOURCE_EXHAUSTED when plan / quota / profile
 	// checks reject; FailedPrecondition when the provisioner backend is
-	// misconfigured or the runtime never self-registers within the
+	// misconfigured or the runtime never opens RuntimeChannel within the
 	// configured timeout. NEVER silently returns a shared / different
 	// user's runtime.
 	//
@@ -394,6 +409,10 @@ type ControlPanelServiceServer interface {
 	// authenticated user's id; quant-handler enforces that the JWT subject
 	// matches the request user_id.
 	IssueRuntimeCredential(context.Context, *IssueRuntimeCredentialRequest) (*IssueRuntimeCredentialResponse, error)
+	// BootstrapBareRuntimeCertificate signs a short-lived debugger client
+	// certificate for internal bare runtime startup. It is only available when
+	// debug bare runtime bootstrap is enabled and the caller IP is allowlisted.
+	BootstrapBareRuntimeCertificate(context.Context, *BootstrapBareRuntimeCertificateRequest) (*BootstrapBareRuntimeCertificateResponse, error)
 	// ListRuntimeCredentials returns the active credentials owned by the
 	// calling user. Consumed credentials are returned by default so users can
 	// see which runtime consumed a bootstrap token. Revoked / expired inactive
@@ -464,6 +483,9 @@ func (UnimplementedControlPanelServiceServer) EnsureHostedRuntime(context.Contex
 }
 func (UnimplementedControlPanelServiceServer) IssueRuntimeCredential(context.Context, *IssueRuntimeCredentialRequest) (*IssueRuntimeCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IssueRuntimeCredential not implemented")
+}
+func (UnimplementedControlPanelServiceServer) BootstrapBareRuntimeCertificate(context.Context, *BootstrapBareRuntimeCertificateRequest) (*BootstrapBareRuntimeCertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BootstrapBareRuntimeCertificate not implemented")
 }
 func (UnimplementedControlPanelServiceServer) ListRuntimeCredentials(context.Context, *ListRuntimeCredentialsRequest) (*ListRuntimeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRuntimeCredentials not implemented")
@@ -626,6 +648,24 @@ func _ControlPanelService_IssueRuntimeCredential_Handler(srv interface{}, ctx co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ControlPanelServiceServer).IssueRuntimeCredential(ctx, req.(*IssueRuntimeCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ControlPanelService_BootstrapBareRuntimeCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BootstrapBareRuntimeCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlPanelServiceServer).BootstrapBareRuntimeCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlPanelService_BootstrapBareRuntimeCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlPanelServiceServer).BootstrapBareRuntimeCertificate(ctx, req.(*BootstrapBareRuntimeCertificateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -865,6 +905,10 @@ var ControlPanelService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IssueRuntimeCredential",
 			Handler:    _ControlPanelService_IssueRuntimeCredential_Handler,
+		},
+		{
+			MethodName: "BootstrapBareRuntimeCertificate",
+			Handler:    _ControlPanelService_BootstrapBareRuntimeCertificate_Handler,
 		},
 		{
 			MethodName: "ListRuntimeCredentials",
