@@ -16,18 +16,6 @@ import "strategy_service.proto";
 service ControlPanelService {
   // ── Runtime registry ──────────────────────────────────────────────────────
 
-  // RegisterRuntime is called by hosted strategy-runtime instances on startup.
-  // Self-hosted runtimes MUST use RuntimeChannel HELLO with a signed
-  // runtime credential instead; RegisterRuntime rejects source=self_hosted.
-  // The response returns a registration_token that the hosted runtime must
-  // present on subsequent Heartbeat calls.
-  rpc RegisterRuntime(RegisterRuntimeRequest) returns (RegisterRuntimeResponse);
-
-  // HeartbeatRuntime updates the runtime's heartbeat_at timestamp. Auth via
-  // registration_token in gRPC metadata. Stale heartbeats cause the route
-  // resolver to mark the runtime unhealthy (configurable deadline).
-  rpc HeartbeatRuntime(HeartbeatRuntimeRequest) returns (HeartbeatRuntimeResponse);
-
   // ListRuntimes returns the runtimes visible to the authenticated caller.
   // Filters: user_id (required for non-admin callers), status, source.
   rpc ListRuntimes(ListRuntimesRequest) returns (ListRuntimesResponse);
@@ -58,29 +46,18 @@ service ControlPanelService {
   // uses on the strategy-start path. Idempotent semantics:
   //
   //   * Resolve plan, check quota / profile, allocate a hosted runtime via
-  //     the configured provisioner backend, wait for the runtime to
-  //     self-register, then return it. Runtime routing is by runtime_id only;
-  //     name is display-only.
+  //     the configured provisioner backend, wait for RuntimeChannel HELLO,
+  //     then return it. Runtime routing is by runtime_id only; name is
+  //     display-only.
   //
   // Fail-closed: returns RESOURCE_EXHAUSTED when plan / quota / profile
   // checks reject; FailedPrecondition when the provisioner backend is
-  // misconfigured or the runtime never self-registers within the
+  // misconfigured or the runtime never opens RuntimeChannel within the
   // configured timeout. NEVER silently returns a shared / different
   // user's runtime.
   //
   // For D1 this RPC is gated by quant-handler's strategy session paths.
   rpc EnsureHostedRuntime(EnsureHostedRuntimeRequest) returns (EnsureHostedRuntimeResponse);
-
-  // ValidateCallerToken is the runtime-side hook the strategy-runtime
-  // gRPC interceptor calls to verify an inbound `x-caller-token`
-  // metadata value. The caller_token was issued by control-panel-service
-  // on a previous Resolve / Ensure call; this RPC checks that the token
-  // is still valid and is bound to the inbound runtime_id.
-  //
-  // Phase D1 only — D3 will move handler↔runtime traffic through the
-  // control-panel proxy and the per-call attestation token disappears.
-  // Documented as D3-removable.
-  rpc ValidateCallerToken(ValidateCallerTokenRequest) returns (ValidateCallerTokenResponse);
 
   // ── Runtime credentials (Phase D3) ────────────────────────────────────────
 
@@ -96,6 +73,11 @@ service ControlPanelService {
   // authenticated user's id; quant-handler enforces that the JWT subject
   // matches the request user_id.
   rpc IssueRuntimeCredential(IssueRuntimeCredentialRequest) returns (IssueRuntimeCredentialResponse);
+
+  // BootstrapBareRuntimeCertificate signs a short-lived debugger client
+  // certificate for internal bare runtime startup. It is only available when
+  // debug bare runtime bootstrap is enabled and the caller IP is allowlisted.
+  rpc BootstrapBareRuntimeCertificate(BootstrapBareRuntimeCertificateRequest) returns (BootstrapBareRuntimeCertificateResponse);
 
   // ListRuntimeCredentials returns the active credentials owned by the
   // calling user. Consumed credentials are returned by default so users can
@@ -208,7 +190,7 @@ message DebugWorkspaceState {
 message DebugDatasetState {
   string dataset_id = 1;
   int64 user_id = 2;
-  int64 account_id = 3;
+  int64 portfolio_id = 3;
   string runtime_id = 4;
   string market = 5;
   string symbol = 6;
@@ -236,7 +218,7 @@ message PrepareDebugWorkspaceResponse {
 
 message LoadDebugDatasetRequest {
   string runtime_id = 1;
-  int64 account_id = 2;
+  int64 portfolio_id = 2;
   string market = 3;
   string symbol = 4;
   string interval = 5;
@@ -270,46 +252,6 @@ message StartDebugReplayResponse {
   string session_id = 1;
   string session_name = 2;
   DebugDatasetState dataset = 3;
-}
-
-// ── RegisterRuntime ─────────────────────────────────────────────────────────
-
-message RegisterRuntimeRequest {
-  // Optional caller-supplied id; control-plane generates one if empty.
-  string runtime_id = 1;
-  string source = 2;                  // must be "hosted"; self_hosted uses RuntimeChannel
-  // Required for hosted.
-  int64 bind_user_id = 3;
-  string name = 4;                    // default "default"
-  string endpoint_host = 5;
-  int32 grpc_port = 6;
-  int32 debug_port = 7;
-  repeated string capabilities = 8;
-  string resource_profile = 9;
-  string version = 10;
-}
-
-message RegisterRuntimeResponse {
-  Runtime runtime = 1;
-  // Returned to the runtime to present on subsequent Heartbeat calls.
-  // Caller should treat this as a secret.
-  string registration_token = 2;
-}
-
-// ── HeartbeatRuntime ────────────────────────────────────────────────────────
-
-message HeartbeatRuntimeRequest {
-  string runtime_id = 1;
-  // Status the runtime is reporting (typically "active").
-  string status = 2;
-  // Caller-side observation summary, for log/audit only. May be empty.
-  string note = 3;
-}
-
-message HeartbeatRuntimeResponse {
-  google.protobuf.Timestamp heartbeat_at = 1;
-  bool shutdown_requested = 2;
-  string terminal_reason = 3;
 }
 
 // ── ListRuntimes ────────────────────────────────────────────────────────────
@@ -352,7 +294,7 @@ message PublishRuntimeNotificationRequest {
   int64 user_id = 1;
   string runtime_id = 2;
   string session_id = 3;
-  int64 account_id = 4;
+  int64 portfolio_id = 4;
   int64 strategy_id = 5;
   string category = 6;
   string severity = 7;
@@ -376,14 +318,6 @@ message ResolveRuntimeRouteByIDRequest {
 
 message ResolveRuntimeRouteResponse {
   Runtime runtime = 1;
-  // Concatenated "host:port" for direct gRPC dial, e.g. "10.0.0.5:50053".
-  string grpc_endpoint = 2;
-  // Optional debug endpoint when the runtime advertised a debug_port.
-  string debug_endpoint = 3;
-  // Caller token control-plane issues for handler→runtime calls. Short-lived;
-  // handler MUST present it in the gRPC metadata when calling the runtime.
-  string caller_token = 4;
-  google.protobuf.Timestamp caller_token_expires_at = 5;
 }
 
 // ── EnsureHostedRuntime ─────────────────────────────────────────────────────
@@ -401,40 +335,10 @@ message EnsureHostedRuntimeRequest {
 
 message EnsureHostedRuntimeResponse {
   Runtime runtime = 1;
-  // host:port for handler dial.
-  string grpc_endpoint = 2;
-  string debug_endpoint = 3;
-  string caller_token = 4;
-  google.protobuf.Timestamp caller_token_expires_at = 5;
   // True when this call provisioned a new container; false when an
   // existing healthy runtime was returned. Operators / observability
   // distinguish lazy first-touch from steady-state reuse.
-  bool provisioned = 6;
-}
-
-// ── ValidateCallerToken ─────────────────────────────────────────────────────
-
-message ValidateCallerTokenRequest {
-  // Token presented by quant-handler in the inbound RPC's
-  // `x-caller-token` metadata. The runtime forwards it verbatim.
-  string caller_token = 1;
-  // The runtime's own runtime_id. control-panel-service checks the
-  // token was issued for this runtime; a token issued for runtime A
-  // MUST NOT validate when presented to runtime B.
-  string runtime_id = 2;
-}
-
-message ValidateCallerTokenResponse {
-  bool valid = 1;
-  // The user_id the token was bound to at issue time. Returned even
-  // for a valid token so the runtime can cross-check against the
-  // inbound RPC's UserId field.
-  int64 user_id = 2;
-  // Diagnostic; set when valid=false. Examples:
-  //   "expired"       — token TTL elapsed
-  //   "unknown"       — token not in the store (never issued / evicted)
-  //   "runtime_mismatch" — token issued for a different runtime
-  string reason = 3;
+  bool provisioned = 2;
 }
 
 // ── Runtime credentials (Phase D3) ──────────────────────────────────────────
@@ -470,6 +374,30 @@ message IssueRuntimeCredentialResponse {
   google.protobuf.Timestamp created_at = 4;
   // Runtime role authorized by this credential: "executor" or "debugger".
   string role = 5;
+  // RuntimeChannel mTLS client certificate bundle. The private key is
+  // returned exactly once with this response and is never persisted.
+  string client_cert_pem = 6;
+  string client_key_pem = 7;
+  string server_ca_pem = 8;
+  google.protobuf.Timestamp client_cert_expires_at = 9;
+}
+
+message BootstrapBareRuntimeCertificateRequest {
+  int64 user_id = 1;
+  string runtime_id = 2;
+  string name = 3;
+  string csr_pem = 4;
+  repeated string capabilities = 5;
+  string resource_profile = 6;
+  string version = 7;
+}
+
+message BootstrapBareRuntimeCertificateResponse {
+  string runtime_id = 1;
+  string name = 2;
+  string client_cert_pem = 3;
+  string server_ca_pem = 4;
+  google.protobuf.Timestamp client_cert_expires_at = 5;
 }
 
 message ListRuntimeCredentialsRequest {
@@ -537,6 +465,9 @@ message RuntimeCredential {
   string consumed_runtime_id = 12;
   google.protobuf.Timestamp expires_at = 13;
   bool hosted_internal = 14;
+  string client_cert_fingerprint = 15;
+  google.protobuf.Timestamp client_cert_expires_at = 16;
+  string issuer = 17;
 }
 
 message RevokeRuntimeCredentialRequest {
@@ -584,6 +515,7 @@ enum FrameType {
   FRAME_TYPE_HELLO_ACK = 18;
   FRAME_TYPE_RESUME = 19;
   FRAME_TYPE_HEARTBEAT_ACK = 20;
+  FRAME_TYPE_ORDER_UPDATE_BATCH = 21;
 }
 
 message RuntimeFrame {
@@ -617,13 +549,12 @@ message RuntimeFrame {
     RuntimeHelloAck hello_ack = 27;
     RuntimeResume resume = 28;
     RuntimeHeartbeatAck heartbeat_ack = 29;
+    RuntimeOrderUpdateBatch order_update_batch = 30;
   }
 }
 
 message RuntimeHello {
   string key_id = 1;
-  // Optional caller-supplied id; if empty, control-panel-service derives one
-  // from the key_id so reconnects remain stable enough for registry routing.
   string runtime_id = 2;
   string name = 3;
   string endpoint_host = 4;
@@ -638,6 +569,11 @@ message RuntimeHello {
   // Base64url-no-padding Ed25519 signature over the canonical HELLO payload
   // excluding this field.
   string signature = 12;
+  // hosted, self_hosted, or bare. Empty keeps old credential HELLO behavior
+  // and is normalized by control-panel from credential metadata.
+  string source = 13;
+  // Required only when source=bare.
+  int64 user_id = 14;
 }
 
 message RuntimeHelloAck {
@@ -739,6 +675,13 @@ message RuntimeLiveKlineBatch {
   string stream_key = 2;
   int64 sequence = 3;
   repeated google.protobuf.Any klines = 4;
+}
+
+message RuntimeOrderUpdateBatch {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 sequence = 3;
+  repeated google.protobuf.Any events = 4;
 }
 
 message RuntimeDataAck {

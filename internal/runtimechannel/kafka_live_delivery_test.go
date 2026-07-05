@@ -13,6 +13,7 @@ import (
 
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	mdrepo "github.com/hushine-tech/control-panel-service/internal/marketdata/repository"
+	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 )
 
 func TestKafkaLiveDeliveryWorkerRoutesMatchingKlineMessages(t *testing.T) {
@@ -122,6 +123,62 @@ func TestKafkaLiveDeliveryWorkerDropsStaleDemoKlineMessages(t *testing.T) {
 	}
 	if repo.progress != 1 || repo.lastOffset != 11 {
 		t.Fatalf("delivery progress = count:%d offset:%d, want 1/11 for dropped stale message", repo.progress, repo.lastOffset)
+	}
+}
+
+func TestKafkaLiveDeliveryWorkerNotifiesWhenBackpressureDropsLiveKline(t *testing.T) {
+	repo := &liveDeliveryRepoStub{subs: []domain.SessionMarketDataSubscription{{
+		SubscriptionID: 7,
+		UserID:         42,
+		SessionID:      "sess-1",
+		RuntimeID:      "rt-1",
+		Key: domain.StreamKey{
+			Exchange: "binance",
+			Market:   "futures",
+			Kind:     "kline",
+			Symbol:   "ETHUSDT",
+			Interval: "1m",
+		},
+		Status: "active",
+	}}}
+	deliverer := &captureLiveDeliverer{err: ErrRuntimeDataBackpressure}
+	notifier := &captureLiveDropPublisher{}
+	worker := NewKafkaLiveDeliveryWorker(repo, deliverer, KafkaLiveDeliveryConfig{
+		OwnerInstanceID:       "cp-1",
+		LeaseTTL:              time.Minute,
+		NotificationPublisher: notifier,
+	})
+	if err := worker.refreshSubscriptions(context.Background()); err != nil {
+		t.Fatalf("refreshSubscriptions: %v", err)
+	}
+
+	err := worker.handleKlineMessage(
+		context.Background(),
+		"md.kline.binance.futures.1m",
+		[]byte("ETHUSDT"),
+		[]byte(`{"symbol":"ETHUSDT","interval":"1m","open_time":1,"close_time":2,"close":100.5}`),
+		0,
+		11,
+	)
+
+	if err != nil {
+		t.Fatalf("handleKlineMessage: %v", err)
+	}
+	if len(repo.failures) != 1 {
+		t.Fatalf("delivery failures = %d, want 1", len(repo.failures))
+	}
+	if len(notifier.events) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifier.events))
+	}
+	event := notifier.events[0]
+	if event.EventType != cpnotify.EventRuntimeLiveDataDropped || event.Severity != cpnotify.SeverityWarn {
+		t.Fatalf("notification type/severity = %s/%s", event.EventType, event.Severity)
+	}
+	if event.UserID != 42 || event.RuntimeID != "rt-1" || event.SessionID != "sess-1" {
+		t.Fatalf("notification route = %+v", event)
+	}
+	if event.Metadata["offset"] != "11" {
+		t.Fatalf("metadata offset = %q", event.Metadata["offset"])
 	}
 }
 
@@ -420,11 +477,20 @@ type captureLiveDeliverer struct {
 func (c *captureLiveDeliverer) DeliverLiveKlineBatch(_ context.Context, batch LiveKlineDeliveryBatch) error {
 	c.batches = append(c.batches, batch)
 	if c.errByRuntimeID != nil && c.errByRuntimeID[batch.RuntimeID] != nil {
-		return errors.New(c.errByRuntimeID[batch.RuntimeID].Error())
+		return c.errByRuntimeID[batch.RuntimeID]
 	}
 	if c.err != nil {
-		return errors.New(c.err.Error())
+		return c.err
 	}
+	return nil
+}
+
+type captureLiveDropPublisher struct {
+	events []cpnotify.Event
+}
+
+func (c *captureLiveDropPublisher) Publish(_ context.Context, event cpnotify.Event) error {
+	c.events = append(c.events, event)
 	return nil
 }
 

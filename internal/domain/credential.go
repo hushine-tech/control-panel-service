@@ -23,25 +23,35 @@ const (
 	CredentialRoleDebugger CredentialRole = "debugger"
 )
 
+const (
+	RuntimeCredentialIssuerUser           = "user"
+	RuntimeCredentialIssuerHostedInternal = "hosted_internal"
+	RuntimeCredentialIssuerBareDebug      = "bare_debug"
+)
+
 // RuntimeCredential is the canonical view of a `runtime_credentials`
 // row. Note: the private key is NEVER stored on the platform — it is
 // returned exactly once at issue time and discarded server-side. This
 // struct therefore has no PrivateKeyPEM field.
 type RuntimeCredential struct {
-	KeyID             string
-	UserID            int64
-	Label             string
-	Role              CredentialRole
-	PublicKeyPEM      string
-	Status            CredentialStatus
-	CreatedAt         time.Time
-	DownloadedAt      *time.Time
-	ConsumedAt        *time.Time
-	ConsumedRuntimeID string
-	ExpiresAt         *time.Time
-	LastUsedAt        *time.Time
-	RevokedAt         *time.Time
-	HostedInternal    bool
+	KeyID                 string
+	UserID                int64
+	Label                 string
+	Role                  CredentialRole
+	PublicKeyPEM          string
+	Status                CredentialStatus
+	CreatedAt             time.Time
+	DownloadedAt          *time.Time
+	ConsumedAt            *time.Time
+	ConsumedRuntimeID     string
+	ExpiresAt             *time.Time
+	LastUsedAt            *time.Time
+	RevokedAt             *time.Time
+	HostedInternal        bool
+	ClientCertPEM         string
+	ClientCertFingerprint string
+	ClientCertExpiresAt   *time.Time
+	Issuer                string
 }
 
 // IssuedCredential is the one-time bundle returned to the user at
@@ -50,5 +60,9 @@ type RuntimeCredential struct {
 // persisted anywhere on the platform.
 type IssuedCredential struct {
 	RuntimeCredential
-	PrivateKeyPEM string
+	PrivateKeyPEM       string
+	ClientCertPEM       string
+	ClientKeyPEM        string
+	ServerCAPEM         string
+	ClientCertExpiresAt *time.Time
 }

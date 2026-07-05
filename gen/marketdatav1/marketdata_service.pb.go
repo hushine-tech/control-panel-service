@@ -226,7 +226,7 @@ type MarketDataRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	RequestId         int64                  `protobuf:"varint,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	UserId            int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AccountId         int64                  `protobuf:"varint,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"` // 0 == not bound to a specific account
+	PortfolioId       int64                  `protobuf:"varint,3,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"` // 0 == not bound to a specific portfolio
 	StreamId          int64                  `protobuf:"varint,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	Key               *StreamKey             `protobuf:"bytes,5,opt,name=key,proto3" json:"key,omitempty"`
 	NeedsLiveDelivery bool                   `protobuf:"varint,6,opt,name=needs_live_delivery,json=needsLiveDelivery,proto3" json:"needs_live_delivery,omitempty"`
@@ -289,9 +289,9 @@ func (x *MarketDataRequest) GetUserId() int64 {
 	return 0
 }
 
-func (x *MarketDataRequest) GetAccountId() int64 {
+func (x *MarketDataRequest) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -398,8 +398,8 @@ type MarketDataLease struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	LeaseId         int64                  `protobuf:"varint,1,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	SessionId       string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	StrategyId      int64                  `protobuf:"varint,3,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"` // 0 == unset
-	AccountId       int64                  `protobuf:"varint,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`    // 0 == unset
+	StrategyId      int64                  `protobuf:"varint,3,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"`    // 0 == unset
+	PortfolioId     int64                  `protobuf:"varint,4,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"` // 0 == unset
 	StreamId        int64                  `protobuf:"varint,5,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	ExpiresAt       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	LastHeartbeatAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=last_heartbeat_at,json=lastHeartbeatAt,proto3" json:"last_heartbeat_at,omitempty"`
@@ -460,9 +460,9 @@ func (x *MarketDataLease) GetStrategyId() int64 {
 	return 0
 }
 
-func (x *MarketDataLease) GetAccountId() int64 {
+func (x *MarketDataLease) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -1109,7 +1109,7 @@ func (x *MarketDataWriterLease) GetUpdatedAt() *timestamppb.Timestamp {
 type CreateMarketDataRequestRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	UserId            int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AccountId         int64                  `protobuf:"varint,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"` // optional; 0 means unbound
+	PortfolioId       int64                  `protobuf:"varint,2,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"` // optional; 0 means unbound
 	Key               *StreamKey             `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
 	NeedsLiveDelivery bool                   `protobuf:"varint,4,opt,name=needs_live_delivery,json=needsLiveDelivery,proto3" json:"needs_live_delivery,omitempty"`
 	Scope             string                 `protobuf:"bytes,5,opt,name=scope,proto3" json:"scope,omitempty"`                                                 // "live" | "historical"; empty means "live"
@@ -1156,9 +1156,9 @@ func (x *CreateMarketDataRequestRequest) GetUserId() int64 {
 	return 0
 }
 
-func (x *CreateMarketDataRequestRequest) GetAccountId() int64 {
+func (x *CreateMarketDataRequestRequest) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -2822,8 +2822,8 @@ func (x *QueryMarketDataKlinesResponse) GetLimit() int32 {
 type CreateOrRenewMarketDataLeaseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	StrategyId    int64                  `protobuf:"varint,2,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"` // optional (0)
-	AccountId     int64                  `protobuf:"varint,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`    // optional (0)
+	StrategyId    int64                  `protobuf:"varint,2,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"`    // optional (0)
+	PortfolioId   int64                  `protobuf:"varint,3,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"` // optional (0)
 	StreamId      int64                  `protobuf:"varint,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	TtlSeconds    int64                  `protobuf:"varint,5,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2874,9 +2874,9 @@ func (x *CreateOrRenewMarketDataLeaseRequest) GetStrategyId() int64 {
 	return 0
 }
 
-func (x *CreateOrRenewMarketDataLeaseRequest) GetAccountId() int64 {
+func (x *CreateOrRenewMarketDataLeaseRequest) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -3782,13 +3782,12 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"created_at\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xa0\x06\n" +
+	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xa4\x06\n" +
 	"\x11MarketDataRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x03R\trequestId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x03 \x01(\x03R\taccountId\x12\x1b\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
+	"\fportfolio_id\x18\x03 \x01(\x03R\vportfolioId\x12\x1b\n" +
 	"\tstream_id\x18\x04 \x01(\x03R\bstreamId\x127\n" +
 	"\x03key\x18\x05 \x01(\v2%.controlpanel.marketdata.v1.StreamKeyR\x03key\x12.\n" +
 	"\x13needs_live_delivery\x18\x06 \x01(\bR\x11needsLiveDelivery\x12\x16\n" +
@@ -3806,15 +3805,14 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\x0ecovered_end_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\fcoveredEndAt\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\x10 \x01(\tR\tlastError\x12\x14\n" +
-	"\x05ready\x18\x11 \x01(\bR\x05ready\"\xa3\x03\n" +
+	"\x05ready\x18\x11 \x01(\bR\x05ready\"\xa7\x03\n" +
 	"\x0fMarketDataLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\x03R\aleaseId\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vstrategy_id\x18\x03 \x01(\x03R\n" +
-	"strategyId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x04 \x01(\x03R\taccountId\x12\x1b\n" +
+	"strategyId\x12!\n" +
+	"\fportfolio_id\x18\x04 \x01(\x03R\vportfolioId\x12\x1b\n" +
 	"\tstream_id\x18\x05 \x01(\x03R\bstreamId\x129\n" +
 	"\n" +
 	"expires_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12F\n" +
@@ -3905,11 +3903,10 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xe7\x02\n" +
+	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xeb\x02\n" +
 	"\x1eCreateMarketDataRequestRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x02 \x01(\x03R\taccountId\x127\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
+	"\fportfolio_id\x18\x02 \x01(\x03R\vportfolioId\x127\n" +
 	"\x03key\x18\x03 \x01(\v2%.controlpanel.marketdata.v1.StreamKeyR\x03key\x12.\n" +
 	"\x13needs_live_delivery\x18\x04 \x01(\bR\x11needsLiveDelivery\x12\x14\n" +
 	"\x05scope\x18\x05 \x01(\tR\x05scope\x12H\n" +
@@ -4028,14 +4025,13 @@ const file_marketdata_service_proto_rawDesc = "" +
 	"\x04rows\x18\x04 \x03(\v2+.controlpanel.marketdata.v1.MarketDataKlineR\x04rows\x12\x1b\n" +
 	"\trow_count\x18\x05 \x01(\x03R\browCount\x12\x1c\n" +
 	"\ttruncated\x18\x06 \x01(\bR\ttruncated\x12\x14\n" +
-	"\x05limit\x18\a \x01(\x05R\x05limit\"\xc2\x01\n" +
+	"\x05limit\x18\a \x01(\x05R\x05limit\"\xc6\x01\n" +
 	"#CreateOrRenewMarketDataLeaseRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vstrategy_id\x18\x02 \x01(\x03R\n" +
-	"strategyId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x03 \x01(\x03R\taccountId\x12\x1b\n" +
+	"strategyId\x12!\n" +
+	"\fportfolio_id\x18\x03 \x01(\x03R\vportfolioId\x12\x1b\n" +
 	"\tstream_id\x18\x04 \x01(\x03R\bstreamId\x12\x1f\n" +
 	"\vttl_seconds\x18\x05 \x01(\x03R\n" +
 	"ttlSeconds\"i\n" +

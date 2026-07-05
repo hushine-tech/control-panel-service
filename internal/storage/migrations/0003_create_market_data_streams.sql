@@ -3,8 +3,8 @@
 -- This table mirrors the schema originally introduced in
 -- core-service/internal/storage/migrations/0009_create_market_data_control_plane.sql
 -- but lives in the control_panel database. Cross-database foreign-key
--- constraints are NOT possible, so any references to account.users(id)
--- or account.accounts(account_id) become logical (validated at the
+-- constraints are NOT possible, so any references to portfolio.users(id)
+-- or portfolio.portfolios(portfolio_id) become logical (validated at the
 -- service layer via core-service.GetUser etc.) rather than enforced
 -- by the database.
 --

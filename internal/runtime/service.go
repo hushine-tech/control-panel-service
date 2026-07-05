@@ -1,31 +1,26 @@
 // Package service holds the control-panel-service business logic. The
 // gRPC layer (grpc.go) is a thin proto-translation wrapper.
-//
-// Auth model (D1, token-only — see Phase D1 Resolved Decisions):
-//   - registration_token: returned at RegisterRuntime, used for Heartbeat.
-//   - caller_token:       returned per ResolveRuntimeRoute call, presented by
-//     handler→runtime gRPC calls. Verification is wired
-//     in section 6 (handler cutover); section 2 just
-//     issues opaque tokens.
 package runtime
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/hushine-tech/control-panel-service/internal/auth"
-	"github.com/hushine-tech/control-panel-service/internal/calltoken"
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	"google.golang.org/grpc"
 )
 
@@ -53,10 +48,10 @@ var (
 	// refused the request (no-op default, daemon down, image missing,
 	// etc.). Maps to gRPC FailedPrecondition.
 	ErrProvisionerUnavailable = errors.New("provisioner unavailable")
-	// ErrRegistrationTimeout: a freshly-provisioned runtime did not
-	// self-register within the configured deadline. Maps to gRPC
+	// ErrRegistrationTimeout: a freshly-provisioned runtime did not open
+	// RuntimeChannel within the configured deadline. Maps to gRPC
 	// FailedPrecondition; the runtime container is likely broken.
-	ErrRegistrationTimeout = errors.New("runtime did not self-register in time")
+	ErrRegistrationTimeout = errors.New("runtime did not open RuntimeChannel in time")
 )
 
 const runtimeNamePattern = `^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$`
@@ -91,24 +86,26 @@ func sRandInt(max int) int {
 // Service ties the repository, plan resolver, and clock together so the
 // handlers can be tested with stubs.
 type Service struct {
-	repo                   repository.Repository
-	plans                  *plan.Resolver
-	provisioner            provision.Provisioner
-	provisioning           config.ProvisioningConfig
-	sessionClient          sessionClient
-	streamCloser           runtimeStreamCloser
-	hostedCredentialIssuer hostedCredentialIssuer
-	notifications          cpnotify.Publisher
-	callerTokens           *calltoken.Store
-	callerTTL              time.Duration
-	heartbeatGrace         time.Duration
-	deathGrace             time.Duration
-	now                    func() time.Time
+	repo                        repository.Repository
+	plans                       *plan.Resolver
+	provisioner                 provision.Provisioner
+	provisioning                config.ProvisioningConfig
+	runtimePlatform             config.RuntimePlatformConfig
+	sessionClient               sessionClient
+	streamCloser                runtimeStreamCloser
+	hostedCredentialIssuer      hostedCredentialIssuer
+	runtimeCertSigner           runtimeCertSigner
+	runtimeServerCAPEM          []byte
+	runtimeChannelTLSServerName string
+	notifications               cpnotify.Publisher
+	heartbeatGrace              time.Duration
+	deathGrace                  time.Duration
+	now                         func() time.Time
 }
 
 type sessionClient interface {
-	ListRunningSessions(ctx context.Context, in *accountv1.ListRunningSessionsRequest, opts ...grpc.CallOption) (*accountv1.ListRunningSessionsResponse, error)
-	MarkRuntimeSessionsRecoverable(ctx context.Context, in *accountv1.MarkRuntimeSessionsRecoverableRequest, opts ...grpc.CallOption) (*accountv1.MarkRuntimeSessionsRecoverableResponse, error)
+	ListRunningSessions(ctx context.Context, in *portfoliov1.ListRunningSessionsRequest, opts ...grpc.CallOption) (*portfoliov1.ListRunningSessionsResponse, error)
+	MarkRuntimeSessionsRecoverable(ctx context.Context, in *portfoliov1.MarkRuntimeSessionsRecoverableRequest, opts ...grpc.CallOption) (*portfoliov1.MarkRuntimeSessionsRecoverableResponse, error)
 }
 
 type runtimeStreamCloser interface {
@@ -119,11 +116,15 @@ type hostedCredentialIssuer interface {
 	IssueHostedInternalRuntimeCredential(ctx context.Context, userID int64, runtimeID, name string) (domain.IssuedCredential, error)
 }
 
+type runtimeCertSigner interface {
+	CAPEM() []byte
+	SignRuntimeClientCertificate(runtimecert.SignRequest) ([]byte, *x509.Certificate, error)
+}
+
 // Config bundles the timeouts injected from config.RuntimePlatformConfig.
 type Config struct {
 	HeartbeatGrace time.Duration
 	DeathGrace     time.Duration
-	CallerTokenTTL time.Duration
 	// Provisioning carries the operator-tunable provisioning settings:
 	// container image, advertise host, port range, registration timeout,
 	// and resource profiles. EnsureHostedRuntime reads it; other paths
@@ -147,6 +148,18 @@ type Config struct {
 	// NotificationPublisher publishes runtime/session lifecycle events to the
 	// async notification stream. Nil falls back to a no-op publisher.
 	NotificationPublisher cpnotify.Publisher
+	// RuntimePlatform carries platform gates used outside plan resolution,
+	// especially internal bare runtime certificate bootstrap.
+	RuntimePlatform config.RuntimePlatformConfig
+	// RuntimeCertSigner signs runtime client certificates for hosted and bare
+	// bootstrap paths.
+	RuntimeCertSigner runtimeCertSigner
+	// RuntimeServerCAPEM is the CA/trust bundle runtime clients use to verify
+	// the RuntimeChannel server TLS certificate.
+	RuntimeServerCAPEM []byte
+	// RuntimeChannelTLSServerName is the TLS authority runtime clients should
+	// verify when the dial address is an IP literal or Docker host alias.
+	RuntimeChannelTLSServerName string
 }
 
 func New(repo repository.Repository, plans *plan.Resolver, cfg Config) *Service {
@@ -155,9 +168,6 @@ func New(repo repository.Repository, plans *plan.Resolver, cfg Config) *Service 
 	}
 	if cfg.DeathGrace <= 0 {
 		cfg.DeathGrace = 5 * time.Minute
-	}
-	if cfg.CallerTokenTTL <= 0 {
-		cfg.CallerTokenTTL = 60 * time.Second
 	}
 	if cfg.Provisioner == nil {
 		cfg.Provisioner = provision.NoOpProvisioner{}
@@ -168,21 +178,29 @@ func New(repo repository.Repository, plans *plan.Resolver, cfg Config) *Service 
 	if cfg.NotificationPublisher == nil {
 		cfg.NotificationPublisher = cpnotify.NoopPublisher{}
 	}
-	s := &Service{
-		repo:                   repo,
-		plans:                  plans,
-		provisioner:            cfg.Provisioner,
-		provisioning:           cfg.Provisioning,
-		sessionClient:          cfg.SessionClient,
-		streamCloser:           cfg.RuntimeStreamCloser,
-		hostedCredentialIssuer: cfg.HostedCredentialIssuer,
-		notifications:          cfg.NotificationPublisher,
-		callerTTL:              cfg.CallerTokenTTL,
-		heartbeatGrace:         cfg.HeartbeatGrace,
-		deathGrace:             cfg.DeathGrace,
-		now:                    time.Now,
+	if len(cfg.RuntimePlatform.BareBootstrapIPAllowlist) == 0 {
+		cfg.RuntimePlatform.BareBootstrapIPAllowlist = []string{"127.0.0.1/32"}
 	}
-	s.callerTokens = calltoken.NewStore(func() time.Time { return s.now() })
+	if cfg.RuntimePlatform.BareCertificateTTL <= 0 {
+		cfg.RuntimePlatform.BareCertificateTTL = 8 * time.Hour
+	}
+	s := &Service{
+		repo:                        repo,
+		plans:                       plans,
+		provisioner:                 cfg.Provisioner,
+		provisioning:                cfg.Provisioning,
+		runtimePlatform:             cfg.RuntimePlatform,
+		sessionClient:               cfg.SessionClient,
+		streamCloser:                cfg.RuntimeStreamCloser,
+		hostedCredentialIssuer:      cfg.HostedCredentialIssuer,
+		runtimeCertSigner:           cfg.RuntimeCertSigner,
+		runtimeServerCAPEM:          append([]byte(nil), cfg.RuntimeServerCAPEM...),
+		runtimeChannelTLSServerName: strings.TrimSpace(cfg.RuntimeChannelTLSServerName),
+		notifications:               cfg.NotificationPublisher,
+		heartbeatGrace:              cfg.HeartbeatGrace,
+		deathGrace:                  cfg.DeathGrace,
+		now:                         time.Now,
+	}
 	return s
 }
 
@@ -237,21 +255,6 @@ func resourceProfileAllowed(profile string, allowed []string) bool {
 	return false
 }
 
-// issueCallerToken generates and registers a caller_token bound to
-// (userID, runtimeID) with the configured TTL. The token + expiry are
-// returned so the response can include them. Used by both
-// ResolveRuntimeRoute and EnsureHostedRuntime.
-func (s *Service) issueCallerToken(userID int64, runtimeID string) (token string, expiresAt time.Time) {
-	token = auth.GenerateOpaqueToken()
-	expiresAt = s.now().UTC().Add(s.callerTTL)
-	s.callerTokens.Issue(token, calltoken.Binding{
-		UserID:    userID,
-		RuntimeID: runtimeID,
-		ExpiresAt: expiresAt,
-	})
-	return token, expiresAt
-}
-
 // resolvePlan wraps `s.plans.Resolve` so the fail-closed contract is enforced
 // uniformly. Errors are translated to service sentinels so the gRPC layer can
 // map them to the right gRPC status code:
@@ -269,172 +272,6 @@ func (s *Service) resolvePlan(ctx context.Context, userID int64) (plan.Effective
 	}
 	// plan.ErrPlanLookupUnavailable AND any unknown error → Unavailable.
 	return plan.EffectiveLimits{}, fmt.Errorf("%w: %v", ErrPlanLookupUnavailable, err)
-}
-
-// ── Register ────────────────────────────────────────────────────────────────
-
-type RegisterArgs struct {
-	RuntimeID       string
-	Source          string // RuntimeSourceHosted only; self_hosted uses RuntimeChannel
-	BindUserID      int64  // required for hosted
-	Name            string // user-visible label; generated for hosted if empty
-	EndpointHost    string
-	GRPCPort        int32
-	DebugPort       int32
-	Capabilities    []string
-	ResourceProfile string
-	Version         string
-}
-
-type RegisterResult struct {
-	Runtime           domain.Runtime
-	RegistrationToken string // issued plaintext; caller treats as secret
-}
-
-func (s *Service) RegisterRuntime(ctx context.Context, args RegisterArgs) (RegisterResult, error) {
-	if args.Source != domain.RuntimeSourceHosted {
-		return RegisterResult{}, fmt.Errorf("%w: RegisterRuntime supports hosted source only; self_hosted uses RuntimeChannel HELLO", ErrInvalidArgument)
-	}
-	if args.EndpointHost == "" || args.GRPCPort <= 0 {
-		return RegisterResult{}, fmt.Errorf("%w: endpoint_host and grpc_port are required", ErrInvalidArgument)
-	}
-	if args.ResourceProfile == "" {
-		return RegisterResult{}, fmt.Errorf("%w: resource_profile is required", ErrInvalidArgument)
-	}
-	if args.BindUserID <= 0 {
-		return RegisterResult{}, fmt.Errorf("%w: bind_user_id is required for hosted source", ErrInvalidArgument)
-	}
-
-	name := args.Name
-	autoName := name == ""
-	if name == "" {
-		name = generateHostedRuntimeName()
-	} else if !validRuntimeName(name) {
-		return RegisterResult{}, fmt.Errorf("%w: name must match %s", ErrInvalidArgument, runtimeNamePattern)
-	}
-	runtimeID := args.RuntimeID
-	if runtimeID == "" {
-		runtimeID = auth.GenerateRuntimeID()
-	}
-
-	limits, err := s.resolvePlan(ctx, args.BindUserID)
-	if err != nil {
-		return RegisterResult{}, err
-	}
-	counts, err := s.repo.CountRuntimesByUser(ctx, args.BindUserID)
-	if err != nil {
-		return RegisterResult{}, err
-	}
-	// 0 = hard cap (forbidden); -1 = unlimited; >0 = real cap.
-	if limits.MaxHostedRuntimes == 0 {
-		return RegisterResult{}, fmt.Errorf("%w: plan %q forbids hosted runtimes", ErrQuotaExceeded, limits.PlanCode)
-	}
-	if limits.MaxHostedRuntimes > 0 && counts.Hosted >= int64(limits.MaxHostedRuntimes) {
-		return RegisterResult{}, fmt.Errorf("%w: plan %q caps hosted runtimes at %d", ErrQuotaExceeded, limits.PlanCode, limits.MaxHostedRuntimes)
-	}
-	if !resourceProfileAllowed(args.ResourceProfile, limits.AllowedResourceProfiles) {
-		return RegisterResult{}, fmt.Errorf("%w: plan %q does not allow resource_profile %q", ErrQuotaExceeded, limits.PlanCode, args.ResourceProfile)
-	}
-
-	now := s.now().UTC()
-	registrationToken := auth.GenerateRegistrationToken()
-
-	rt := domain.Runtime{
-		RuntimeID:       runtimeID,
-		Name:            name,
-		Source:          domain.RuntimeSourceHosted,
-		Role:            domain.CredentialRoleExecutor,
-		EndpointHost:    args.EndpointHost,
-		GRPCPort:        args.GRPCPort,
-		DebugPort:       args.DebugPort,
-		Capabilities:    args.Capabilities,
-		ResourceProfile: args.ResourceProfile,
-		Version:         args.Version,
-		TokenHash:       auth.HashToken(registrationToken),
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
-	rt.UserID = args.BindUserID
-	rt.Status = domain.RuntimeStatusStarting
-	paired := now
-	rt.PairedAt = &paired
-
-	// Hosted source: admission is strict. A non-ended hosted runtime
-	// already occupying this user's name must be explicitly ended before
-	// a replacement can register.
-	maxNameAttempts := len(hostedNameAdjectives) * len(hostedNameNouns)
-	if !autoName {
-		maxNameAttempts = 1
-	}
-	if maxNameAttempts <= 0 {
-		maxNameAttempts = 1
-	}
-	nameOffset := sRandInt(maxNameAttempts)
-	for attempt := 0; attempt < maxNameAttempts; attempt++ {
-		if autoName && attempt > 0 {
-			rt.Name = hostedRuntimeNameForAttempt(nameOffset + attempt)
-		}
-		if err := s.repo.CreateOrReplaceHostedRuntime(ctx, rt); err != nil {
-			if errors.Is(err, repository.ErrConflict) {
-				if autoName {
-					continue
-				}
-				return RegisterResult{}, fmt.Errorf("%w: hosted runtime name occupied; end the existing runtime first", ErrConflict)
-			}
-			return RegisterResult{}, err
-		}
-		return RegisterResult{Runtime: rt, RegistrationToken: registrationToken}, nil
-	}
-
-	return RegisterResult{}, fmt.Errorf("%w: unable to allocate hosted runtime name", ErrConflict)
-}
-
-// ── Heartbeat ───────────────────────────────────────────────────────────────
-
-type HeartbeatResult struct {
-	HeartbeatAt       time.Time
-	ShutdownRequested bool
-	TerminalReason    string
-}
-
-func (s *Service) HeartbeatRuntime(ctx context.Context, runtimeID, presentedToken string) (HeartbeatResult, error) {
-	if runtimeID == "" {
-		return HeartbeatResult{}, fmt.Errorf("%w: runtime_id is required", ErrInvalidArgument)
-	}
-	if presentedToken == "" {
-		return HeartbeatResult{}, fmt.Errorf("%w: registration/session token required in metadata", ErrInvalidArgument)
-	}
-	rt, err := s.repo.GetRuntime(ctx, runtimeID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return HeartbeatResult{}, ErrNotFound
-		}
-		return HeartbeatResult{}, err
-	}
-	if auth.HashToken(presentedToken) != rt.TokenHash {
-		return HeartbeatResult{}, ErrTokenMismatch
-	}
-	if domain.IsRuntimeTerminalStatus(rt.Status) {
-		result := HeartbeatResult{
-			ShutdownRequested: true,
-			TerminalReason:    rt.EndedReason,
-		}
-		if rt.HeartbeatAt != nil {
-			result.HeartbeatAt = *rt.HeartbeatAt
-		}
-		return result, nil
-	}
-	at := s.now().UTC()
-	if err := s.repo.UpdateRuntimeHeartbeat(ctx, runtimeID, at); err != nil {
-		return HeartbeatResult{}, err
-	}
-	switch rt.Status {
-	case domain.RuntimeStatusStarting, domain.RuntimeStatusPaired:
-		s.publishRuntimeEvent(ctx, rt, cpnotify.EventRuntimeStarted, cpnotify.SeverityInfo, fmt.Sprintf("Runtime %s is active.", rt.Name))
-	case domain.RuntimeStatusUnhealthy:
-		s.publishRuntimeEvent(ctx, rt, cpnotify.EventRuntimeRecovered, cpnotify.SeverityInfo, fmt.Sprintf("Runtime %s recovered.", rt.Name))
-	}
-	return HeartbeatResult{HeartbeatAt: at}, nil
 }
 
 // ── List ────────────────────────────────────────────────────────────────────
@@ -501,6 +338,123 @@ func (s *Service) GetRuntime(ctx context.Context, args GetRuntimeArgs) (domain.R
 	return rt, nil
 }
 
+type BootstrapBareRuntimeCertificateArgs struct {
+	UserID          int64
+	RuntimeID       string
+	Name            string
+	CSRPEM          string
+	RemoteIP        string
+	Capabilities    []string
+	ResourceProfile string
+	Version         string
+}
+
+type BootstrapBareRuntimeCertificateResult struct {
+	RuntimeID           string
+	Name                string
+	ClientCertPEM       string
+	ServerCAPEM         string
+	ClientCertExpiresAt time.Time
+}
+
+func (s *Service) BootstrapBareRuntimeCertificate(ctx context.Context, args BootstrapBareRuntimeCertificateArgs) (BootstrapBareRuntimeCertificateResult, error) {
+	if !s.runtimePlatform.DebugBareRuntimeEnabled {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: bare runtime debug gate disabled", ErrPermissionDenied)
+	}
+	if !ipAllowed(args.RemoteIP, s.runtimePlatform.BareBootstrapIPAllowlist) {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: remote IP is not allowlisted for bare runtime bootstrap", ErrPermissionDenied)
+	}
+	args.RuntimeID = strings.TrimSpace(args.RuntimeID)
+	args.Name = strings.TrimSpace(args.Name)
+	if args.UserID <= 0 || args.RuntimeID == "" {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: user_id and runtime_id are required", ErrInvalidArgument)
+	}
+	if args.Name == "" {
+		args.Name = "bare-" + args.RuntimeID
+	}
+	if !validRuntimeName(args.Name) {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: name must match %s", ErrInvalidArgument, runtimeNamePattern)
+	}
+	if s.runtimeCertSigner == nil {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: runtime certificate signer is not configured", ErrProvisionerUnavailable)
+	}
+	if len(s.runtimeServerCAPEM) == 0 {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: runtime server ca is not configured", ErrProvisionerUnavailable)
+	}
+	now := s.now().UTC()
+	certPEM, cert, err := s.runtimeCertSigner.SignRuntimeClientCertificate(runtimecert.SignRequest{
+		CSRPEM:    []byte(args.CSRPEM),
+		RuntimeID: args.RuntimeID,
+		UserID:    args.UserID,
+		Source:    domain.RuntimeSourceBare,
+		Role:      string(domain.CredentialRoleExecutor),
+		Name:      args.Name,
+		TTL:       s.runtimePlatform.BareCertificateTTL,
+		Now:       now,
+	})
+	if err != nil {
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: sign bare runtime certificate: %v", ErrInvalidArgument, err)
+	}
+	expiresAt := cert.NotAfter
+	downloadedAt := now
+	cred := domain.RuntimeCredential{
+		KeyID:                 "bare-" + args.RuntimeID,
+		UserID:                args.UserID,
+		Label:                 "bare:" + args.Name,
+		Role:                  domain.CredentialRoleExecutor,
+		Status:                domain.CredentialStatusDownloaded,
+		CreatedAt:             now,
+		DownloadedAt:          &downloadedAt,
+		ExpiresAt:             &expiresAt,
+		ClientCertPEM:         string(certPEM),
+		ClientCertFingerprint: runtimecert.Fingerprint(cert),
+		ClientCertExpiresAt:   &expiresAt,
+		Issuer:                domain.RuntimeCredentialIssuerBareDebug,
+	}
+	if err := s.repo.CreateRuntimeCredential(ctx, cred); err != nil {
+		if errors.Is(err, repository.ErrConflict) {
+			return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("%w: bare runtime credential already exists for runtime_id", ErrConflict)
+		}
+		return BootstrapBareRuntimeCertificateResult{}, fmt.Errorf("persist bare runtime credential: %w", err)
+	}
+	return BootstrapBareRuntimeCertificateResult{
+		RuntimeID:           args.RuntimeID,
+		Name:                args.Name,
+		ClientCertPEM:       string(certPEM),
+		ServerCAPEM:         string(s.runtimeServerCAPEM),
+		ClientCertExpiresAt: expiresAt,
+	}, nil
+}
+
+func ipAllowed(ipText string, cidrs []string) bool {
+	ipText = strings.TrimSpace(ipText)
+	ip := net.ParseIP(ipText)
+	if ip == nil {
+		if host, _, err := net.SplitHostPort(ipText); err == nil {
+			ip = net.ParseIP(host)
+		}
+	}
+	if ip == nil {
+		return false
+	}
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if _, network, err := net.ParseCIDR(c); err == nil {
+			if network.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if allowedIP := net.ParseIP(c); allowedIP != nil && allowedIP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // ── End ────────────────────────────────────────────────────────────────────
 
 type EndRuntimeArgs struct {
@@ -529,7 +483,7 @@ type ForceEndAudit struct {
 	AffectedSessionIDs []string
 }
 
-func (r ForceEndRequest) Audit(runtimeID string, sessions []*accountv1.StrategySessionEntry) ForceEndAudit {
+func (r ForceEndRequest) Audit(runtimeID string, sessions []*portfoliov1.StrategySessionEntry) ForceEndAudit {
 	ids := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess == nil || sess.GetSessionId() == "" {
@@ -607,6 +561,10 @@ type runtimeCleanupResult struct {
 	At     time.Time
 }
 
+type runtimeDiagnosticsProvider interface {
+	Diagnostics(ctx context.Context, handle string) (string, error)
+}
+
 func (s *Service) deprovisionHostedRuntime(runtimeID string) runtimeCleanupResult {
 	return s.deprovisionHostedRuntimeHandle(runtimeID, hostedRuntimeHandle(runtimeID))
 }
@@ -650,14 +608,14 @@ func (s *Service) recordRuntimeCleanupState(runtimeID, status, reason string, at
 	}
 }
 
-func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) ([]*accountv1.StrategySessionEntry, error) {
+func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) ([]*portfoliov1.StrategySessionEntry, error) {
 	if runtimeID == "" {
 		return nil, nil
 	}
 	if s.sessionClient == nil {
 		return nil, fmt.Errorf("%w: core-service session client is not configured", ErrSessionLookupUnavailable)
 	}
-	resp, err := s.sessionClient.ListRunningSessions(ctx, &accountv1.ListRunningSessionsRequest{RuntimeId: runtimeID})
+	resp, err := s.sessionClient.ListRunningSessions(ctx, &portfoliov1.ListRunningSessionsRequest{RuntimeId: runtimeID})
 	if err != nil {
 		return nil, fmt.Errorf("%w: list runtime sessions for %s: %v", ErrSessionLookupUnavailable, runtimeID, err)
 	}
@@ -667,7 +625,7 @@ func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) 
 	return resp.GetSessions(), nil
 }
 
-func describeSessionBlocker(sess *accountv1.StrategySessionEntry) string {
+func describeSessionBlocker(sess *portfoliov1.StrategySessionEntry) string {
 	if sess == nil {
 		return "<unknown>"
 	}
@@ -716,7 +674,7 @@ func (s *Service) markRuntimeSessionsRecoverable(ctx context.Context, runtimeID,
 	if s.sessionClient == nil || runtimeID == "" {
 		return
 	}
-	_, _ = s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &accountv1.MarkRuntimeSessionsRecoverableRequest{
+	_, _ = s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &portfoliov1.MarkRuntimeSessionsRecoverableRequest{
 		RuntimeId: runtimeID,
 		Error:     errMsg,
 	})
@@ -730,17 +688,13 @@ type ResolveByIDArgs struct {
 	// Role is the intended session role. Empty means executor for backward
 	// compatibility with existing strategy launch paths.
 	Role string
-	// Environment is the requested account/session environment when the caller has it.
+	// Environment is the requested portfolio/session environment when the caller has it.
 	// Debugger routes require backtest; executor routes support backtest/demo.
 	Environment int
 }
 
 type ResolveResult struct {
-	Runtime              domain.Runtime
-	GRPCEndpoint         string
-	DebugEndpoint        string
-	CallerToken          string
-	CallerTokenExpiresAt time.Time
+	Runtime domain.Runtime
 }
 
 func (s *Service) ResolveRuntimeRouteByID(ctx context.Context, args ResolveByIDArgs) (ResolveResult, error) {
@@ -834,23 +788,7 @@ func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, u
 		return ResolveResult{}, fmt.Errorf("%w: plan %q caps self_hosted runtimes at %d, user has %d", ErrQuotaExceeded, limits.PlanCode, limits.MaxSelfHostedRuntimes, counts.SelfHosted)
 	}
 
-	if rt.Source == domain.RuntimeSourceSelfHosted {
-		return ResolveResult{Runtime: rt}, nil
-	}
-
-	callerToken, callerExpiry := s.issueCallerToken(userID, rt.RuntimeID)
-	grpcEndpoint := fmt.Sprintf("%s:%d", rt.EndpointHost, rt.GRPCPort)
-	debugEndpoint := ""
-	if rt.DebugPort > 0 {
-		debugEndpoint = fmt.Sprintf("%s:%d", rt.EndpointHost, rt.DebugPort)
-	}
-	return ResolveResult{
-		Runtime:              rt,
-		GRPCEndpoint:         grpcEndpoint,
-		DebugEndpoint:        debugEndpoint,
-		CallerToken:          callerToken,
-		CallerTokenExpiresAt: callerExpiry,
-	}, nil
+	return ResolveResult{Runtime: rt}, nil
 }
 
 // ── EnsureHostedRuntime ─────────────────────────────────────────────────────
@@ -864,11 +802,7 @@ type EnsureHostedRuntimeArgs struct {
 
 // EnsureHostedRuntimeResult: the route + provenance flag.
 type EnsureHostedRuntimeResult struct {
-	Runtime              domain.Runtime
-	GRPCEndpoint         string
-	DebugEndpoint        string
-	CallerToken          string
-	CallerTokenExpiresAt time.Time
+	Runtime domain.Runtime
 	// Provisioned is true when a fresh container was started by this
 	// call, false when an existing healthy runtime was returned.
 	Provisioned bool
@@ -881,10 +815,10 @@ type EnsureHostedRuntimeResult struct {
 //  1. user_id required; manual name must match the runtime-name contract
 //  2. fast path for manual name: existing runtime is healthy → return it
 //  3. plan / quota / profile checks fail-closed
-//  4. allocate runtime_id + port + token
+//  4. allocate runtime_id and hosted RuntimeChannel credential
 //  5. call provisioner.Provision
-//  6. wait for runtime to call RegisterRuntime back (poll repo)
-//  7. return route
+//  6. wait for runtime to connect through RuntimeChannel (poll repo)
+//  7. return runtime
 //
 // The wait in step 6 polls `s.repo.GetRuntime` until the row exists with
 // status='paired' or 'active'. A registration timeout deprovisions the
@@ -1006,6 +940,10 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 	if hostedCredential.KeyID != "" {
 		plan.RuntimeCredentialKeyID = hostedCredential.KeyID
 		plan.RuntimeCredentialPrivateKeyPEM = hostedCredential.PrivateKeyPEM
+		plan.RuntimeClientCertPEM = hostedCredential.ClientCertPEM
+		plan.RuntimeClientKeyPEM = hostedCredential.ClientKeyPEM
+		plan.RuntimeServerCAPEM = hostedCredential.ServerCAPEM
+		plan.RuntimeChannelTLSServerName = s.runtimeChannelTLSServerName
 	}
 
 	handle, err := s.provisioner.Provision(ctx, plan)
@@ -1016,7 +954,7 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 		return EnsureHostedRuntimeResult{}, fmt.Errorf("%w: %v", ErrProvisionerUnavailable, err)
 	}
 
-	// Wait for the runtime's section-4 self-register code to land a row.
+	// Wait for the runtime to complete RuntimeChannel HELLO and land a row.
 	timeout := time.Duration(s.provisioning.RegistrationTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -1026,22 +964,14 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 		// Best-effort cleanup. The result is persisted when the runtime row
 		// exists, so hosted deprovision failures are visible in Runtime
 		// Management instead of being reduced to a one-off startup error.
+		err = s.withRuntimeStartupDiagnostics(err, handle)
 		s.deprovisionHostedRuntimeHandle(runtimeID, handle)
 		return EnsureHostedRuntimeResult{}, err
 	}
 
-	callerToken, callerExpiry := s.issueCallerToken(args.UserID, rt.RuntimeID)
-	debugEndpoint := ""
-	if rt.DebugPort > 0 {
-		debugEndpoint = fmt.Sprintf("%s:%d", rt.EndpointHost, rt.DebugPort)
-	}
 	return EnsureHostedRuntimeResult{
-		Runtime:              rt,
-		GRPCEndpoint:         fmt.Sprintf("%s:%d", rt.EndpointHost, rt.GRPCPort),
-		DebugEndpoint:        debugEndpoint,
-		CallerToken:          callerToken,
-		CallerTokenExpiresAt: callerExpiry,
-		Provisioned:          true,
+		Runtime:     rt,
+		Provisioned: true,
 	}, nil
 }
 
@@ -1075,19 +1005,9 @@ func (s *Service) tryReuseExisting(rt domain.Runtime) (EnsureHostedRuntimeResult
 	if now.Sub(*rt.ConnectionOwnerHeartbeatAt) > s.heartbeatGrace {
 		return EnsureHostedRuntimeResult{}, false
 	}
-	callerToken, callerExpiry := s.issueCallerToken(rt.UserID, rt.RuntimeID)
-	debugEndpoint := ""
-	if rt.DebugPort > 0 {
-		debugEndpoint = fmt.Sprintf("%s:%d", rt.EndpointHost, rt.DebugPort)
-	}
-	_ = now // 'now' is no longer used but kept above for the lastSeen guard
 	return EnsureHostedRuntimeResult{
-		Runtime:              rt,
-		GRPCEndpoint:         fmt.Sprintf("%s:%d", rt.EndpointHost, rt.GRPCPort),
-		DebugEndpoint:        debugEndpoint,
-		CallerToken:          callerToken,
-		CallerTokenExpiresAt: callerExpiry,
-		Provisioned:          false,
+		Runtime:     rt,
+		Provisioned: false,
 	}, true
 }
 
@@ -1135,6 +1055,30 @@ func (s *Service) waitForRegistration(ctx context.Context, runtimeID string, tim
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+func (s *Service) withRuntimeStartupDiagnostics(err error, handle string) error {
+	if err == nil || handle == "" || s.provisioner == nil {
+		return err
+	}
+	diagProvider, ok := s.provisioner.(runtimeDiagnosticsProvider)
+	if !ok {
+		return err
+	}
+	diagCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	diag, diagErr := diagProvider.Diagnostics(diagCtx, handle)
+	if diagErr != nil {
+		if text := strings.TrimSpace(diagErr.Error()); text != "" {
+			return fmt.Errorf("%w; runtime diagnostics failed: %s", err, text)
+		}
+		return err
+	}
+	diag = strings.TrimSpace(diag)
+	if diag == "" {
+		return err
+	}
+	return fmt.Errorf("%w; runtime diagnostics: %s", err, diag)
 }
 
 func (s *Service) findRuntimeByUserNameSource(ctx context.Context, userID int64, name, source string, includeEnded bool) (domain.Runtime, bool, error) {
@@ -1202,40 +1146,4 @@ func hostedRuntimeNameForAttempt(attempt int) string {
 	adjective := hostedNameAdjectives[n%len(hostedNameAdjectives)]
 	noun := hostedNameNouns[(n/len(hostedNameAdjectives))%len(hostedNameNouns)]
 	return fmt.Sprintf("hosted-%s-%s", adjective, noun)
-}
-
-// ── ValidateCallerToken ─────────────────────────────────────────────────────
-
-// ValidateCallerTokenArgs is the input to ValidateCallerToken.
-type ValidateCallerTokenArgs struct {
-	Token     string
-	RuntimeID string
-}
-
-// ValidateCallerTokenResult mirrors the gRPC response shape.
-type ValidateCallerTokenResult struct {
-	Valid  bool
-	UserID int64
-	Reason string
-}
-
-// ValidateCallerToken is the runtime-side hook for verifying inbound
-// `x-caller-token` metadata. The strategy-runtime gRPC interceptor calls
-// this before invoking the actual RPC handler.
-//
-// Returns Valid=false with a Reason when the token is unknown / expired
-// / bound to a different runtime. The gRPC layer maps the typed result
-// into a 200 response (not an error) so the runtime can decide
-// PermissionDenied vs Unauthenticated based on its own policy.
-func (s *Service) ValidateCallerToken(ctx context.Context, args ValidateCallerTokenArgs) (ValidateCallerTokenResult, error) {
-	_ = ctx // ctx unused for the in-memory store; kept for API symmetry
-	if args.Token == "" {
-		return ValidateCallerTokenResult{Valid: false, Reason: string(calltoken.ReasonUnknown)}, nil
-	}
-	uid, valid, reason := s.callerTokens.Validate(args.Token, args.RuntimeID)
-	return ValidateCallerTokenResult{
-		Valid:  valid,
-		UserID: uid,
-		Reason: string(reason),
-	}, nil
 }

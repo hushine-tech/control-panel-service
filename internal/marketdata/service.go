@@ -280,8 +280,8 @@ func toProtoRequest(r domain.MarketDataRequest) *mdv1.MarketDataRequest {
 		CreatedAt:         timestamppb.New(r.CreatedAt),
 		UpdatedAt:         timestamppb.New(r.UpdatedAt),
 	}
-	if r.AccountID != nil {
-		out.AccountId = *r.AccountID
+	if r.PortfolioID != nil {
+		out.PortfolioId = *r.PortfolioID
 	}
 	if r.CancelledAt != nil {
 		out.CancelledAt = timestamppb.New(*r.CancelledAt)
@@ -293,7 +293,7 @@ func toProtoHistoryRequest(r domain.MarketDataHistoryRequest) *mdv1.MarketDataRe
 	out := &mdv1.MarketDataRequest{
 		RequestId:         r.RequestID,
 		UserId:            r.UserID,
-		AccountId:         0,
+		PortfolioId:         0,
 		StreamId:          0,
 		Key:               toProtoStreamKey(r.Key),
 		NeedsLiveDelivery: false,
@@ -306,8 +306,8 @@ func toProtoHistoryRequest(r domain.MarketDataHistoryRequest) *mdv1.MarketDataRe
 		CreatedAt:         timestamppb.New(r.CreatedAt),
 		UpdatedAt:         timestamppb.New(r.UpdatedAt),
 	}
-	if r.AccountID != nil {
-		out.AccountId = *r.AccountID
+	if r.PortfolioID != nil {
+		out.PortfolioId = *r.PortfolioID
 	}
 	if r.CoveredStartAt != nil {
 		out.CoveredStartAt = timestamppb.New(*r.CoveredStartAt)
@@ -333,8 +333,8 @@ func toProtoLease(l domain.MarketDataLease) *mdv1.MarketDataLease {
 	if l.StrategyID != nil {
 		out.StrategyId = *l.StrategyID
 	}
-	if l.AccountID != nil {
-		out.AccountId = *l.AccountID
+	if l.PortfolioID != nil {
+		out.PortfolioId = *l.PortfolioID
 	}
 	if l.ReleasedAt != nil {
 		out.ReleasedAt = timestamppb.New(*l.ReleasedAt)
@@ -542,9 +542,9 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 	if err != nil {
 		return nil, err
 	}
-	var accountID *int64
-	if aid := req.GetAccountId(); aid > 0 {
-		accountID = &aid
+	var portfolioID *int64
+	if aid := req.GetPortfolioId(); aid > 0 {
+		portfolioID = &aid
 	}
 	if scope == domain.RequestScopeHistorical {
 		if req.GetNeedsLiveDelivery() {
@@ -554,7 +554,7 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 		if err != nil {
 			return nil, err
 		}
-		r, err := s.repo.UpsertMarketDataHistoryRequest(ctx, req.GetUserId(), accountID, key, startAt, endAt)
+		r, err := s.repo.UpsertMarketDataHistoryRequest(ctx, req.GetUserId(), portfolioID, key, startAt, endAt)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "upsert historical market-data request: %v", err)
 		}
@@ -563,7 +563,7 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 		}, nil
 	}
 
-	r, err := s.repo.UpsertMarketDataRequest(ctx, req.GetUserId(), accountID, key, req.GetNeedsLiveDelivery())
+	r, err := s.repo.UpsertMarketDataRequest(ctx, req.GetUserId(), portfolioID, key, req.GetNeedsLiveDelivery())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "upsert market-data request: %v", err)
 	}
@@ -1119,15 +1119,15 @@ func (s *Service) CreateOrRenewMarketDataLease(ctx context.Context, req *mdv1.Cr
 		ttl = maxLeaseTTL
 	}
 
-	var strategyID, accountID *int64
+	var strategyID, portfolioID *int64
 	if v := req.GetStrategyId(); v > 0 {
 		strategyID = &v
 	}
-	if v := req.GetAccountId(); v > 0 {
-		accountID = &v
+	if v := req.GetPortfolioId(); v > 0 {
+		portfolioID = &v
 	}
 
-	lease, err := s.repo.CreateOrRenewLease(ctx, req.GetSessionId(), strategyID, accountID, req.GetStreamId(), ttl)
+	lease, err := s.repo.CreateOrRenewLease(ctx, req.GetSessionId(), strategyID, portfolioID, req.GetStreamId(), ttl)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create/renew lease: %v", err)
 	}

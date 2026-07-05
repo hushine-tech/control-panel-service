@@ -126,7 +126,7 @@ func TestLoadDebugDatasetRejectsExecutorRuntime(t *testing.T) {
 	svc := New(repo, &fakeCommander{}, nil)
 
 	_, err := svc.LoadDebugDataset(context.Background(), LoadDatasetArgs{
-		UserID: 7, AccountID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
+		UserID: 7, PortfolioID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
 		StartTimeMS: 1760000000000, EndTimeMS: 1760000060000,
 	})
 	if status.Code(err) != codes.FailedPrecondition {
@@ -144,7 +144,7 @@ func TestLoadDebugDatasetStoresMetadataAfterRuntimeAccepts(t *testing.T) {
 	svc.SetClock(func() time.Time { return time.UnixMilli(start).UTC() })
 
 	state, err := svc.LoadDebugDataset(context.Background(), LoadDatasetArgs{
-		UserID: 7, AccountID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
+		UserID: 7, PortfolioID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
 		StartTimeMS: start, EndTimeMS: start + 60000,
 	})
 	if err != nil {
@@ -171,7 +171,7 @@ func TestLoadDebugDatasetRejectsMissingCoverage(t *testing.T) {
 	svc := New(repo, &fakeCommander{}, fakeKlines{rows: nil})
 
 	_, err := svc.LoadDebugDataset(context.Background(), LoadDatasetArgs{
-		UserID: 7, AccountID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
+		UserID: 7, PortfolioID: 10, RuntimeID: "rt-debug", Market: "spot", Symbol: "ETHUSDT", Interval: "1m",
 		StartTimeMS: start, EndTimeMS: start + 60000,
 	})
 	if status.Code(err) != codes.FailedPrecondition {

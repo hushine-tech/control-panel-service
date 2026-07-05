@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -17,13 +18,9 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
-
-// runtimeTokenMetadataKey is the gRPC metadata key the runtime presents on
-// Heartbeat / future business calls. Lower-case per gRPC convention.
-const runtimeTokenMetadataKey = "x-runtime-token"
 
 // ControlPanelGRPCService is the wire-layer wrapper over Service. It also
 // dispatches the Phase D3 credential RPCs to a separate credential.Service
@@ -38,7 +35,7 @@ type ControlPanelGRPCService struct {
 }
 
 type strategyStatusReader interface {
-	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
+	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
 }
 
 // NewControlPanelGRPCService constructs the gRPC adapter. credSvc may be
@@ -55,56 +52,6 @@ func NewControlPanelGRPCService(svc *Service, credSvc *credential.Service, chann
 
 func (g *ControlPanelGRPCService) SetDebuggerService(debugSvc *debugger.Service) {
 	g.debugSvc = debugSvc
-}
-
-// ── RegisterRuntime ─────────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) RegisterRuntime(ctx context.Context, req *cpv1.RegisterRuntimeRequest) (*cpv1.RegisterRuntimeResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	args := RegisterArgs{
-		RuntimeID:       req.GetRuntimeId(),
-		Source:          req.GetSource(),
-		BindUserID:      req.GetBindUserId(),
-		Name:            req.GetName(),
-		EndpointHost:    req.GetEndpointHost(),
-		GRPCPort:        req.GetGrpcPort(),
-		DebugPort:       req.GetDebugPort(),
-		Capabilities:    req.GetCapabilities(),
-		ResourceProfile: req.GetResourceProfile(),
-		Version:         req.GetVersion(),
-	}
-	result, err := g.svc.RegisterRuntime(ctx, args)
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	resp := &cpv1.RegisterRuntimeResponse{
-		Runtime:           runtimeToProto(result.Runtime),
-		RegistrationToken: result.RegistrationToken,
-	}
-	return resp, nil
-}
-
-// ── HeartbeatRuntime ────────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) HeartbeatRuntime(ctx context.Context, req *cpv1.HeartbeatRuntimeRequest) (*cpv1.HeartbeatRuntimeResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	token := extractRuntimeToken(ctx)
-	result, err := g.svc.HeartbeatRuntime(ctx, req.GetRuntimeId(), token)
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	resp := &cpv1.HeartbeatRuntimeResponse{
-		ShutdownRequested: result.ShutdownRequested,
-		TerminalReason:    result.TerminalReason,
-	}
-	if !result.HeartbeatAt.IsZero() {
-		resp.HeartbeatAt = timestamppb.New(result.HeartbeatAt)
-	}
-	return resp, nil
 }
 
 // ── ListRuntimes ────────────────────────────────────────────────────────────
@@ -175,16 +122,9 @@ func (g *ControlPanelGRPCService) ResolveRuntimeRouteByID(ctx context.Context, r
 	if err != nil {
 		return nil, mapErrorToStatus(err)
 	}
-	resp := &cpv1.ResolveRuntimeRouteResponse{
-		Runtime:       runtimeToProto(result.Runtime),
-		GrpcEndpoint:  result.GRPCEndpoint,
-		DebugEndpoint: result.DebugEndpoint,
-		CallerToken:   result.CallerToken,
-	}
-	if !result.CallerTokenExpiresAt.IsZero() {
-		resp.CallerTokenExpiresAt = timestamppb.New(result.CallerTokenExpiresAt)
-	}
-	return resp, nil
+	return &cpv1.ResolveRuntimeRouteResponse{
+		Runtime: runtimeToProto(result.Runtime),
+	}, nil
 }
 
 // ── EnsureHostedRuntime ─────────────────────────────────────────────────────
@@ -202,36 +142,10 @@ func (g *ControlPanelGRPCService) EnsureHostedRuntime(ctx context.Context, req *
 		return nil, mapErrorToStatus(err)
 	}
 	resp := &cpv1.EnsureHostedRuntimeResponse{
-		Runtime:       runtimeToProto(result.Runtime),
-		GrpcEndpoint:  result.GRPCEndpoint,
-		DebugEndpoint: result.DebugEndpoint,
-		CallerToken:   result.CallerToken,
-		Provisioned:   result.Provisioned,
-	}
-	if !result.CallerTokenExpiresAt.IsZero() {
-		resp.CallerTokenExpiresAt = timestamppb.New(result.CallerTokenExpiresAt)
+		Runtime:     runtimeToProto(result.Runtime),
+		Provisioned: result.Provisioned,
 	}
 	return resp, nil
-}
-
-// ── ValidateCallerToken ─────────────────────────────────────────────────────
-
-func (g *ControlPanelGRPCService) ValidateCallerToken(ctx context.Context, req *cpv1.ValidateCallerTokenRequest) (*cpv1.ValidateCallerTokenResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	result, err := g.svc.ValidateCallerToken(ctx, ValidateCallerTokenArgs{
-		Token:     req.GetCallerToken(),
-		RuntimeID: req.GetRuntimeId(),
-	})
-	if err != nil {
-		return nil, mapErrorToStatus(err)
-	}
-	return &cpv1.ValidateCallerTokenResponse{
-		Valid:  result.Valid,
-		UserId: result.UserID,
-		Reason: result.Reason,
-	}, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -309,7 +223,7 @@ func debugDatasetToProto(state *domain.DebugDatasetState) *cpv1.DebugDatasetStat
 	return &cpv1.DebugDatasetState{
 		DatasetId:      state.DatasetID,
 		UserId:         state.UserID,
-		AccountId:      state.AccountID,
+		PortfolioId:      state.PortfolioID,
 		RuntimeId:      state.RuntimeID,
 		Market:         state.Market,
 		Symbol:         state.Symbol,
@@ -322,18 +236,6 @@ func debugDatasetToProto(state *domain.DebugDatasetState) *cpv1.DebugDatasetStat
 		State:          state.State,
 		LastError:      state.LastError,
 	}
-}
-
-func extractRuntimeToken(ctx context.Context) string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ""
-	}
-	values := md.Get(runtimeTokenMetadataKey)
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
 
 // mapErrorToStatus translates Service sentinels and unrelated errors to
@@ -386,13 +288,61 @@ func (g *ControlPanelGRPCService) IssueRuntimeCredential(ctx context.Context, re
 	if err != nil {
 		return nil, mapCredentialError(err)
 	}
-	return &cpv1.IssueRuntimeCredentialResponse{
+	resp := &cpv1.IssueRuntimeCredentialResponse{
 		KeyId:         issued.KeyID,
 		PrivateKeyPem: issued.PrivateKeyPEM,
 		PublicKeyPem:  issued.PublicKeyPEM,
 		CreatedAt:     timestamppb.New(issued.CreatedAt),
 		Role:          string(issued.Role),
+		ClientCertPem: issued.ClientCertPEM,
+		ClientKeyPem:  issued.ClientKeyPEM,
+		ServerCaPem:   issued.ServerCAPEM,
+	}
+	if issued.ClientCertExpiresAt != nil {
+		resp.ClientCertExpiresAt = timestamppb.New(*issued.ClientCertExpiresAt)
+	}
+	return resp, nil
+}
+
+func (g *ControlPanelGRPCService) BootstrapBareRuntimeCertificate(ctx context.Context, req *cpv1.BootstrapBareRuntimeCertificateRequest) (*cpv1.BootstrapBareRuntimeCertificateResponse, error) {
+	if g.svc == nil {
+		return nil, status.Error(codes.FailedPrecondition, "runtime service is not configured")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	res, err := g.svc.BootstrapBareRuntimeCertificate(ctx, BootstrapBareRuntimeCertificateArgs{
+		UserID:          req.GetUserId(),
+		RuntimeID:       req.GetRuntimeId(),
+		Name:            req.GetName(),
+		CSRPEM:          req.GetCsrPem(),
+		RemoteIP:        remoteIPFromContext(ctx),
+		Capabilities:    append([]string(nil), req.GetCapabilities()...),
+		ResourceProfile: req.GetResourceProfile(),
+		Version:         req.GetVersion(),
+	})
+	if err != nil {
+		return nil, mapErrorToStatus(err)
+	}
+	return &cpv1.BootstrapBareRuntimeCertificateResponse{
+		RuntimeId:           res.RuntimeID,
+		Name:                res.Name,
+		ClientCertPem:       res.ClientCertPEM,
+		ServerCaPem:         res.ServerCAPEM,
+		ClientCertExpiresAt: timestamppb.New(res.ClientCertExpiresAt),
 	}, nil
+}
+
+func remoteIPFromContext(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return ""
+	}
+	addr := p.Addr.String()
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (g *ControlPanelGRPCService) ListRuntimeCredentials(ctx context.Context, req *cpv1.ListRuntimeCredentialsRequest) (*cpv1.ListRuntimeCredentialsResponse, error) {
@@ -467,10 +417,7 @@ func (g *ControlPanelGRPCService) RevokeRuntimeCredential(ctx context.Context, r
 // ── RuntimeChannel (Phase D3 self-hosted runtimes) ─────────────────────────
 
 func (g *ControlPanelGRPCService) RuntimeChannel(stream cpv1.ControlPanelService_RuntimeChannelServer) error {
-	if g.channelSvc == nil {
-		return status.Error(codes.FailedPrecondition, "runtime channel service is not configured")
-	}
-	return g.channelSvc.Handle(stream)
+	return status.Error(codes.FailedPrecondition, "RuntimeChannel is served on the dedicated runtime_channel_server listener")
 }
 
 func (g *ControlPanelGRPCService) PrepareDebugWorkspace(ctx context.Context, req *cpv1.PrepareDebugWorkspaceRequest) (*cpv1.PrepareDebugWorkspaceResponse, error) {
@@ -501,7 +448,7 @@ func (g *ControlPanelGRPCService) LoadDebugDataset(ctx context.Context, req *cpv
 	}
 	state, err := g.debugSvc.LoadDebugDataset(ctx, debugger.LoadDatasetArgs{
 		UserID:      req.GetUserId(),
-		AccountID:   req.GetAccountId(),
+		PortfolioID:   req.GetPortfolioId(),
 		RuntimeID:   req.GetRuntimeId(),
 		Market:      req.GetMarket(),
 		Symbol:      req.GetSymbol(),
@@ -560,7 +507,7 @@ func (g *ControlPanelGRPCService) PublishRuntimeNotification(ctx context.Context
 		Severity:      severity,
 		RuntimeID:     rt.RuntimeID,
 		RuntimeName:   rt.Name,
-		AccountID:     req.GetAccountId(),
+		PortfolioID:     req.GetPortfolioId(),
 		StrategyID:    req.GetStrategyId(),
 		SessionID:     strings.TrimSpace(req.GetSessionId()),
 		Title:         strings.TrimSpace(req.GetTitle()),
@@ -672,15 +619,17 @@ func notificationEventType(category, severity string) string {
 
 func credentialToProto(c domain.RuntimeCredential) *cpv1.RuntimeCredential {
 	out := &cpv1.RuntimeCredential{
-		KeyId:             c.KeyID,
-		UserId:            c.UserID,
-		Label:             c.Label,
-		Status:            string(c.Status),
-		PublicKeyPem:      c.PublicKeyPEM,
-		CreatedAt:         timestamppb.New(c.CreatedAt),
-		Role:              string(c.Role),
-		ConsumedRuntimeId: c.ConsumedRuntimeID,
-		HostedInternal:    c.HostedInternal,
+		KeyId:                 c.KeyID,
+		UserId:                c.UserID,
+		Label:                 c.Label,
+		Status:                string(c.Status),
+		PublicKeyPem:          c.PublicKeyPEM,
+		CreatedAt:             timestamppb.New(c.CreatedAt),
+		Role:                  string(c.Role),
+		ConsumedRuntimeId:     c.ConsumedRuntimeID,
+		HostedInternal:        c.HostedInternal,
+		ClientCertFingerprint: c.ClientCertFingerprint,
+		Issuer:                c.Issuer,
 	}
 	if c.DownloadedAt != nil {
 		out.DownloadedAt = timestamppb.New(*c.DownloadedAt)
@@ -696,6 +645,9 @@ func credentialToProto(c domain.RuntimeCredential) *cpv1.RuntimeCredential {
 	}
 	if c.RevokedAt != nil {
 		out.RevokedAt = timestamppb.New(*c.RevokedAt)
+	}
+	if c.ClientCertExpiresAt != nil {
+		out.ClientCertExpiresAt = timestamppb.New(*c.ClientCertExpiresAt)
 	}
 	return out
 }
@@ -731,6 +683,8 @@ func mapCredentialError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, credential.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, credential.ErrCertificateSignerUnavailable):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}

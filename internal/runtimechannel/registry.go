@@ -169,10 +169,12 @@ func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStr
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if set := r.runtimesByKeyID[rt.KeyID]; len(set) > 0 {
-		for runtimeID := range set {
-			if runtimeID != rt.RuntimeID {
-				return nil, fmt.Errorf("%w: key_id %s is already used by runtime %s", ErrRuntimeCredentialConnected, rt.KeyID, runtimeID)
+	if rt.KeyID != "" {
+		if set := r.runtimesByKeyID[rt.KeyID]; len(set) > 0 {
+			for runtimeID := range set {
+				if runtimeID != rt.RuntimeID {
+					return nil, fmt.Errorf("%w: key_id %s is already used by runtime %s", ErrRuntimeCredentialConnected, rt.KeyID, runtimeID)
+				}
 			}
 		}
 	}
@@ -182,6 +184,9 @@ func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStr
 	}
 	stream := newRuntimeStream(rt, now)
 	r.streamsByRuntime[rt.RuntimeID] = stream
+	if rt.KeyID == "" {
+		return stream, nil
+	}
 	set := r.runtimesByKeyID[rt.KeyID]
 	if set == nil {
 		set = map[string]struct{}{}

@@ -1,11 +1,11 @@
 // One-shot migration tool for Phase D2.
 //
-// Copies the four market_data_* tables from the account database into the
+// Copies the four market_data_* tables from the portfolio database into the
 // control_panel database. Designed to be idempotent: safe to re-run.
 //
 // Usage:
 //
-//	ACCOUNT_DSN="postgres://..." \
+//	PORTFOLIO_DSN="postgres://..." \
 //	CONTROL_PANEL_DSN="postgres://..." \
 //	go run ./scripts/migrate_market_data
 //
@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	envAccountDSN      = "ACCOUNT_DSN"
+	envPortfolioDSN      = "PORTFOLIO_DSN"
 	envControlPanelDSN = "CONTROL_PANEL_DSN"
 
 	connectTimeout = 10 * time.Second
@@ -54,18 +54,18 @@ var tableColumns = []struct {
 	},
 	{
 		name: "market_data_requests",
-		columns: `request_id, user_id, account_id, exchange, market, kind,
+		columns: `request_id, user_id, portfolio_id, exchange, market, kind,
             symbol, interval, needs_live_delivery, status, stream_id,
             created_at, updated_at, cancelled_at`,
 	},
 	{
 		name: "market_data_leases",
-		columns: `lease_id, session_id, strategy_id, account_id, stream_id,
+		columns: `lease_id, session_id, strategy_id, portfolio_id, stream_id,
             expires_at, last_heartbeat_at, created_at, released_at`,
 	},
 	{
 		name: "market_data_history_requests",
-		columns: `request_id, user_id, account_id, exchange, market, kind,
+		columns: `request_id, user_id, portfolio_id, exchange, market, kind,
             symbol, interval, requested_start_at, requested_end_at,
             covered_start_at, covered_end_at, last_error, status,
             created_at, updated_at, cancelled_at`,
@@ -74,7 +74,7 @@ var tableColumns = []struct {
 
 func main() {
 	fmt.Println("=========================================================")
-	fmt.Println("Phase D2 market-data migration: account → control_panel")
+	fmt.Println("Phase D2 market-data migration: portfolio → control_panel")
 	fmt.Println("=========================================================")
 	fmt.Println()
 	fmt.Println("⚠ BACKUP RECOMMENDATION ⚠")
@@ -86,24 +86,24 @@ func main() {
 	fmt.Println("    --table=market_data_requests \\")
 	fmt.Println("    --table=market_data_leases \\")
 	fmt.Println("    --table=market_data_history_requests \\")
-	fmt.Println("    \"$ACCOUNT_DSN\" > account_market_data_backup.sql")
+	fmt.Println("    \"$PORTFOLIO_DSN\" > portfolio_market_data_backup.sql")
 	fmt.Println()
 	fmt.Println("Press Ctrl+C within 5 seconds to abort if no backup exists.")
 	fmt.Println()
 	time.Sleep(5 * time.Second)
 
-	accountDSN := os.Getenv(envAccountDSN)
+	portfolioDSN := os.Getenv(envPortfolioDSN)
 	controlPanelDSN := os.Getenv(envControlPanelDSN)
-	if accountDSN == "" || controlPanelDSN == "" {
-		log.Fatalf("both %s and %s must be set", envAccountDSN, envControlPanelDSN)
+	if portfolioDSN == "" || controlPanelDSN == "" {
+		log.Fatalf("both %s and %s must be set", envPortfolioDSN, envControlPanelDSN)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 
-	srcDB, err := openDB(ctx, accountDSN, "account")
+	srcDB, err := openDB(ctx, portfolioDSN, "portfolio")
 	if err != nil {
-		log.Fatalf("open account DB: %v", err)
+		log.Fatalf("open portfolio DB: %v", err)
 	}
 	defer srcDB.Close()
 

@@ -16,5 +16,11 @@ BEGIN
     END IF;
 END $$;
 
-ALTER INDEX IF EXISTS uq_session_market_data_subscriptions_active
-    RENAME TO uq_session_market_data_subscriptions_active_environment;
+DO $$
+BEGIN
+    IF to_regclass('uq_session_market_data_subscriptions_active') IS NOT NULL
+       AND to_regclass('uq_session_market_data_subscriptions_active_environment') IS NULL THEN
+        ALTER INDEX uq_session_market_data_subscriptions_active
+            RENAME TO uq_session_market_data_subscriptions_active_environment;
+    END IF;
+END $$;

@@ -35,11 +35,11 @@ var (
 	// the backend-specific error.
 	ErrProvisionFailed = errors.New("provision: backend rejected start")
 
-	// ErrRegistrationTimeout: the container started but did not call
-	// RegisterRuntime within the configured timeout. The runtime is
-	// likely broken; caller should treat this the same way it would
-	// treat an unhealthy runtime.
-	ErrRegistrationTimeout = errors.New("provision: runtime did not self-register in time")
+	// ErrRegistrationTimeout: the container started but did not connect
+	// through RuntimeChannel within the configured timeout. The runtime is
+	// likely broken; caller should treat this the same way it would treat
+	// an unhealthy runtime.
+	ErrRegistrationTimeout = errors.New("provision: runtime did not open RuntimeChannel in time")
 )
 
 // Plan describes the runtime container the caller wants spun up. Filled
@@ -48,16 +48,15 @@ var (
 type Plan struct {
 	// RuntimeID is the platform-generated identity the container will
 	// register with. The provisioner forwards this via env var so the
-	// runtime's section-4 self-register code uses the same id.
+	// first RuntimeChannel HELLO uses the same id.
 	RuntimeID string
 
 	// UserID is the runtime owner. Name is the immutable user-visible label.
 	UserID int64
 	Name   string
 
-	// EndpointHost + GRPCPort: what the runtime advertises to the
-	// control panel at registration time, and what quant-handler will
-	// dial directly (D1 direct-dial; D3 proxied).
+	// EndpointHost + GRPCPort are retained for historical registry fields.
+	// Runtime session traffic is RuntimeChannel-only.
 	EndpointHost string
 	GRPCPort     int
 
@@ -75,9 +74,9 @@ type Plan struct {
 	// register.
 	Capabilities []string
 
-	// ControlPanelGRPC is the address the runtime should dial for self-
-	// registration + heartbeat. The provisioner sets this as an env var
-	// when starting the container.
+	// ControlPanelGRPC is the address the runtime should dial for
+	// RuntimeChannel. The provisioner sets this as an env var when
+	// starting the container.
 	ControlPanelGRPC string
 
 	// RuntimeCredential* are platform-generated hosted-internal credentials.
@@ -85,6 +84,10 @@ type Plan struct {
 	// exposed through user-facing credential APIs.
 	RuntimeCredentialKeyID         string
 	RuntimeCredentialPrivateKeyPEM string
+	RuntimeClientCertPEM           string
+	RuntimeClientKeyPEM            string
+	RuntimeServerCAPEM             string
+	RuntimeChannelTLSServerName    string
 }
 
 // Provisioner is the abstraction Service.EnsureHostedRuntime calls to
@@ -94,17 +97,17 @@ type Plan struct {
 //     when no backend is configured.
 //   - (future) DockerProvisioner — calls `docker run` via os/exec.
 //   - Mock implementations live in tests; they should mimic
-//     "container started successfully and runtime called RegisterRuntime"
-//     by directly inserting a runtime registry row.
+//     "container started successfully and connected through RuntimeChannel"
+//     by inserting a runtime registry row with a connection owner.
 type Provisioner interface {
 	// Provision starts a container per `p`. On success the container
 	// is starting; the caller is responsible for waiting until the
-	// runtime self-registers (NOT the provisioner — that responsibility
-	// stays in the service layer so timeout / repo polling logic is
-	// uniform across backends).
+	// runtime connects through RuntimeChannel (NOT the provisioner — that
+	// responsibility stays in the service layer so timeout / repo polling
+	// logic is uniform across backends).
 	//
-	// Returns a backend-specific handle (container id / pod name) for
-	// audit; the handle is opaque to the service layer.
+	// Returns a backend-specific handle (container id / pod name) for audit;
+	// the handle is opaque to the service layer.
 	Provision(ctx context.Context, p Plan) (handle string, err error)
 
 	// Deprovision removes the runtime's container. Best-effort; failures

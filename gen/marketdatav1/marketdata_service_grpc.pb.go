@@ -56,7 +56,7 @@ const (
 // and the canonical caller for scraper, quant-handler, and strategy-service.
 //
 // Scope: kline only (v1). Field shapes preserved verbatim from the
-// original account.v1 definitions so the migration is wire-compatible —
+// original portfolio.v1 definitions so the migration is wire-compatible —
 // callers only repoint their gRPC channel; their request / response
 // handling is unchanged.
 type MarketDataControlPlaneServiceClient interface {
@@ -350,7 +350,7 @@ func (c *marketDataControlPlaneServiceClient) ReleaseMarketDataWriterLease(ctx c
 // and the canonical caller for scraper, quant-handler, and strategy-service.
 //
 // Scope: kline only (v1). Field shapes preserved verbatim from the
-// original account.v1 definitions so the migration is wire-compatible —
+// original portfolio.v1 definitions so the migration is wire-compatible —
 // callers only repoint their gRPC channel; their request / response
 // handling is unchanged.
 type MarketDataControlPlaneServiceServer interface {

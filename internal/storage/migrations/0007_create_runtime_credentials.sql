@@ -15,7 +15,7 @@
 --     `status='revoked'`, close all streams keyed by `key_id`, mark
 --     associated runtime_registry rows `cancelled`.
 --
--- Cross-DB note: `user_id` is a logical reference to `account.users(id)`.
+-- Cross-DB note: `user_id` is a logical reference to `portfolio.users(id)`.
 -- Same convention as Phase D2 market-data tables — Postgres does not
 -- enforce FKs across databases. Validation lives in the credential
 -- service layer (issue path checks the user exists via
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS runtime_credentials (
     -- The user this credential belongs to. The HELLO signature, after
     -- it verifies, binds the resulting runtime_registry row to this
     -- user_id immediately (no separate pairing step).
-    user_id          BIGINT      NOT NULL,           -- logical FK to account.users(id)
+    user_id          BIGINT      NOT NULL,           -- logical FK to portfolio.users(id)
 
     -- Ed25519 public key in PEM. The private key is never persisted.
     public_key_pem   TEXT        NOT NULL,

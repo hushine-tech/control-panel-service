@@ -19,30 +19,6 @@ func (p *recordingPublisher) Publish(_ context.Context, event cpnotify.Event) er
 	return nil
 }
 
-func TestHeartbeatFirstActivePublishesStartedOnce(t *testing.T) {
-	repo := newStubRepo()
-	pub := &recordingPublisher{}
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	svc.notifications = pub
-
-	res, err := svc.RegisterRuntime(context.Background(), RegisterArgs{
-		Source: domain.RuntimeSourceHosted, BindUserID: 42,
-		EndpointHost: "h", GRPCPort: 1, ResourceProfile: "small",
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), res.Runtime.RuntimeID, res.RegistrationToken); err != nil {
-		t.Fatalf("heartbeat: %v", err)
-	}
-	if _, err := svc.HeartbeatRuntime(context.Background(), res.Runtime.RuntimeID, res.RegistrationToken); err != nil {
-		t.Fatalf("second heartbeat: %v", err)
-	}
-	if len(pub.events) != 1 || pub.events[0].EventType != cpnotify.EventRuntimeStarted {
-		t.Fatalf("events = %+v, want one runtime.started", pub.events)
-	}
-}
-
 func TestReapStaleRuntimesPublishesUnhealthy(t *testing.T) {
 	repo := newStubRepo()
 	pub := &recordingPublisher{}

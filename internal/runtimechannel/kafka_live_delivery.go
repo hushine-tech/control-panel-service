@@ -17,6 +17,7 @@ import (
 
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	mdrepo "github.com/hushine-tech/control-panel-service/internal/marketdata/repository"
+	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 )
 
 const (
@@ -39,16 +40,18 @@ type LiveKlineDeliverer interface {
 }
 
 type KafkaLiveDeliveryConfig struct {
-	Brokers         []string
-	OwnerInstanceID string
-	RefreshInterval time.Duration
-	LeaseTTL        time.Duration
+	Brokers               []string
+	OwnerInstanceID       string
+	RefreshInterval       time.Duration
+	LeaseTTL              time.Duration
+	NotificationPublisher cpnotify.Publisher
 }
 
 type KafkaLiveDeliveryWorker struct {
 	repo      LiveDeliverySubscriptionRepository
 	deliverer LiveKlineDeliverer
 	cfg       KafkaLiveDeliveryConfig
+	notifier  cpnotify.Publisher
 
 	mu          sync.RWMutex
 	subsByRoute map[klineRoute][]domain.SessionMarketDataSubscription
@@ -82,6 +85,7 @@ func NewKafkaLiveDeliveryWorker(repo LiveDeliverySubscriptionRepository, deliver
 		repo:         repo,
 		deliverer:    deliverer,
 		cfg:          cfg,
+		notifier:     cfg.NotificationPublisher,
 		subsByRoute:  map[klineRoute][]domain.SessionMarketDataSubscription{},
 		topicCancels: map[string]*topicConsumer{},
 	}
@@ -400,6 +404,9 @@ func (w *KafkaLiveDeliveryWorker) handleKlineMessage(ctx context.Context, topic 
 			Klines:    []*anypb.Any{packed},
 		}); err != nil {
 			_ = w.recordDeliveryFailure(ctx, sub.SubscriptionID, topic, streamKey, "delivery_error", err)
+			if errors.Is(err, ErrRuntimeDataBackpressure) {
+				w.notifyLiveDataDropped(ctx, sub, topic, partition, offset, streamKey, err)
+			}
 			continue
 		}
 		if err := w.repo.RecordStreamDeliveryProgress(ctx, sub.SubscriptionID, w.cfg.OwnerInstanceID, topic, partition, offset, time.Now().UTC()); err != nil {
@@ -407,6 +414,35 @@ func (w *KafkaLiveDeliveryWorker) handleKlineMessage(ctx context.Context, topic 
 		}
 	}
 	return nil
+}
+
+func (w *KafkaLiveDeliveryWorker) notifyLiveDataDropped(ctx context.Context, sub domain.SessionMarketDataSubscription, topic string, partition int32, offset int64, streamKey string, cause error) {
+	if w == nil || w.notifier == nil || sub.UserID <= 0 {
+		return
+	}
+	err := w.notifier.Publish(ctx, cpnotify.Event{
+		SchemaVersion: cpnotify.SchemaVersion,
+		UserID:        sub.UserID,
+		Category:      cpnotify.CategorySystem,
+		EventType:     cpnotify.EventRuntimeLiveDataDropped,
+		Severity:      cpnotify.SeverityWarn,
+		SourceService: "control-panel-service",
+		RuntimeID:     sub.RuntimeID,
+		SessionID:     sub.SessionID,
+		Title:         "Live market data dropped",
+		Message:       fmt.Sprintf("Live market data was dropped because the runtime channel is backpressured: %s", streamKey),
+		DedupeKey:     fmt.Sprintf("runtime-live-data-dropped:%s:%s", sub.SessionID, streamKey),
+		Metadata: map[string]string{
+			"stream_key": streamKey,
+			"topic":      topic,
+			"partition":  strconv.Itoa(int(partition)),
+			"offset":     strconv.FormatInt(offset, 10),
+			"cause":      cause.Error(),
+		},
+	})
+	if err != nil {
+		log.Printf("publish live data drop notification failed session=%s runtime=%s stream=%s err=%v", sub.SessionID, sub.RuntimeID, streamKey, err)
+	}
 }
 
 func routeFromKlineMessage(topic string, key, value []byte) (klineRoute, error) {

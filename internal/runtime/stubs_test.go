@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	"google.golang.org/grpc"
 )
 
@@ -38,6 +39,9 @@ type fakeProvisioner struct {
 	deprovisions       int
 	deprovisionHandles []string
 	deprovisionErr     error
+	diagnostics        string
+	diagnosticsErr     error
+	diagnosticsCalls   int
 }
 
 type fakeHostedCredentialIssuer struct {
@@ -47,10 +51,10 @@ type fakeHostedCredentialIssuer struct {
 }
 
 type fakeSessionClient struct {
-	listCalls []*accountv1.ListRunningSessionsRequest
-	listResp  []*accountv1.StrategySessionEntry
+	listCalls []*portfoliov1.ListRunningSessionsRequest
+	listResp  []*portfoliov1.StrategySessionEntry
 	listErr   error
-	markCalls []*accountv1.MarkRuntimeSessionsRecoverableRequest
+	markCalls []*portfoliov1.MarkRuntimeSessionsRecoverableRequest
 	markErr   error
 }
 
@@ -59,20 +63,20 @@ type fakeRuntimeStreamCloser struct {
 	err        error
 }
 
-func (f *fakeSessionClient) MarkRuntimeSessionsRecoverable(_ context.Context, req *accountv1.MarkRuntimeSessionsRecoverableRequest, _ ...grpc.CallOption) (*accountv1.MarkRuntimeSessionsRecoverableResponse, error) {
+func (f *fakeSessionClient) MarkRuntimeSessionsRecoverable(_ context.Context, req *portfoliov1.MarkRuntimeSessionsRecoverableRequest, _ ...grpc.CallOption) (*portfoliov1.MarkRuntimeSessionsRecoverableResponse, error) {
 	f.markCalls = append(f.markCalls, req)
 	if f.markErr != nil {
 		return nil, f.markErr
 	}
-	return &accountv1.MarkRuntimeSessionsRecoverableResponse{SessionsMarked: 1}, nil
+	return &portfoliov1.MarkRuntimeSessionsRecoverableResponse{SessionsMarked: 1}, nil
 }
 
-func (f *fakeSessionClient) ListRunningSessions(_ context.Context, req *accountv1.ListRunningSessionsRequest, _ ...grpc.CallOption) (*accountv1.ListRunningSessionsResponse, error) {
+func (f *fakeSessionClient) ListRunningSessions(_ context.Context, req *portfoliov1.ListRunningSessionsRequest, _ ...grpc.CallOption) (*portfoliov1.ListRunningSessionsResponse, error) {
 	f.listCalls = append(f.listCalls, req)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return &accountv1.ListRunningSessionsResponse{Sessions: f.listResp}, nil
+	return &portfoliov1.ListRunningSessionsResponse{Sessions: f.listResp}, nil
 }
 
 func (f *fakeRuntimeStreamCloser) CloseStreamForRuntime(_ context.Context, runtimeID string) (bool, error) {
@@ -150,6 +154,15 @@ func (f *fakeHostedCredentialIssuer) IssueHostedInternalRuntimeCredential(_ cont
 	if issued.PrivateKeyPEM == "" {
 		issued.PrivateKeyPEM = "private-key-pem"
 	}
+	if issued.ClientCertPEM == "" {
+		issued.ClientCertPEM = "client-cert-pem"
+	}
+	if issued.ClientKeyPEM == "" {
+		issued.ClientKeyPEM = "client-key-pem"
+	}
+	if issued.ServerCAPEM == "" {
+		issued.ServerCAPEM = "server-ca-pem"
+	}
 	issued.Role = domain.CredentialRoleExecutor
 	issued.HostedInternal = true
 	return issued, nil
@@ -161,18 +174,27 @@ func (f *fakeProvisioner) Deprovision(_ context.Context, handle string) error {
 	return f.deprovisionErr
 }
 
+func (f *fakeProvisioner) Diagnostics(_ context.Context, _ string) (string, error) {
+	f.diagnosticsCalls++
+	return f.diagnostics, f.diagnosticsErr
+}
+
 // stubRepo is the in-memory repository.Repository used by service tests.
 // It is intentionally permissive: every method is straightforward and only
 // implements the invariants the service code depends on (NotFound on miss,
 // Conflict on duplicate hosted slot / credential binding).
 type stubRepo struct {
-	mu       sync.Mutex
-	runtimes map[string]domain.Runtime
+	mu             sync.Mutex
+	runtimes       map[string]domain.Runtime
+	credentials    map[string]domain.RuntimeCredential
+	credsByRuntime map[string]domain.RuntimeCredential
 }
 
 func newStubRepo() *stubRepo {
 	return &stubRepo{
-		runtimes: map[string]domain.Runtime{},
+		runtimes:       map[string]domain.Runtime{},
+		credentials:    map[string]domain.RuntimeCredential{},
+		credsByRuntime: map[string]domain.RuntimeCredential{},
 	}
 }
 
@@ -239,6 +261,26 @@ func (s *stubRepo) CreateOrReplaceSelfHostedRuntime(_ context.Context, rt domain
 			return repository.ErrConflict
 		}
 	}
+	s.runtimes[rt.RuntimeID] = rt
+	return nil
+}
+
+func (s *stubRepo) CreateOrReplaceBareRuntime(_ context.Context, rt domain.Runtime) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt = normalizeStubRuntimeForWrite(rt)
+	if rt.Source != domain.RuntimeSourceBare || rt.UserID <= 0 || rt.CredentialKeyID != "" {
+		return repository.ErrConflict
+	}
+	if _, ok := s.runtimes[rt.RuntimeID]; ok {
+		return repository.ErrConflict
+	}
+	for _, e := range s.runtimes {
+		if e.UserID == rt.UserID && e.Name == rt.Name {
+			return repository.ErrConflict
+		}
+	}
+	rt.Role = domain.CredentialRoleDebugger
 	s.runtimes[rt.RuntimeID] = rt
 	return nil
 }
@@ -574,10 +616,10 @@ func makeService(repo *stubRepo, planCode string, plans map[string]config.Runtim
 	}
 	resolver := plan.NewResolver(constLookup{code: planCode}, plans, platform)
 	svc := New(repo, resolver, Config{
-		HeartbeatGrace: time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
-		DeathGrace:     time.Duration(platform.DeathGraceSeconds) * time.Second,
-		CallerTokenTTL: time.Duration(platform.CallerTokenTTLSeconds) * time.Second,
-		SessionClient:  &fakeSessionClient{},
+		HeartbeatGrace:  time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
+		DeathGrace:      time.Duration(platform.DeathGraceSeconds) * time.Second,
+		SessionClient:   &fakeSessionClient{},
+		RuntimePlatform: platform,
 	})
 	clock := now
 	svc.SetClock(func() time.Time { return clock })
@@ -629,7 +671,6 @@ func makeServiceWithProvisioner(repo *stubRepo, planCode string, prov provision.
 	svc := New(repo, resolver, Config{
 		HeartbeatGrace: 30 * time.Second,
 		DeathGrace:     5 * time.Minute,
-		CallerTokenTTL: 60 * time.Second,
 		Provisioning:   provCfg,
 		Provisioner:    prov,
 		SessionClient:  &fakeSessionClient{},
@@ -659,7 +700,16 @@ func (c constLookup) GetUserPlanCode(_ context.Context, _ int64) (string, error)
 // out so stubRepo satisfies the full repository.Repository interface keeps
 // the runtime tests untouched.
 
-func (s *stubRepo) CreateRuntimeCredential(_ context.Context, _ domain.RuntimeCredential) error {
+func (s *stubRepo) CreateRuntimeCredential(_ context.Context, cred domain.RuntimeCredential) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.credentials[cred.KeyID]; ok {
+		return repository.ErrConflict
+	}
+	s.credentials[cred.KeyID] = cred
+	if cred.Issuer == domain.RuntimeCredentialIssuerBareDebug && strings.HasPrefix(cred.KeyID, "bare-") {
+		s.credsByRuntime[strings.TrimPrefix(cred.KeyID, "bare-")] = cred
+	}
 	return nil
 }
 

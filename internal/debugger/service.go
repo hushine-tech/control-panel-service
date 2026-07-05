@@ -100,7 +100,7 @@ func (s *Service) PrepareDebugWorkspace(ctx context.Context, args PrepareWorkspa
 
 type LoadDatasetArgs struct {
 	UserID      int64
-	AccountID   int64
+	PortfolioID   int64
 	RuntimeID   string
 	Market      string
 	Symbol      string
@@ -114,8 +114,8 @@ func (s *Service) LoadDebugDataset(ctx context.Context, args LoadDatasetArgs) (d
 	if err != nil {
 		return domain.DebugDatasetState{}, err
 	}
-	if args.AccountID <= 0 {
-		return domain.DebugDatasetState{}, status.Error(codes.InvalidArgument, "account_id is required")
+	if args.PortfolioID <= 0 {
+		return domain.DebugDatasetState{}, status.Error(codes.InvalidArgument, "portfolio_id is required")
 	}
 	if s.klines == nil {
 		return domain.DebugDatasetState{}, status.Error(codes.FailedPrecondition, "market-data query is not configured")
@@ -141,7 +141,7 @@ func (s *Service) LoadDebugDataset(ctx context.Context, args LoadDatasetArgs) (d
 	state := domain.DebugDatasetState{
 		DatasetID:      datasetID,
 		UserID:         args.UserID,
-		AccountID:      args.AccountID,
+		PortfolioID:      args.PortfolioID,
 		RuntimeID:      rt.RuntimeID,
 		Market:         strings.ToLower(strings.TrimSpace(args.Market)),
 		Symbol:         strings.ToUpper(strings.TrimSpace(args.Symbol)),
@@ -156,7 +156,7 @@ func (s *Service) LoadDebugDataset(ctx context.Context, args LoadDatasetArgs) (d
 	payload, err := json.Marshal(loadDatasetPayload{
 		DatasetID:   state.DatasetID,
 		UserID:      state.UserID,
-		AccountID:   state.AccountID,
+		PortfolioID:   state.PortfolioID,
 		RuntimeID:   state.RuntimeID,
 		Market:      state.Market,
 		Symbol:      state.Symbol,
@@ -285,7 +285,7 @@ func decodeWorkspaceState(raw []byte) (domain.DebugWorkspaceState, error) {
 type loadDatasetPayload struct {
 	DatasetID   string         `json:"dataset_id"`
 	UserID      int64          `json:"user_id"`
-	AccountID   int64          `json:"account_id"`
+	PortfolioID   int64          `json:"portfolio_id"`
 	RuntimeID   string         `json:"runtime_id"`
 	Market      string         `json:"market"`
 	Symbol      string         `json:"symbol"`

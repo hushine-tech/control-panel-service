@@ -1,7 +1,7 @@
-// Package accountclient is the thin gRPC client control-panel-service uses
+// Package portfolioclient is the thin gRPC client control-panel-service uses
 // to talk to core-service. Core-service still owns users; market-data
 // control-plane state lives in control-panel-service.
-package accountclient
+package portfolioclient
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
-// Client wraps the core-service account.v1 gRPC stub.
+// Client wraps the core-service portfolio.v1 gRPC stub.
 type Client struct {
 	conn *grpc.ClientConn
-	cli  accountv1.AccountServiceClient
+	cli  portfoliov1.PortfolioServiceClient
 }
 
 // New dials core-service at addr. Outbound interceptors (logging,
@@ -35,7 +35,7 @@ func New(addr string, opts ...grpc.DialOption) (*Client, error) {
 	}
 	return &Client{
 		conn: conn,
-		cli:  accountv1.NewAccountServiceClient(conn),
+		cli:  portfoliov1.NewPortfolioServiceClient(conn),
 	}, nil
 }
 
@@ -46,7 +46,7 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) ServiceClient() accountv1.AccountServiceClient {
+func (c *Client) ServiceClient() portfoliov1.PortfolioServiceClient {
 	if c == nil {
 		return nil
 	}
@@ -56,7 +56,7 @@ func (c *Client) ServiceClient() accountv1.AccountServiceClient {
 // GetUserPlanCode returns the user's plan_code (e.g. "free" / "developer" /
 // "pro"). Returns "" + error on missing user.
 func (c *Client) GetUserPlanCode(ctx context.Context, userID int64) (string, error) {
-	resp, err := c.cli.GetUser(ctx, &accountv1.GetUserRequest{UserId: userID})
+	resp, err := c.cli.GetUser(ctx, &portfoliov1.GetUserRequest{UserId: userID})
 	if err != nil {
 		return "", err
 	}

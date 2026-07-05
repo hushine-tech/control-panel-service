@@ -28,7 +28,7 @@ func TestTimescaleRepositoryCreateRuntimeCommandIsIdempotent(t *testing.T) {
 		IdempotencyKey: "idem-1",
 		CommandType:    domain.RuntimeCommandTypeStartSession,
 		DeadlineAt:     now.Add(time.Minute),
-		Payload:        []byte(`{"account_id":7}`),
+		Payload:        []byte(`{"portfolio_id":7}`),
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -42,12 +42,12 @@ func TestTimescaleRepositoryCreateRuntimeCommandIsIdempotent(t *testing.T) {
 	}
 
 	cmd.CommandID = "cmd-2"
-	cmd.Payload = []byte(`{"account_id":999}`)
+	cmd.Payload = []byte(`{"portfolio_id":999}`)
 	second, reused, err := repo.CreateRuntimeCommand(ctx, cmd)
 	if err != nil {
 		t.Fatalf("CreateRuntimeCommand second: %v", err)
 	}
-	if !reused || second.CommandID != "cmd-1" || string(second.Payload) != `{"account_id":7}` {
+	if !reused || second.CommandID != "cmd-1" || string(second.Payload) != `{"portfolio_id":7}` {
 		t.Fatalf("second command = %+v reused=%v, want original cmd-1 payload", second, reused)
 	}
 }

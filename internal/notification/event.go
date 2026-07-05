@@ -22,6 +22,9 @@ const (
 	EventRuntimeRecovered          = "runtime.recovered"
 	EventRuntimeHeartbeatLost      = "runtime.heartbeat_lost"
 	EventRuntimeHeartbeatRecovered = "runtime.heartbeat_recovered"
+	EventRuntimeDataDelayed        = "runtime.data_delayed"
+	EventRuntimeDataDropped        = "runtime.data_dropped"
+	EventRuntimeLiveDataDropped    = "runtime.live_data_dropped"
 	EventSessionStarted            = "session.started"
 	EventSessionStopped            = "session.stopped"
 	EventSessionFailed             = "session.failed"
@@ -43,7 +46,7 @@ type Event struct {
 	SourceService string            `json:"source_service,omitempty"`
 	RuntimeID     string            `json:"runtime_id,omitempty"`
 	RuntimeName   string            `json:"runtime_name,omitempty"`
-	AccountID     int64             `json:"account_id,omitempty"`
+	PortfolioID     int64             `json:"portfolio_id,omitempty"`
 	StrategyID    int64             `json:"strategy_id,omitempty"`
 	SessionID     string            `json:"session_id,omitempty"`
 	Title         string            `json:"title,omitempty"`

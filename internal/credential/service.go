@@ -10,10 +10,15 @@ package credential
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -22,6 +27,7 @@ import (
 
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 )
 
 // Repository is the persistence surface the credential service needs.
@@ -54,10 +60,17 @@ func (NoopStreamCloser) CloseStreamsForKey(_ context.Context, _ string) (int, in
 	return 0, 0, nil
 }
 
+type certSigner interface {
+	CAPEM() []byte
+	SignRuntimeClientCertificate(runtimecert.SignRequest) ([]byte, *x509.Certificate, error)
+}
+
 // Service is the credential lifecycle implementation.
 type Service struct {
-	repo   Repository
-	closer RevokeStreamCloser
+	repo        Repository
+	closer      RevokeStreamCloser
+	signer      certSigner
+	serverCAPEM []byte
 
 	// now is overrideable for tests.
 	now func() time.Time
@@ -77,6 +90,14 @@ func New(repo Repository, closer RevokeStreamCloser) *Service {
 // SetClock overrides the time source for tests.
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
 
+func (s *Service) SetCertificateSigner(signer certSigner) {
+	s.signer = signer
+}
+
+func (s *Service) SetRuntimeServerCAPEM(serverCAPEM []byte) {
+	s.serverCAPEM = append([]byte(nil), serverCAPEM...)
+}
+
 // ── Errors ──────────────────────────────────────────────────────────────────
 
 var (
@@ -86,6 +107,8 @@ var (
 	ErrNotFound = errors.New("credential not found")
 	// ErrPermissionDenied — credential exists but is owned by another user.
 	ErrPermissionDenied = errors.New("permission denied")
+	// ErrCertificateSignerUnavailable — runtime mTLS credential issuance is not configured.
+	ErrCertificateSignerUnavailable = errors.New("runtime certificate signer unavailable")
 )
 
 // ── Issue ───────────────────────────────────────────────────────────────────
@@ -101,10 +124,14 @@ type IssueArgs struct {
 // (which carries the private key for one-time download). The private
 // key is NOT persisted anywhere.
 func (s *Service) Issue(ctx context.Context, args IssueArgs) (domain.IssuedCredential, error) {
-	return s.issue(ctx, args, false)
+	return s.issue(ctx, args, false, "")
 }
 
 func (s *Service) IssueHostedInternalRuntimeCredential(ctx context.Context, userID int64, runtimeID, name string) (domain.IssuedCredential, error) {
+	runtimeID = strings.TrimSpace(runtimeID)
+	if runtimeID == "" {
+		return domain.IssuedCredential{}, fmt.Errorf("%w: runtime_id is required", ErrInvalidArgument)
+	}
 	label := strings.TrimSpace(name)
 	if label == "" {
 		label = runtimeID
@@ -113,10 +140,10 @@ func (s *Service) IssueHostedInternalRuntimeCredential(ctx context.Context, user
 		UserID: userID,
 		Label:  "hosted:" + label,
 		Role:   domain.CredentialRoleExecutor,
-	}, true)
+	}, true, runtimeID)
 }
 
-func (s *Service) issue(ctx context.Context, args IssueArgs, hostedInternal bool) (domain.IssuedCredential, error) {
+func (s *Service) issue(ctx context.Context, args IssueArgs, hostedInternal bool, certificateRuntimeID string) (domain.IssuedCredential, error) {
 	if args.UserID <= 0 {
 		return domain.IssuedCredential{}, fmt.Errorf("%w: user_id is required", ErrInvalidArgument)
 	}
@@ -143,19 +170,61 @@ func (s *Service) issue(ctx context.Context, args IssueArgs, hostedInternal bool
 	if err != nil {
 		return domain.IssuedCredential{}, fmt.Errorf("generate key_id: %w", err)
 	}
+	if s.signer == nil {
+		return domain.IssuedCredential{}, fmt.Errorf("%w: runtime certificate signer is not configured", ErrCertificateSignerUnavailable)
+	}
+	if len(s.serverCAPEM) == 0 {
+		return domain.IssuedCredential{}, fmt.Errorf("%w: runtime server ca is not configured", ErrCertificateSignerUnavailable)
+	}
 
 	now := s.now().UTC()
+	certRuntimeID := "selfhosted-" + keyID
+	if hostedInternal {
+		certRuntimeID = strings.TrimSpace(certificateRuntimeID)
+		if certRuntimeID == "" {
+			return domain.IssuedCredential{}, fmt.Errorf("%w: runtime_id is required", ErrInvalidArgument)
+		}
+	}
+	clientKeyPEM, csrPEM, err := generateClientKeyAndCSR(certRuntimeID)
+	if err != nil {
+		return domain.IssuedCredential{}, fmt.Errorf("generate runtime client key: %w", err)
+	}
+	issuer := domain.RuntimeCredentialIssuerUser
+	source := domain.RuntimeSourceSelfHosted
+	if hostedInternal {
+		issuer = domain.RuntimeCredentialIssuerHostedInternal
+		source = domain.RuntimeSourceHosted
+	}
+	certPEM, cert, err := s.signer.SignRuntimeClientCertificate(runtimecert.SignRequest{
+		CSRPEM:    csrPEM,
+		RuntimeID: certRuntimeID,
+		UserID:    args.UserID,
+		Source:    source,
+		Role:      string(args.Role),
+		Name:      label,
+		TTL:       24 * time.Hour,
+		Now:       now,
+	})
+	if err != nil {
+		return domain.IssuedCredential{}, fmt.Errorf("sign runtime client certificate: %w", err)
+	}
+	clientCertExpiresAt := cert.NotAfter
+
 	downloadedAt := now
 	cred := domain.RuntimeCredential{
-		KeyID:          keyID,
-		UserID:         args.UserID,
-		Label:          label,
-		Role:           args.Role,
-		PublicKeyPEM:   pubPEM,
-		Status:         domain.CredentialStatusDownloaded,
-		CreatedAt:      now,
-		DownloadedAt:   &downloadedAt,
-		HostedInternal: hostedInternal,
+		KeyID:                 keyID,
+		UserID:                args.UserID,
+		Label:                 label,
+		Role:                  args.Role,
+		PublicKeyPEM:          pubPEM,
+		Status:                domain.CredentialStatusDownloaded,
+		CreatedAt:             now,
+		DownloadedAt:          &downloadedAt,
+		HostedInternal:        hostedInternal,
+		ClientCertPEM:         string(certPEM),
+		ClientCertFingerprint: certificateFingerprint(cert),
+		ClientCertExpiresAt:   &clientCertExpiresAt,
+		Issuer:                issuer,
 	}
 	if err := s.repo.CreateRuntimeCredential(ctx, cred); err != nil {
 		// A repository.ErrConflict here means the key_id PK collided —
@@ -170,8 +239,12 @@ func (s *Service) issue(ctx context.Context, args IssueArgs, hostedInternal bool
 	}
 
 	return domain.IssuedCredential{
-		RuntimeCredential: cred,
-		PrivateKeyPEM:     privPEM,
+		RuntimeCredential:   cred,
+		PrivateKeyPEM:       privPEM,
+		ClientCertPEM:       string(certPEM),
+		ClientKeyPEM:        string(clientKeyPEM),
+		ServerCAPEM:         string(s.serverCAPEM),
+		ClientCertExpiresAt: &clientCertExpiresAt,
 	}, nil
 }
 
@@ -272,6 +345,34 @@ func generateKeyID() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+func generateClientKeyAndCSR(runtimeID string) (keyPEM, csrPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: runtimeID},
+	}, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}),
+		nil
+}
+
+func certificateFingerprint(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	sum := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // encodePublicKeyPEM marshals an Ed25519 public key as PKIX/PEM.

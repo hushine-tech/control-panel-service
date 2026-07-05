@@ -2,6 +2,16 @@ server:
   http_addr: ":8082"
   grpc_addr: ":50054"
 
+runtime_channel_server:
+  grpc_addr: ":50055"
+  tls:
+    enabled: true
+    cert_file: ""
+    key_file: ""
+    server_name: "runtime-channel.local"
+    client_ca_file: ""
+    client_ca_key_file: ""
+
 database:
   host: "192.168.88.10"
   port: 5432
@@ -21,7 +31,7 @@ market_data:
   kafka_brokers: ["192.168.88.10:19092"]
 
 dependencies:
-  account_service_grpc: "127.0.0.1:50051"
+  portfolio_service_grpc: "127.0.0.1:50051"
   order_service_grpc: "127.0.0.1:50051"
 
 # Platform-wide caps. Effective per-user limits combine plan and platform
@@ -38,7 +48,9 @@ runtime_platform:
   default_plan_code: "pro"
   heartbeat_grace_seconds: 30
   death_grace_seconds: 300
-  caller_token_ttl_seconds: 60
+  debug_bare_runtime_enabled: false
+  bare_bootstrap_ip_allowlist: ["127.0.0.1/32"]
+  bare_certificate_ttl: "8h"
 
 runtime_plans:
   # Plan limits use the same convention as runtime_platform above:
@@ -99,22 +111,17 @@ provisioning:
   # DockerProvisioner-specific settings. Ignored when backend != "docker".
   docker:
     # "host" = container shares host network (simplest single-host dev).
-    #          The runtime listens on the platform-allocated host port.
-    #          quant-handler dials advertise_host:allocated_port directly.
-    # "bridge" / custom = container gets its own network namespace; the
-    #          provisioner adds -p HOST:CONTAINER to map the allocated
-    #          host port to the in-container 50053. Operator must set
-    #          runtime_env addresses to be reachable from inside the
-    #          container (host.docker.internal or service names).
+    # "bridge" / custom = container gets its own network namespace.
+    # Runtime session traffic is outbound RuntimeChannel only; no strategy
+    # gRPC port is published from the hosted container.
     network_mode: "bridge"
-    # What the runtime container should dial for self-registration. NOT
-    # the same as server.grpc_addr (that is the BIND address, e.g.
-    # ":50054"). Default for host networking is "127.0.0.1:<bind_port>".
+    # What the runtime container should dial for RuntimeChannel. NOT the same
+    # as runtime_channel_server.grpc_addr when that value is a bind address.
+    # Default for host networking is "127.0.0.1:<runtime_channel_bind_port>".
     # Bridge / custom networks REQUIRE explicit value:
-    # "host.docker.internal:50054" or routable LAN/service address.
-    control_panel_dial_addr: "host.docker.internal:50054"
+    # "host.docker.internal:50055" or routable LAN/service address.
+    runtime_channel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
-    runtime_user_grpc_port: 50053
     runtime_env:
       CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
       ORDER_SERVICE_GRPC_ADDR: "127.0.0.1:50051"

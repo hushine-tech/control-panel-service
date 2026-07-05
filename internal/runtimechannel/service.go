@@ -17,7 +17,9 @@ import (
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
+	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 )
 
 const streamDeadAfter = 90 * time.Second
@@ -29,28 +31,48 @@ type Service struct {
 	repo                Repository
 	registry            *Registry
 	replay              *ReplayCache
+	auth                AuthConfig
 	platform            PlatformDispatcher
 	dataTransfer        RuntimeDataTransfer
 	dataWindow          *RuntimeDataWindow
+	notifications       cpnotify.Publisher
 	instanceID          string
 	now                 func() time.Time
 	streamIdleTimeout   time.Duration
 	streamCheckInterval time.Duration
 }
 
+type Config struct {
+	Auth                  AuthConfig
+	NotificationPublisher cpnotify.Publisher
+}
+
 func New(repo Repository) *Service {
-	return NewWithInstanceID(repo, "")
+	return NewWithConfig(repo, Config{})
 }
 
 func NewWithInstanceID(repo Repository, instanceID string) *Service {
+	return newWithConfigAndInstanceID(repo, Config{}, instanceID)
+}
+
+func NewWithConfig(repo Repository, cfg Config) *Service {
+	return newWithConfigAndInstanceID(repo, cfg, "")
+}
+
+func newWithConfigAndInstanceID(repo Repository, cfg Config, instanceID string) *Service {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("control-panel-%d", time.Now().UnixNano())
+	}
+	if cfg.NotificationPublisher == nil {
+		cfg.NotificationPublisher = cpnotify.NoopPublisher{}
 	}
 	return &Service{
 		repo:                repo,
 		registry:            NewRegistry(),
 		replay:              NewReplayCache(replayTTL, 8192),
+		auth:                cfg.Auth,
 		dataWindow:          NewRuntimeDataWindow(1024),
+		notifications:       cfg.NotificationPublisher,
 		instanceID:          instanceID,
 		now:                 time.Now,
 		streamIdleTimeout:   streamDeadAfter,
@@ -70,6 +92,13 @@ func (s *Service) SetPlatformDispatcher(dispatcher PlatformDispatcher) {
 
 func (s *Service) SetDataTransfer(transfer RuntimeDataTransfer) {
 	s.dataTransfer = transfer
+}
+
+func (s *Service) SetNotificationPublisher(publisher cpnotify.Publisher) {
+	if publisher == nil {
+		publisher = cpnotify.NoopPublisher{}
+	}
+	s.notifications = publisher
 }
 
 func (s *Service) InstanceID() string {
@@ -104,7 +133,11 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 		}
 		return status.Errorf(codes.Unavailable, "receive runtime hello: %v", err)
 	}
-	rt, resumeToken, resumeExpiresAt, err := s.authenticateFirstFrame(stream.Context(), first)
+	peerID, hasPeerID, err := runtimecert.IdentityFromGRPCContext(stream.Context())
+	if err != nil {
+		return status.Errorf(codes.PermissionDenied, "runtime client certificate identity invalid: %v", err)
+	}
+	rt, resumeToken, resumeExpiresAt, err := s.authenticateFirstFrame(stream.Context(), first, peerID, hasPeerID)
 	if err != nil {
 		return err
 	}
@@ -169,7 +202,7 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 				return err
 			}
 			if res.frame.GetFrameType() == cpv1.FrameType_FRAME_TYPE_HEARTBEAT {
-				nextFingerprint, nextExpiresAt, err := s.rotateRuntimeFingerprint(stream.Context(), rt.RuntimeID, res.frame.GetHeartbeat().GetFingerprint())
+				nextFingerprint, nextExpiresAt, err := s.refreshRuntimeFingerprint(stream.Context(), rt.RuntimeID, res.frame.GetHeartbeat().GetFingerprint())
 				if err != nil {
 					return err
 				}
@@ -218,12 +251,14 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 				if err := s.handleRuntimeCommandFrame(stream.Context(), res.frame); err != nil {
 					return err
 				}
-			case cpv1.FrameType_FRAME_TYPE_STATUS_PATCH,
-				cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE,
-				cpv1.FrameType_FRAME_TYPE_DATA_END:
+			case cpv1.FrameType_FRAME_TYPE_STATUS_PATCH:
+				go s.handleRuntimeStatusPatch(rt, res.frame)
+			case cpv1.FrameType_FRAME_TYPE_DATA_END:
 				// Accepted protocol frames. Section 6/7 wire these into
 				// worker-health and stream-delivery state; for section 5 the
 				// important guardrail is that they do not poison the stream.
+			case cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE:
+				s.handleRuntimeDataBackpressure(stream.Context(), rt, res.frame)
 			case cpv1.FrameType_FRAME_TYPE_DATA_ACK:
 				s.handleRuntimeDataAck(res.frame)
 			}
@@ -235,16 +270,22 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 	}
 }
 
-func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.RuntimeFrame) (AuthenticatedRuntime, string, time.Time, error) {
+func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.RuntimeFrame, peerID runtimecert.RuntimeIdentity, hasPeerID bool) (AuthenticatedRuntime, string, time.Time, error) {
 	switch first.GetFrameType() {
 	case cpv1.FrameType_FRAME_TYPE_HELLO:
 		if first.GetHello() == nil {
 			return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.InvalidArgument, "HELLO frame missing payload")
 		}
-		rt, err := verifyHello(ctx, s.repo, s.replay, s.now, first.GetHello())
+		rt, err := verifyHello(ctx, s.repo, s.replay, s.now, s.auth, first.GetHello())
 		if err != nil {
 			s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
 			return AuthenticatedRuntime{}, "", time.Time{}, helloErrorToStatus(err)
+		}
+		if hasPeerID {
+			if err := validatePeerIdentity(rt, peerID); err != nil {
+				s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
+				return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.PermissionDenied, err.Error())
+			}
 		}
 		if err := s.upsertRuntime(ctx, rt); err != nil {
 			s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
@@ -270,10 +311,32 @@ func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.Runtim
 			s.recordResumeFailure(ctx, first.GetResume(), err)
 			return AuthenticatedRuntime{}, "", time.Time{}, err
 		}
+		if hasPeerID {
+			if err := validatePeerIdentity(rt, peerID); err != nil {
+				s.recordResumeFailure(ctx, first.GetResume(), err)
+				return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.PermissionDenied, err.Error())
+			}
+		}
 		return rt, token, expiresAt, nil
 	default:
 		return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.InvalidArgument, "first RuntimeChannel frame must be HELLO or RESUME")
 	}
+}
+
+func validatePeerIdentity(rt AuthenticatedRuntime, peer runtimecert.RuntimeIdentity) error {
+	if peer.RuntimeID != rt.RuntimeID {
+		return fmt.Errorf("runtime client certificate runtime_id mismatch")
+	}
+	if peer.UserID != rt.UserID {
+		return fmt.Errorf("runtime client certificate user_id mismatch")
+	}
+	if peer.Source != "" && peer.Source != rt.Source {
+		return fmt.Errorf("runtime client certificate source mismatch")
+	}
+	if peer.Role != "" && string(rt.Role) != "" && peer.Role != string(rt.Role) {
+		return fmt.Errorf("runtime client certificate role mismatch")
+	}
+	return nil
 }
 
 func (s *Service) recordConnectionOwner(ctx context.Context, runtimeID string, at time.Time) error {
@@ -405,6 +468,49 @@ func (s *Service) rotateRuntimeFingerprint(ctx context.Context, runtimeID, previ
 		return "", time.Time{}, status.Error(codes.FailedPrecondition, "runtime already ended")
 	}
 	return s.rotateRuntimeFingerprintWithHash(ctx, runtimeID, oldHash, now)
+}
+
+func (s *Service) refreshRuntimeFingerprint(ctx context.Context, runtimeID, fingerprint string) (string, time.Time, error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if runtimeID == "" || fingerprint == "" {
+		return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime heartbeat fingerprint is required")
+	}
+	leaseHash := hashRuntimeChannelToken(fingerprint)
+	lease, err := s.repo.GetRuntimeChannelLeaseByHash(ctx, leaseHash)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime fingerprint is invalid")
+		}
+		return "", time.Time{}, status.Errorf(codes.Unavailable, "lookup runtime fingerprint: %v", err)
+	}
+	now := s.now().UTC()
+	if lease.RuntimeID != runtimeID {
+		return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime fingerprint does not match runtime_id")
+	}
+	if !lease.ExpiresAt.After(now) || lease.RevokedAt != nil {
+		return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime fingerprint expired")
+	}
+	rt, err := s.repo.GetRuntime(ctx, runtimeID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", time.Time{}, status.Error(codes.NotFound, "runtime not found")
+		}
+		return "", time.Time{}, status.Errorf(codes.Unavailable, "lookup runtime: %v", err)
+	}
+	if rt.UserID != lease.UserID || rt.CredentialKeyID != lease.CredentialKeyID {
+		return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime fingerprint binding mismatch")
+	}
+	if domain.IsRuntimeTerminalStatus(rt.Status) {
+		return "", time.Time{}, status.Error(codes.FailedPrecondition, "runtime already ended")
+	}
+	expiresAt := now.Add(runtimeChannelLeaseTTL)
+	if err := s.repo.RotateRuntimeChannelLease(ctx, runtimeID, leaseHash, leaseHash, expiresAt, now); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", time.Time{}, status.Error(codes.PermissionDenied, "runtime fingerprint is invalid")
+		}
+		return "", time.Time{}, status.Errorf(codes.Unavailable, "refresh runtime fingerprint: %v", err)
+	}
+	return fingerprint, expiresAt, nil
 }
 
 func (s *Service) rotateRuntimeFingerprintWithHash(ctx context.Context, runtimeID, oldHash string, now time.Time) (string, time.Time, error) {
@@ -553,6 +659,8 @@ func (s *Service) upsertRuntime(ctx context.Context, rt AuthenticatedRuntime) er
 		err = s.repo.CreateOrReplaceHostedRuntime(ctx, record)
 	case domain.RuntimeSourceSelfHosted:
 		err = s.repo.CreateOrReplaceSelfHostedRuntime(ctx, record)
+	case domain.RuntimeSourceBare:
+		err = s.repo.CreateOrReplaceBareRuntime(ctx, record)
 	default:
 		return errors.New("unsupported runtime source")
 	}

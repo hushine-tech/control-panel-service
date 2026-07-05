@@ -77,13 +77,15 @@ func (s *Service) invokeStrategyUnaryOnStream(
 	for {
 		select {
 		case <-ctx.Done():
-			_ = stream.sendFrame(&cpv1.RuntimeFrame{
-				CorrelationId: correlationID,
-				FrameType:     cpv1.FrameType_FRAME_TYPE_ABORT,
-				Payload: &cpv1.RuntimeFrame_Abort{
-					Abort: &cpv1.StrategyAbort{Reason: ctx.Err().Error()},
-				},
-			})
+			if shouldAbortTimedOutStrategyRequest(method) {
+				_ = stream.sendFrame(&cpv1.RuntimeFrame{
+					CorrelationId: correlationID,
+					FrameType:     cpv1.FrameType_FRAME_TYPE_ABORT,
+					Payload: &cpv1.RuntimeFrame_Abort{
+						Abort: &cpv1.StrategyAbort{Reason: ctx.Err().Error()},
+					},
+				})
+			}
 			return status.FromContextError(ctx.Err()).Err()
 		case <-stream.closed:
 			return status.Error(codes.Unavailable, "runtime stream disconnected")
@@ -108,6 +110,15 @@ func (s *Service) invokeStrategyUnaryOnStream(
 				return status.Errorf(codes.Internal, "unexpected runtime frame_type=%s", frame.GetFrameType().String())
 			}
 		}
+	}
+}
+
+func shouldAbortTimedOutStrategyRequest(method string) bool {
+	switch method {
+	case "GetStrategyStatus":
+		return false
+	default:
+		return true
 	}
 }
 
