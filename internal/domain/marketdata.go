@@ -8,8 +8,8 @@ import "time"
 // when D2 moved control-plane ownership into control-panel-service. The
 // underlying tables live in the `control_panel` database
 // (migrations 0003–0006). Cross-database FK references to
-// `account.users(id)` / `account.accounts(account_id)` were dropped at
-// the schema level; UserID and AccountID are validated at the service
+// `portfolio.users(id)` / `portfolio.portfolios(portfolio_id)` were dropped at
+// the schema level; UserID and PortfolioID are validated at the service
 // layer via core-service.GetUser when applicable.
 //
 // v1 scope is `kline` only. The `Kind` field reserves space for future
@@ -91,7 +91,7 @@ type MarketDataStream struct {
 type MarketDataRequest struct {
 	RequestID         int64
 	UserID            int64
-	AccountID         *int64
+	PortfolioID         *int64
 	StreamID          int64
 	Key               StreamKey
 	NeedsLiveDelivery bool
@@ -106,7 +106,7 @@ type MarketDataRequest struct {
 type MarketDataHistoryRequest struct {
 	RequestID        int64
 	UserID           int64
-	AccountID        *int64
+	PortfolioID        *int64
 	Key              StreamKey
 	Status           MarketDataHistoryRequestStatus
 	RequestedStartAt time.Time
@@ -124,7 +124,7 @@ type MarketDataLease struct {
 	LeaseID         int64
 	SessionID       string
 	StrategyID      *int64
-	AccountID       *int64
+	PortfolioID       *int64
 	StreamID        int64
 	ExpiresAt       time.Time
 	LastHeartbeatAt time.Time

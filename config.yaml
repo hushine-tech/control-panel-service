@@ -31,7 +31,7 @@ market_data:
   kafka_brokers: ["192.168.88.10:19092"]
 
 dependencies:
-  account_service_grpc: "127.0.0.1:50051"
+  portfolio_service_grpc: "127.0.0.1:50051"
   order_service_grpc: "127.0.0.1:50051"
 
 # Platform-wide caps. Effective per-user limits combine plan and platform

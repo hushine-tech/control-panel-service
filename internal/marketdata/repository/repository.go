@@ -47,7 +47,7 @@ type Repository interface {
 	UpsertMarketDataRequest(
 		ctx context.Context,
 		userID int64,
-		accountID *int64,
+		portfolioID *int64,
 		key domain.StreamKey,
 		needsLive bool,
 	) (domain.MarketDataRequest, error)
@@ -61,7 +61,7 @@ type Repository interface {
 	CreateOrRenewLease(
 		ctx context.Context,
 		sessionID string,
-		strategyID, accountID *int64,
+		strategyID, portfolioID *int64,
 		streamID int64,
 		ttl time.Duration,
 	) (domain.MarketDataLease, error)
@@ -117,7 +117,7 @@ type Repository interface {
 	UpsertMarketDataHistoryRequest(
 		ctx context.Context,
 		userID int64,
-		accountID *int64,
+		portfolioID *int64,
 		key domain.StreamKey,
 		startAt, endAt time.Time,
 	) (domain.MarketDataHistoryRequest, error)

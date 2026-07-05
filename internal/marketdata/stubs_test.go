@@ -148,7 +148,7 @@ func (s *stubRepo) UpdateMarketDataStreamActualState(
 func (s *stubRepo) UpsertMarketDataRequest(
 	ctx context.Context,
 	userID int64,
-	accountID *int64,
+	portfolioID *int64,
 	key domain.StreamKey,
 	needsLive bool,
 ) (domain.MarketDataRequest, error) {
@@ -159,8 +159,8 @@ func (s *stubRepo) UpsertMarketDataRequest(
 		if r.UserID == userID && r.Key == key && r.Status != domain.RequestStatusCancelled {
 			r.NeedsLiveDelivery = needsLive
 			r.Status = domain.RequestStatusActive
-			if accountID != nil {
-				r.AccountID = accountID
+			if portfolioID != nil {
+				r.PortfolioID = portfolioID
 			}
 			r.UpdatedAt = time.Now()
 			s.requests[id] = r
@@ -173,7 +173,7 @@ func (s *stubRepo) UpsertMarketDataRequest(
 	r := domain.MarketDataRequest{
 		RequestID:         id,
 		UserID:            userID,
-		AccountID:         accountID,
+		PortfolioID:         portfolioID,
 		StreamID:          st.StreamID,
 		Key:               key,
 		NeedsLiveDelivery: needsLive,
@@ -278,7 +278,7 @@ func itoa64(n int64) string {
 func (s *stubRepo) CreateOrRenewLease(
 	_ context.Context,
 	sessionID string,
-	strategyID, accountID *int64,
+	strategyID, portfolioID *int64,
 	streamID int64,
 	ttl time.Duration,
 ) (domain.MarketDataLease, error) {
@@ -294,8 +294,8 @@ func (s *stubRepo) CreateOrRenewLease(
 		if strategyID != nil {
 			existing.StrategyID = strategyID
 		}
-		if accountID != nil {
-			existing.AccountID = accountID
+		if portfolioID != nil {
+			existing.PortfolioID = portfolioID
 		}
 		s.leases[k] = existing
 		return existing, nil
@@ -306,7 +306,7 @@ func (s *stubRepo) CreateOrRenewLease(
 		LeaseID:         id,
 		SessionID:       sessionID,
 		StrategyID:      strategyID,
-		AccountID:       accountID,
+		PortfolioID:       portfolioID,
 		StreamID:        streamID,
 		ExpiresAt:       expires,
 		LastHeartbeatAt: now,
@@ -637,7 +637,7 @@ func (s *stubRepo) ReleaseMarketDataWriterLease(_ context.Context, leaseID, owne
 func (s *stubRepo) UpsertMarketDataHistoryRequest(
 	_ context.Context,
 	userID int64,
-	accountID *int64,
+	portfolioID *int64,
 	key domain.StreamKey,
 	startAt, endAt time.Time,
 ) (domain.MarketDataHistoryRequest, error) {
@@ -647,8 +647,8 @@ func (s *stubRepo) UpsertMarketDataHistoryRequest(
 		if h.UserID == userID && h.Key == key &&
 			h.RequestedStartAt.Equal(startAt) && h.RequestedEndAt.Equal(endAt) &&
 			h.Status != domain.HistoryRequestCancelled {
-			if accountID != nil {
-				h.AccountID = accountID
+			if portfolioID != nil {
+				h.PortfolioID = portfolioID
 			}
 			if h.Status == domain.HistoryRequestError {
 				h.Status = domain.HistoryRequestPending
@@ -665,7 +665,7 @@ func (s *stubRepo) UpsertMarketDataHistoryRequest(
 	h := domain.MarketDataHistoryRequest{
 		RequestID:        id,
 		UserID:           userID,
-		AccountID:        accountID,
+		PortfolioID:        portfolioID,
 		Key:              key,
 		Status:           domain.HistoryRequestPending,
 		RequestedStartAt: startAt,

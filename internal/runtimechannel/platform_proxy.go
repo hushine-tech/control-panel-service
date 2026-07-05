@@ -17,25 +17,26 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/logger"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 )
 
 const (
-	accountSnapshotReasonStrategyEnd = 3
+	portfolioSnapshotReasonStrategyEnd = 3
 	backtestPageSize                 = 8192
 )
 
-type AccountPlatformClient interface {
-	GetAccount(ctx context.Context, in *accountv1.GetAccountRequest, opts ...grpc.CallOption) (*accountv1.GetAccountResponse, error)
-	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
-	GetPortfolioSnapshot(ctx context.Context, in *accountv1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error)
-	UpdatePortfolioSnapshot(ctx context.Context, in *accountv1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error)
-	UpdateAccountWalletState(ctx context.Context, in *accountv1.UpdateAccountWalletStateRequest, opts ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error)
-	PreflightStrategySession(ctx context.Context, in *accountv1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error)
-	GetActiveStrategy(ctx context.Context, in *accountv1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error)
-	SaveSession(ctx context.Context, in *accountv1.SaveSessionRequest, opts ...grpc.CallOption) (*accountv1.SaveSessionResponse, error)
-	UpdateSession(ctx context.Context, in *accountv1.UpdateSessionRequest, opts ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error)
+type PortfolioPlatformClient interface {
+	GetPortfolio(ctx context.Context, in *portfoliov1.GetPortfolioRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error)
+	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
+	GetPortfolioSnapshot(ctx context.Context, in *portfoliov1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error)
+	UpdatePortfolioSnapshot(ctx context.Context, in *portfoliov1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error)
+	UpdatePortfolioWalletState(ctx context.Context, in *portfoliov1.UpdatePortfolioWalletStateRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error)
+	PreflightStrategySession(ctx context.Context, in *portfoliov1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*portfoliov1.PreflightStrategySessionResponse, error)
+	GetActiveStrategy(ctx context.Context, in *portfoliov1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*portfoliov1.GetActiveStrategyResponse, error)
+	SaveSession(ctx context.Context, in *portfoliov1.SaveSessionRequest, opts ...grpc.CallOption) (*portfoliov1.SaveSessionResponse, error)
+	UpdateSession(ctx context.Context, in *portfoliov1.UpdateSessionRequest, opts ...grpc.CallOption) (*portfoliov1.UpdateSessionResponse, error)
+	SaveStrategyIndicators(ctx context.Context, in *portfoliov1.SaveStrategyIndicatorsRequest, opts ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsResponse, error)
 }
 
 type OrderPlatformClient interface {
@@ -64,7 +65,7 @@ type DebugReplayStarter interface {
 }
 
 type PlatformProxy struct {
-	account          AccountPlatformClient
+	portfolio          PortfolioPlatformClient
 	order            OrderPlatformClient
 	marketData       MarketDataPlatformServer
 	klineQuery       KlineQuerier
@@ -82,9 +83,9 @@ type datasetDeliveryRequest struct {
 	Streams     []KlineQuery
 }
 
-func NewPlatformProxy(account AccountPlatformClient, order OrderPlatformClient, marketData MarketDataPlatformServer) *PlatformProxy {
+func NewPlatformProxy(portfolio PortfolioPlatformClient, order OrderPlatformClient, marketData MarketDataPlatformServer) *PlatformProxy {
 	return &PlatformProxy{
-		account:    account,
+		portfolio:    portfolio,
 		order:      order,
 		marketData: marketData,
 	}
@@ -119,8 +120,8 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		return nil, status.Error(codes.PermissionDenied, "authenticated runtime user_id is required")
 	}
 	switch canonicalPlatformMethod(method) {
-	case "account.GetPortfolioSnapshot":
-		req := &accountv1.GetPortfolioSnapshotRequest{}
+	case "portfolio.GetPortfolioSnapshot":
+		req := &portfoliov1.GetPortfolioSnapshotRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
@@ -128,16 +129,16 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
 		}
 		req.UserId = rt.UserID
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
-		return p.requireAccount().GetPortfolioSnapshot(ctx, req)
+		return p.requirePortfolio().GetPortfolioSnapshot(ctx, req)
 
-	case "account.UpdatePortfolioSnapshot":
-		return nil, status.Error(codes.Unimplemented, "account.UpdatePortfolioSnapshot is deprecated for runtime sessions; use account.UpdateAccountWalletState")
+	case "portfolio.UpdatePortfolioSnapshot":
+		return nil, status.Error(codes.Unimplemented, "portfolio.UpdatePortfolioSnapshot is deprecated for runtime sessions; use portfolio.UpdatePortfolioWalletState")
 
-	case "account.UpdateAccountWalletState":
-		req := &accountv1.UpdateAccountWalletStateRequest{}
+	case "portfolio.UpdatePortfolioWalletState":
+		req := &portfoliov1.UpdatePortfolioWalletStateRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
@@ -145,20 +146,20 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
 		}
 		req.UserId = rt.UserID
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(req.GetSessionId()) == "" {
 			return nil, status.Error(codes.InvalidArgument, "session_id is required")
 		}
-		allowTerminalSession := req.GetSnapshotReason() == accountSnapshotReasonStrategyEnd
+		allowTerminalSession := req.GetSnapshotReason() == portfolioSnapshotReasonStrategyEnd
 		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), allowTerminalSession); err != nil {
 			return nil, err
 		}
-		return p.requireAccount().UpdateAccountWalletState(ctx, req)
+		return p.requirePortfolio().UpdatePortfolioWalletState(ctx, req)
 
-	case "account.PreflightStrategySession":
-		req := &accountv1.PreflightStrategySessionRequest{}
+	case "portfolio.PreflightStrategySession":
+		req := &portfoliov1.PreflightStrategySessionRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
@@ -166,27 +167,27 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
 		}
 		req.UserId = rt.UserID
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
-		return p.requireAccount().PreflightStrategySession(ctx, req)
+		return p.requirePortfolio().PreflightStrategySession(ctx, req)
 
-	case "account.GetActiveStrategy":
-		req := &accountv1.GetActiveStrategyRequest{}
+	case "portfolio.GetActiveStrategy":
+		req := &portfoliov1.GetActiveStrategyRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
-		return p.requireAccount().GetActiveStrategy(ctx, req)
+		return p.requirePortfolio().GetActiveStrategy(ctx, req)
 
-	case "account.SaveSession":
-		req := &accountv1.SaveSessionRequest{}
+	case "portfolio.SaveSession":
+		req := &portfoliov1.SaveSessionRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
 		if req.GetRuntimeId() != "" && req.GetRuntimeId() != rt.RuntimeID {
@@ -195,10 +196,10 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		req.RuntimeId = rt.RuntimeID
 		req.RuntimeSource = runtimeSourceFromAuthenticated(rt)
 		req.RuntimeName = rt.Name
-		return p.requireAccount().SaveSession(ctx, req)
+		return p.requirePortfolio().SaveSession(ctx, req)
 
-	case "account.UpdateSession":
-		req := &accountv1.UpdateSessionRequest{}
+	case "portfolio.UpdateSession":
+		req := &portfoliov1.UpdateSessionRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
@@ -209,14 +210,28 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		req.RuntimeId = rt.RuntimeID
-		return p.requireAccount().UpdateSession(ctx, req)
+		return p.requirePortfolio().UpdateSession(ctx, req)
+
+	case "portfolio.SaveStrategyIndicators":
+		req := &portfoliov1.SaveStrategyIndicatorsRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
+			return nil, err
+		}
+		req.UserId = rt.UserID
+		return p.requirePortfolio().SaveStrategyIndicators(ctx, req)
 
 	case "order.PlaceOrder":
 		req := &orderv1.PlaceOrderRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
 		if req.GetSessionId() != "" {
@@ -231,7 +246,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 			return nil, err
 		}
 		return p.requireOrder().ResolveOrderAttempt(ctx, req)
@@ -291,8 +306,8 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if req.GetAccountId() > 0 {
-			if err := p.ensureAccountOwner(ctx, rt, req.GetAccountId()); err != nil {
+		if req.GetPortfolioId() > 0 {
+			if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
 				return nil, err
 			}
 		}
@@ -373,11 +388,11 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 	}
 }
 
-func (p *PlatformProxy) requireAccount() AccountPlatformClient {
-	if p == nil || p.account == nil {
-		return unavailableAccountClient{}
+func (p *PlatformProxy) requirePortfolio() PortfolioPlatformClient {
+	if p == nil || p.portfolio == nil {
+		return unavailablePortfolioClient{}
 	}
-	return p.account
+	return p.portfolio
 }
 
 func (p *PlatformProxy) requireOrder() OrderPlatformClient {
@@ -422,22 +437,22 @@ func (p *PlatformProxy) requireNotificationPublisher() cpnotify.Publisher {
 	return p.notifications
 }
 
-func (p *PlatformProxy) ensureAccountOwner(ctx context.Context, rt AuthenticatedRuntime, accountID int64) error {
-	if accountID <= 0 {
-		return status.Error(codes.InvalidArgument, "account_id is required")
+func (p *PlatformProxy) ensurePortfolioOwner(ctx context.Context, rt AuthenticatedRuntime, portfolioID int64) error {
+	if portfolioID <= 0 {
+		return status.Error(codes.InvalidArgument, "portfolio_id is required")
 	}
-	resp, err := p.requireAccount().GetAccount(ctx, &accountv1.GetAccountRequest{
-		AccountId: accountID,
+	resp, err := p.requirePortfolio().GetPortfolio(ctx, &portfoliov1.GetPortfolioRequest{
+		PortfolioId: portfolioID,
 		UserId:    rt.UserID,
 	})
 	if err != nil {
 		return err
 	}
-	if resp == nil || resp.GetAccount() == nil {
-		return status.Error(codes.NotFound, "account not found")
+	if resp == nil || resp.GetPortfolio() == nil {
+		return status.Error(codes.NotFound, "portfolio not found")
 	}
-	if resp.GetAccount().GetUserId() != 0 && resp.GetAccount().GetUserId() != rt.UserID {
-		return status.Error(codes.PermissionDenied, "account does not belong to authenticated runtime user")
+	if resp.GetPortfolio().GetUserId() != 0 && resp.GetPortfolio().GetUserId() != rt.UserID {
+		return status.Error(codes.PermissionDenied, "portfolio does not belong to authenticated runtime user")
 	}
 	return nil
 }
@@ -447,7 +462,7 @@ func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt Authenticated
 	if sessionID == "" {
 		return status.Error(codes.InvalidArgument, "session_id is required")
 	}
-	resp, err := p.requireAccount().GetSession(ctx, &accountv1.GetSessionRequest{
+	resp, err := p.requirePortfolio().GetSession(ctx, &portfoliov1.GetSessionRequest{
 		SessionId: sessionID,
 		UserId:    rt.UserID,
 	})
@@ -499,20 +514,22 @@ func canonicalPlatformMethod(method string) string {
 	method = strings.TrimSpace(method)
 	method = strings.TrimPrefix(method, "/")
 	switch method {
-	case "GetPortfolioSnapshot", "account.v1.AccountService/GetPortfolioSnapshot":
-		return "account.GetPortfolioSnapshot"
-	case "UpdatePortfolioSnapshot", "account.v1.AccountService/UpdatePortfolioSnapshot":
-		return "account.UpdatePortfolioSnapshot"
-	case "UpdateAccountWalletState", "account.v1.AccountService/UpdateAccountWalletState":
-		return "account.UpdateAccountWalletState"
-	case "PreflightStrategySession", "account.v1.AccountService/PreflightStrategySession":
-		return "account.PreflightStrategySession"
-	case "GetActiveStrategy", "account.v1.AccountService/GetActiveStrategy":
-		return "account.GetActiveStrategy"
-	case "SaveSession", "account.v1.AccountService/SaveSession":
-		return "account.SaveSession"
-	case "UpdateSession", "account.v1.AccountService/UpdateSession":
-		return "account.UpdateSession"
+	case "GetPortfolioSnapshot", "portfolio.v1.PortfolioService/GetPortfolioSnapshot":
+		return "portfolio.GetPortfolioSnapshot"
+	case "UpdatePortfolioSnapshot", "portfolio.v1.PortfolioService/UpdatePortfolioSnapshot":
+		return "portfolio.UpdatePortfolioSnapshot"
+	case "UpdatePortfolioWalletState", "portfolio.v1.PortfolioService/UpdatePortfolioWalletState":
+		return "portfolio.UpdatePortfolioWalletState"
+	case "PreflightStrategySession", "portfolio.v1.PortfolioService/PreflightStrategySession":
+		return "portfolio.PreflightStrategySession"
+	case "GetActiveStrategy", "portfolio.v1.PortfolioService/GetActiveStrategy":
+		return "portfolio.GetActiveStrategy"
+	case "SaveSession", "portfolio.v1.PortfolioService/SaveSession":
+		return "portfolio.SaveSession"
+	case "UpdateSession", "portfolio.v1.PortfolioService/UpdateSession":
+		return "portfolio.UpdateSession"
+	case "SaveStrategyIndicators", "portfolio.v1.PortfolioService/SaveStrategyIndicators":
+		return "portfolio.SaveStrategyIndicators"
 	case "PlaceOrder", "order.v1.OrderService/PlaceOrder":
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
@@ -548,7 +565,7 @@ func debugDatasetStateToProto(state domain.DebugDatasetState) *cpv1.DebugDataset
 	return &cpv1.DebugDatasetState{
 		DatasetId:      state.DatasetID,
 		UserId:         state.UserID,
-		AccountId:      state.AccountID,
+		PortfolioId:      state.PortfolioID,
 		RuntimeId:      state.RuntimeID,
 		Market:         state.Market,
 		Symbol:         state.Symbol,
@@ -840,8 +857,8 @@ func (p *PlatformProxy) emitRuntimeLog(ctx context.Context, rt AuthenticatedRunt
 	if userID := int64(numberField(fields, "user_id")); userID != 0 && userID != rt.UserID {
 		return nil, status.Error(codes.PermissionDenied, "log user_id does not match authenticated runtime")
 	}
-	if accountID := int64(numberField(fields, "account_id")); accountID > 0 {
-		if err := p.ensureAccountOwner(ctx, rt, accountID); err != nil {
+	if portfolioID := int64(numberField(fields, "portfolio_id")); portfolioID > 0 {
+		if err := p.ensurePortfolioOwner(ctx, rt, portfolioID); err != nil {
 			return nil, err
 		}
 	}
@@ -882,9 +899,9 @@ func (p *PlatformProxy) publishRuntimeNotification(ctx context.Context, rt Authe
 	if runtimeID := strings.TrimSpace(stringField(fields, "runtime_id")); runtimeID != "" && runtimeID != rt.RuntimeID {
 		return nil, status.Error(codes.PermissionDenied, "notification runtime_id does not match authenticated runtime")
 	}
-	accountID := int64(numberField(fields, "account_id"))
-	if accountID > 0 {
-		if err := p.ensureAccountOwner(ctx, rt, accountID); err != nil {
+	portfolioID := int64(numberField(fields, "portfolio_id"))
+	if portfolioID > 0 {
+		if err := p.ensurePortfolioOwner(ctx, rt, portfolioID); err != nil {
 			return nil, err
 		}
 	}
@@ -908,7 +925,7 @@ func (p *PlatformProxy) publishRuntimeNotification(ctx context.Context, rt Authe
 		Severity:      severity,
 		RuntimeID:     rt.RuntimeID,
 		RuntimeName:   rt.Name,
-		AccountID:     accountID,
+		PortfolioID:     portfolioID,
 		StrategyID:    int64(numberField(fields, "strategy_id")),
 		SessionID:     sessionID,
 		Title:         strings.TrimSpace(stringField(fields, "title")),
@@ -990,33 +1007,36 @@ func isRuntimeLogReservedKey(key string) bool {
 	}
 }
 
-type unavailableAccountClient struct{}
+type unavailablePortfolioClient struct{}
 
-func (unavailableAccountClient) GetAccount(context.Context, *accountv1.GetAccountRequest, ...grpc.CallOption) (*accountv1.GetAccountResponse, error) {
+func (unavailablePortfolioClient) GetPortfolio(context.Context, *portfoliov1.GetPortfolioRequest, ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) GetSession(context.Context, *accountv1.GetSessionRequest, ...grpc.CallOption) (*accountv1.GetSessionResponse, error) {
+func (unavailablePortfolioClient) GetSession(context.Context, *portfoliov1.GetSessionRequest, ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) GetPortfolioSnapshot(context.Context, *accountv1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.GetPortfolioSnapshotResponse, error) {
+func (unavailablePortfolioClient) GetPortfolioSnapshot(context.Context, *portfoliov1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) UpdatePortfolioSnapshot(context.Context, *accountv1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*accountv1.UpdatePortfolioSnapshotResponse, error) {
+func (unavailablePortfolioClient) UpdatePortfolioSnapshot(context.Context, *portfoliov1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) UpdateAccountWalletState(context.Context, *accountv1.UpdateAccountWalletStateRequest, ...grpc.CallOption) (*accountv1.UpdateAccountWalletStateResponse, error) {
+func (unavailablePortfolioClient) UpdatePortfolioWalletState(context.Context, *portfoliov1.UpdatePortfolioWalletStateRequest, ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) PreflightStrategySession(context.Context, *accountv1.PreflightStrategySessionRequest, ...grpc.CallOption) (*accountv1.PreflightStrategySessionResponse, error) {
+func (unavailablePortfolioClient) PreflightStrategySession(context.Context, *portfoliov1.PreflightStrategySessionRequest, ...grpc.CallOption) (*portfoliov1.PreflightStrategySessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) GetActiveStrategy(context.Context, *accountv1.GetActiveStrategyRequest, ...grpc.CallOption) (*accountv1.GetActiveStrategyResponse, error) {
+func (unavailablePortfolioClient) GetActiveStrategy(context.Context, *portfoliov1.GetActiveStrategyRequest, ...grpc.CallOption) (*portfoliov1.GetActiveStrategyResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) SaveSession(context.Context, *accountv1.SaveSessionRequest, ...grpc.CallOption) (*accountv1.SaveSessionResponse, error) {
+func (unavailablePortfolioClient) SaveSession(context.Context, *portfoliov1.SaveSessionRequest, ...grpc.CallOption) (*portfoliov1.SaveSessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
-func (unavailableAccountClient) UpdateSession(context.Context, *accountv1.UpdateSessionRequest, ...grpc.CallOption) (*accountv1.UpdateSessionResponse, error) {
+func (unavailablePortfolioClient) UpdateSession(context.Context, *portfoliov1.UpdateSessionRequest, ...grpc.CallOption) (*portfoliov1.UpdateSessionResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) SaveStrategyIndicators(context.Context, *portfoliov1.SaveStrategyIndicatorsRequest, ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 

@@ -112,7 +112,7 @@ type DebugWorkspaceState struct {
 type DebugDatasetState struct {
 	DatasetID      string
 	UserID         int64
-	AccountID      int64
+	PortfolioID      int64
 	RuntimeID      string
 	Market         string
 	Symbol         string

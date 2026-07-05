@@ -12,7 +12,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	"google.golang.org/grpc"
 )
 
@@ -51,10 +51,10 @@ type fakeHostedCredentialIssuer struct {
 }
 
 type fakeSessionClient struct {
-	listCalls []*accountv1.ListRunningSessionsRequest
-	listResp  []*accountv1.StrategySessionEntry
+	listCalls []*portfoliov1.ListRunningSessionsRequest
+	listResp  []*portfoliov1.StrategySessionEntry
 	listErr   error
-	markCalls []*accountv1.MarkRuntimeSessionsRecoverableRequest
+	markCalls []*portfoliov1.MarkRuntimeSessionsRecoverableRequest
 	markErr   error
 }
 
@@ -63,20 +63,20 @@ type fakeRuntimeStreamCloser struct {
 	err        error
 }
 
-func (f *fakeSessionClient) MarkRuntimeSessionsRecoverable(_ context.Context, req *accountv1.MarkRuntimeSessionsRecoverableRequest, _ ...grpc.CallOption) (*accountv1.MarkRuntimeSessionsRecoverableResponse, error) {
+func (f *fakeSessionClient) MarkRuntimeSessionsRecoverable(_ context.Context, req *portfoliov1.MarkRuntimeSessionsRecoverableRequest, _ ...grpc.CallOption) (*portfoliov1.MarkRuntimeSessionsRecoverableResponse, error) {
 	f.markCalls = append(f.markCalls, req)
 	if f.markErr != nil {
 		return nil, f.markErr
 	}
-	return &accountv1.MarkRuntimeSessionsRecoverableResponse{SessionsMarked: 1}, nil
+	return &portfoliov1.MarkRuntimeSessionsRecoverableResponse{SessionsMarked: 1}, nil
 }
 
-func (f *fakeSessionClient) ListRunningSessions(_ context.Context, req *accountv1.ListRunningSessionsRequest, _ ...grpc.CallOption) (*accountv1.ListRunningSessionsResponse, error) {
+func (f *fakeSessionClient) ListRunningSessions(_ context.Context, req *portfoliov1.ListRunningSessionsRequest, _ ...grpc.CallOption) (*portfoliov1.ListRunningSessionsResponse, error) {
 	f.listCalls = append(f.listCalls, req)
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return &accountv1.ListRunningSessionsResponse{Sessions: f.listResp}, nil
+	return &portfoliov1.ListRunningSessionsResponse{Sessions: f.listResp}, nil
 }
 
 func (f *fakeRuntimeStreamCloser) CloseStreamForRuntime(_ context.Context, runtimeID string) (bool, error) {

@@ -54,8 +54,8 @@ func (s *orderLifecycleDelivererStub) DeliverOrderLifecycleBatch(_ context.Conte
 func TestOrderLifecycleDeliveryWorkerDeliversAndAdvancesCursor(t *testing.T) {
 	client := &orderLifecycleClientStub{events: map[string][]*orderv1.OrderLifecycleEventEntry{
 		"sess-1": {
-			{EventId: 10, SessionId: "sess-1", AccountId: 7, VenueId: 20, EventType: "fill"},
-			{EventId: 11, SessionId: "sess-1", AccountId: 7, VenueId: 20, EventType: "terminal"},
+			{EventId: 10, SessionId: "sess-1", PortfolioId: 7, VenueId: 20, EventType: "fill"},
+			{EventId: 11, SessionId: "sess-1", PortfolioId: 7, VenueId: 20, EventType: "terminal"},
 		},
 	}}
 	deliverer := &orderLifecycleDelivererStub{}
@@ -91,7 +91,7 @@ func TestOrderLifecycleDeliveryWorkerDeliversAndAdvancesCursor(t *testing.T) {
 
 func TestOrderLifecycleDeliveryWorkerDoesNotAdvanceCursorWhenDeliveryFails(t *testing.T) {
 	client := &orderLifecycleClientStub{events: map[string][]*orderv1.OrderLifecycleEventEntry{
-		"sess-1": {{EventId: 10, SessionId: "sess-1", AccountId: 7, VenueId: 20, EventType: "fill"}},
+		"sess-1": {{EventId: 10, SessionId: "sess-1", PortfolioId: 7, VenueId: 20, EventType: "fill"}},
 	}}
 	deliverer := &orderLifecycleDelivererStub{err: errors.New("stream unavailable")}
 	worker := NewOrderLifecycleDeliveryWorker(
@@ -120,7 +120,7 @@ func TestOrderLifecycleDeliveryWorkerDoesNotAdvanceCursorWhenDeliveryFails(t *te
 
 func TestOrderLifecycleDeliveryWorkerDeduplicatesSessionRoutes(t *testing.T) {
 	client := &orderLifecycleClientStub{events: map[string][]*orderv1.OrderLifecycleEventEntry{
-		"sess-1": {{EventId: 10, SessionId: "sess-1", AccountId: 7, VenueId: 20, EventType: "fill"}},
+		"sess-1": {{EventId: 10, SessionId: "sess-1", PortfolioId: 7, VenueId: 20, EventType: "fill"}},
 	}}
 	deliverer := &orderLifecycleDelivererStub{}
 	worker := NewOrderLifecycleDeliveryWorker(
@@ -149,7 +149,7 @@ func TestOrderLifecycleDeliveryWorkerRunContinuesAfterTransientSyncError(t *test
 	defer cancel()
 	client := &flakyOrderLifecycleClient{
 		events: []*orderv1.OrderLifecycleEventEntry{
-			{EventId: 10, SessionId: "sess-1", AccountId: 7, VenueId: 20, EventType: "fill"},
+			{EventId: 10, SessionId: "sess-1", PortfolioId: 7, VenueId: 20, EventType: "fill"},
 		},
 	}
 	deliverer := &cancelOnDeliveryOrderLifecycleDeliverer{cancel: cancel}

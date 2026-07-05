@@ -1,6 +1,6 @@
 -- Phase D2: market-data control plane moves into control-panel-service.
 -- Mirror of core-service 0010_create_market_data_history_requests.sql.
--- Cross-database FKs to users/accounts dropped because Postgres cannot
+-- Cross-database FKs to users/portfolios dropped because Postgres cannot
 -- enforce FKs across databases.
 --
 -- See migration 0004 for the full discussion of the orphan-on-delete
@@ -19,8 +19,8 @@
 CREATE TABLE IF NOT EXISTS market_data_history_requests (
     request_id            BIGINT      PRIMARY KEY
         DEFAULT nextval('market_data_requests_request_id_seq'::regclass),
-    user_id               BIGINT      NOT NULL,           -- logical FK to account.users(id)
-    account_id            BIGINT      NULL,               -- logical FK to account.accounts(account_id)
+    user_id               BIGINT      NOT NULL,           -- logical FK to portfolio.users(id)
+    portfolio_id            BIGINT      NULL,               -- logical FK to portfolio.portfolios(portfolio_id)
     exchange              TEXT        NOT NULL,
     market                TEXT        NOT NULL,
     kind                  TEXT        NOT NULL,

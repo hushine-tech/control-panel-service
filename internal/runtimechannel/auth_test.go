@@ -35,7 +35,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
 
@@ -922,7 +922,7 @@ func TestInvokeStrategyUnaryByRuntimeIDTargetsSelectedStream(t *testing.T) {
 			42,
 			"runtime-b",
 			"RunStrategy",
-			&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42, RuntimeId: "runtime-b"},
+			&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42, RuntimeId: "runtime-b"},
 			resp,
 		)
 		if err == nil && resp.GetSessionId() != "sess-b" {
@@ -1002,7 +1002,7 @@ func TestInvokeStrategyUnaryByRuntimeIDInjectsTraceContext(t *testing.T) {
 			42,
 			"runtime-trace",
 			"RunStrategy",
-			&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42, RuntimeId: "runtime-trace"},
+			&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42, RuntimeId: "runtime-trace"},
 			&strategyv1.RunStrategyResponse{},
 		)
 	}()
@@ -1149,7 +1149,7 @@ func TestInvokeStrategyUnaryByRuntimeIDFailsClosedWhenDisconnected(t *testing.T)
 		42,
 		"runtime-missing",
 		"RunStrategy",
-		&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42, RuntimeId: "runtime-missing"},
+		&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42, RuntimeId: "runtime-missing"},
 		&strategyv1.RunStrategyResponse{},
 	)
 	if status.Code(err) != codes.Unavailable {
@@ -1180,7 +1180,7 @@ func TestInvokeStrategyUnaryByRuntimeIDUnblocksWhenStreamUnregisters(t *testing.
 			42,
 			"runtime-disconnect",
 			"RunStrategy",
-			&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42, RuntimeId: "runtime-disconnect"},
+			&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42, RuntimeId: "runtime-disconnect"},
 			&strategyv1.RunStrategyResponse{},
 		)
 	}()
@@ -1209,7 +1209,7 @@ func TestInvokeStrategyUnaryByRuntimeIDRequiresRuntimeID(t *testing.T) {
 		42,
 		"",
 		"RunStrategy",
-		&strategyv1.RunStrategyRequest{AccountId: 7, UserId: 42},
+		&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42},
 		&strategyv1.RunStrategyResponse{},
 	)
 	if status.Code(err) != codes.InvalidArgument {
@@ -1363,7 +1363,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequest(t *testing.T) 
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := New(repo)
 	dispatcher := &fakePlatformDispatcher{
-		resp: &accountv1.SaveSessionResponse{},
+		resp: &portfoliov1.SaveSessionResponse{},
 	}
 	svc.SetPlatformDispatcher(dispatcher)
 	svc.SetClock(func() time.Time { return now })
@@ -1376,7 +1376,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequest(t *testing.T) 
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 	waitForHelloAck(t, stream)
-	payload, err := anypb.New(&accountv1.SaveSessionRequest{SessionId: "sess-1", AccountId: 7})
+	payload, err := anypb.New(&portfoliov1.SaveSessionRequest{SessionId: "sess-1", PortfolioId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1385,7 +1385,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequest(t *testing.T) 
 		FrameType:     cpv1.FrameType_FRAME_TYPE_REQUEST,
 		Payload: &cpv1.RuntimeFrame_Request{
 			Request: &cpv1.StrategyRequest{
-				Method:  "account.SaveSession",
+				Method:  "portfolio.SaveSession",
 				Request: payload,
 			},
 		},
@@ -1400,7 +1400,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequest(t *testing.T) 
 	if frame.GetFrameType() != cpv1.FrameType_FRAME_TYPE_RESPONSE {
 		t.Fatalf("frame_type = %s, want RESPONSE", frame.GetFrameType())
 	}
-	if dispatcher.method != "account.SaveSession" || dispatcher.rt.RuntimeID != "runtime-1" || dispatcher.rt.UserID != 42 {
+	if dispatcher.method != "portfolio.SaveSession" || dispatcher.rt.RuntimeID != "runtime-1" || dispatcher.rt.UserID != 42 {
 		t.Fatalf("dispatcher saw method=%q runtime=%+v", dispatcher.method, dispatcher.rt)
 	}
 	stream.cancel()
@@ -1414,7 +1414,7 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 	svc := New(repo)
 	called := make(chan struct{}, 1)
 	dispatcher := &fakePlatformDispatcher{
-		resp:   &accountv1.UpdateSessionResponse{},
+		resp:   &portfoliov1.UpdateSessionResponse{},
 		called: called,
 	}
 	svc.SetPlatformDispatcher(dispatcher)
@@ -1429,7 +1429,7 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 	}
 	waitForHelloAck(t, stream)
 
-	updateReq := &accountv1.UpdateSessionRequest{
+	updateReq := &portfoliov1.UpdateSessionRequest{
 		SessionId:     "sess-finished",
 		Status:        "finished",
 		BarsProcessed: 2047,
@@ -1456,10 +1456,10 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runtime status patch was not dispatched")
 	}
-	if dispatcher.method != "account.UpdateSession" {
-		t.Fatalf("dispatcher method = %q, want account.UpdateSession", dispatcher.method)
+	if dispatcher.method != "portfolio.UpdateSession" {
+		t.Fatalf("dispatcher method = %q, want portfolio.UpdateSession", dispatcher.method)
 	}
-	got := &accountv1.UpdateSessionRequest{}
+	got := &portfoliov1.UpdateSessionRequest{}
 	if err := dispatcher.payload.UnmarshalTo(got); err != nil {
 		t.Fatalf("unpack dispatched update: %v", err)
 	}
@@ -1507,7 +1507,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequestWithTraceContex
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := New(repo)
 	dispatcher := &fakePlatformDispatcher{
-		resp: &accountv1.SaveSessionResponse{},
+		resp: &portfoliov1.SaveSessionResponse{},
 	}
 	svc.SetPlatformDispatcher(dispatcher)
 	svc.SetClock(func() time.Time { return now })
@@ -1520,7 +1520,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequestWithTraceContex
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 	waitForHelloAck(t, stream)
-	payload, err := anypb.New(&accountv1.SaveSessionRequest{SessionId: "sess-1", AccountId: 7})
+	payload, err := anypb.New(&portfoliov1.SaveSessionRequest{SessionId: "sess-1", PortfolioId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1530,7 +1530,7 @@ func TestRuntimeChannelDispatchesRuntimeOriginatedPlatformRequestWithTraceContex
 		FrameType:     cpv1.FrameType_FRAME_TYPE_REQUEST,
 		Payload: &cpv1.RuntimeFrame_Request{
 			Request: &cpv1.StrategyRequest{
-				Method:       "account.SaveSession",
+				Method:       "portfolio.SaveSession",
 				Request:      payload,
 				TraceContext: map[string]string{"traceparent": traceparent},
 			},

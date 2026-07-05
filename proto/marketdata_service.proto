@@ -15,7 +15,7 @@ import "google/protobuf/timestamp.proto";
 // and the canonical caller for scraper, quant-handler, and strategy-service.
 //
 // Scope: kline only (v1). Field shapes preserved verbatim from the
-// original account.v1 definitions so the migration is wire-compatible —
+// original portfolio.v1 definitions so the migration is wire-compatible —
 // callers only repoint their gRPC channel; their request / response
 // handling is unchanged.
 service MarketDataControlPlaneService {
@@ -128,7 +128,7 @@ message MarketDataStream {
 message MarketDataRequest {
   int64     request_id         = 1;
   int64     user_id            = 2;
-  int64     account_id         = 3; // 0 == not bound to a specific account
+  int64     portfolio_id         = 3; // 0 == not bound to a specific portfolio
   int64     stream_id          = 4;
   StreamKey key                = 5;
   bool      needs_live_delivery = 6;
@@ -149,7 +149,7 @@ message MarketDataLease {
   int64  lease_id           = 1;
   string session_id         = 2;
   int64  strategy_id        = 3; // 0 == unset
-  int64  account_id         = 4; // 0 == unset
+  int64  portfolio_id         = 4; // 0 == unset
   int64  stream_id          = 5;
   google.protobuf.Timestamp expires_at        = 6;
   google.protobuf.Timestamp last_heartbeat_at = 7;
@@ -229,7 +229,7 @@ message MarketDataWriterLease {
 
 message CreateMarketDataRequestRequest {
   int64     user_id             = 1;
-  int64     account_id          = 2; // optional; 0 means unbound
+  int64     portfolio_id          = 2; // optional; 0 means unbound
   StreamKey key                 = 3;
   bool      needs_live_delivery = 4;
   string    scope               = 5; // "live" | "historical"; empty means "live"
@@ -403,7 +403,7 @@ message QueryMarketDataKlinesResponse {
 message CreateOrRenewMarketDataLeaseRequest {
   string session_id  = 1;
   int64  strategy_id = 2; // optional (0)
-  int64  account_id  = 3; // optional (0)
+  int64  portfolio_id  = 3; // optional (0)
   int64  stream_id   = 4;
   int64  ttl_seconds = 5;
 }

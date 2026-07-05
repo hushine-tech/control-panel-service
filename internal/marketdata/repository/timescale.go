@@ -186,7 +186,7 @@ func (r *TimescaleRepository) UpdateMarketDataStreamActualState(
 func (r *TimescaleRepository) UpsertMarketDataRequest(
 	ctx context.Context,
 	userID int64,
-	accountID *int64,
+	portfolioID *int64,
 	key domain.StreamKey,
 	needsLive bool,
 ) (domain.MarketDataRequest, error) {
@@ -223,11 +223,11 @@ func (r *TimescaleRepository) UpsertMarketDataRequest(
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE market_data_requests
 			SET needs_live_delivery = $2,
-			    account_id = COALESCE($3, account_id),
+			    portfolio_id = COALESCE($3, portfolio_id),
 			    status = 'active',
 			    updated_at = NOW()
 			WHERE request_id = $1`,
-			existingID, needsLive, accountID,
+			existingID, needsLive, portfolioID,
 		); err != nil {
 			return domain.MarketDataRequest{}, fmt.Errorf("update request: %w", err)
 		}
@@ -246,11 +246,11 @@ func (r *TimescaleRepository) UpsertMarketDataRequest(
 	var newID int64
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO market_data_requests
-			(user_id, account_id, exchange, market, kind, symbol, interval,
+			(user_id, portfolio_id, exchange, market, kind, symbol, interval,
 			 needs_live_delivery, status, stream_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9)
 		RETURNING request_id`,
-		userID, accountID,
+		userID, portfolioID,
 		key.Exchange, key.Market, key.Kind, key.Symbol, key.Interval,
 		needsLive, streamID,
 	).Scan(&newID); err != nil {
@@ -303,7 +303,7 @@ func (r *TimescaleRepository) CancelMarketDataRequest(ctx context.Context, reque
 
 func (r *TimescaleRepository) GetMarketDataRequest(ctx context.Context, requestID, userID int64) (domain.MarketDataRequest, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT request_id, user_id, account_id, stream_id,
+		SELECT request_id, user_id, portfolio_id, stream_id,
 			exchange, market, kind, symbol, interval,
 			needs_live_delivery, status, created_at, updated_at, cancelled_at
 		FROM market_data_requests
@@ -325,7 +325,7 @@ func (r *TimescaleRepository) GetMarketDataRequest(ctx context.Context, requestI
 
 func (r *TimescaleRepository) ListMarketDataRequestsByUser(ctx context.Context, userID int64) ([]domain.MarketDataRequest, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT request_id, user_id, account_id, stream_id,
+		SELECT request_id, user_id, portfolio_id, stream_id,
 			exchange, market, kind, symbol, interval,
 			needs_live_delivery, status, created_at, updated_at, cancelled_at
 		FROM market_data_requests
@@ -369,7 +369,7 @@ func (r *TimescaleRepository) ListMarketDataRequestsByUserPage(ctx context.Conte
 		return nil, 0, false, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT request_id, user_id, account_id, stream_id,
+		SELECT request_id, user_id, portfolio_id, stream_id,
 			exchange, market, kind, symbol, interval,
 			needs_live_delivery, status, created_at, updated_at, cancelled_at
 		FROM market_data_requests
@@ -406,7 +406,7 @@ func (r *TimescaleRepository) ListMarketDataRequestsByUserPage(ctx context.Conte
 func (r *TimescaleRepository) CreateOrRenewLease(
 	ctx context.Context,
 	sessionID string,
-	strategyID, accountID *int64,
+	strategyID, portfolioID *int64,
 	streamID int64,
 	ttl time.Duration,
 ) (domain.MarketDataLease, error) {
@@ -419,7 +419,7 @@ func (r *TimescaleRepository) CreateOrRenewLease(
 
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO market_data_leases
-			(session_id, strategy_id, account_id, stream_id,
+			(session_id, strategy_id, portfolio_id, stream_id,
 			 expires_at, last_heartbeat_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (session_id, stream_id) DO UPDATE SET
@@ -427,10 +427,10 @@ func (r *TimescaleRepository) CreateOrRenewLease(
 			last_heartbeat_at = NOW(),
 			released_at = NULL,
 			strategy_id = COALESCE(EXCLUDED.strategy_id, market_data_leases.strategy_id),
-			account_id = COALESCE(EXCLUDED.account_id, market_data_leases.account_id)
-		RETURNING lease_id, session_id, strategy_id, account_id,
+			portfolio_id = COALESCE(EXCLUDED.portfolio_id, market_data_leases.portfolio_id)
+		RETURNING lease_id, session_id, strategy_id, portfolio_id,
 			stream_id, expires_at, last_heartbeat_at, created_at, released_at`,
-		sessionID, strategyID, accountID, streamID, expiresAt,
+		sessionID, strategyID, portfolioID, streamID, expiresAt,
 	)
 	lease, err := scanLease(row)
 	if err != nil {
@@ -547,7 +547,7 @@ func (r *TimescaleRepository) ExpireStaleLeases(ctx context.Context, now time.Ti
 
 func (r *TimescaleRepository) ListActiveLeasesForStream(ctx context.Context, streamID int64) ([]domain.MarketDataLease, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT lease_id, session_id, strategy_id, account_id,
+		SELECT lease_id, session_id, strategy_id, portfolio_id,
 			stream_id, expires_at, last_heartbeat_at, created_at, released_at
 		FROM market_data_leases
 		WHERE stream_id = $1
@@ -939,7 +939,7 @@ func (r *TimescaleRepository) ReleaseMarketDataWriterLease(ctx context.Context, 
 func (r *TimescaleRepository) UpsertMarketDataHistoryRequest(
 	ctx context.Context,
 	userID int64,
-	accountID *int64,
+	portfolioID *int64,
 	key domain.StreamKey,
 	startAt, endAt time.Time,
 ) (domain.MarketDataHistoryRequest, error) {
@@ -964,12 +964,12 @@ func (r *TimescaleRepository) UpsertMarketDataHistoryRequest(
 	if err == nil {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE market_data_history_requests
-			SET account_id = COALESCE($2, account_id),
+			SET portfolio_id = COALESCE($2, portfolio_id),
 			    status = CASE WHEN status = 'error' THEN 'pending' ELSE status END,
 			    last_error = CASE WHEN status = 'error' THEN '' ELSE last_error END,
 			    updated_at = NOW()
 			WHERE request_id = $1`,
-			existingID, accountID,
+			existingID, portfolioID,
 		); err != nil {
 			return domain.MarketDataHistoryRequest{}, fmt.Errorf("update history request: %w", err)
 		}
@@ -985,11 +985,11 @@ func (r *TimescaleRepository) UpsertMarketDataHistoryRequest(
 	var newID int64
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO market_data_history_requests
-			(user_id, account_id, exchange, market, kind, symbol, interval,
+			(user_id, portfolio_id, exchange, market, kind, symbol, interval,
 			 requested_start_at, requested_end_at, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
 		RETURNING request_id`,
-		userID, accountID,
+		userID, portfolioID,
 		key.Exchange, key.Market, key.Kind, key.Symbol, key.Interval,
 		startAt.UTC(), endAt.UTC(),
 	).Scan(&newID); err != nil {
@@ -1007,7 +1007,7 @@ func (r *TimescaleRepository) UpsertMarketDataHistoryRequest(
 // upsert flow above.
 func (r *TimescaleRepository) getMarketDataHistoryRequest(ctx context.Context, requestID, userID int64) (domain.MarketDataHistoryRequest, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT request_id, user_id, account_id,
+		SELECT request_id, user_id, portfolio_id,
 			exchange, market, kind, symbol, interval,
 			status, requested_start_at, requested_end_at,
 			covered_start_at, covered_end_at, COALESCE(last_error, ''),
@@ -1055,7 +1055,7 @@ func (r *TimescaleRepository) CancelMarketDataHistoryRequest(ctx context.Context
 
 func (r *TimescaleRepository) ListMarketDataHistoryRequestsByUser(ctx context.Context, userID int64) ([]domain.MarketDataHistoryRequest, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT request_id, user_id, account_id,
+		SELECT request_id, user_id, portfolio_id,
 			exchange, market, kind, symbol, interval,
 			status, requested_start_at, requested_end_at,
 			covered_start_at, covered_end_at, COALESCE(last_error, ''),
@@ -1083,7 +1083,7 @@ func (r *TimescaleRepository) ListMarketDataHistoryRequestsByUser(ctx context.Co
 
 func (r *TimescaleRepository) ListMarketDataHistoryRequests(ctx context.Context, includeTerminal bool) ([]domain.MarketDataHistoryRequest, error) {
 	query := `
-		SELECT request_id, user_id, account_id,
+		SELECT request_id, user_id, portfolio_id,
 			exchange, market, kind, symbol, interval,
 			status, requested_start_at, requested_end_at,
 			covered_start_at, covered_end_at, COALESCE(last_error, ''),
@@ -1405,7 +1405,7 @@ func scanRequest(row rowScanner) (domain.MarketDataRequest, error) {
 	r.Status = domain.MarketDataRequestStatus(status)
 	if acct.Valid {
 		v := acct.Int64
-		r.AccountID = &v
+		r.PortfolioID = &v
 	}
 	if cancelledAt.Valid {
 		t := cancelledAt.Time
@@ -1430,7 +1430,7 @@ func scanLease(row rowScanner) (domain.MarketDataLease, error) {
 	}
 	if acct.Valid {
 		v := acct.Int64
-		l.AccountID = &v
+		l.PortfolioID = &v
 	}
 	if released.Valid {
 		t := released.Time
@@ -1658,7 +1658,7 @@ func scanHistoryRequest(row rowScanner) (domain.MarketDataHistoryRequest, error)
 	r.Status = domain.MarketDataHistoryRequestStatus(status)
 	if acct.Valid {
 		v := acct.Int64
-		r.AccountID = &v
+		r.PortfolioID = &v
 	}
 	if coveredStart.Valid {
 		t := coveredStart.Time

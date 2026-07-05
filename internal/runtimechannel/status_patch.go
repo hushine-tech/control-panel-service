@@ -12,7 +12,7 @@ import (
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/logger"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
 const statusPatchPersistTimeout = 10 * time.Second
@@ -30,14 +30,14 @@ func (s *Service) handleRuntimeStatusPatch(rt AuthenticatedRuntime, frame *cpv1.
 		return
 	}
 
-	req := &accountv1.UpdateSessionRequest{
+	req := &portfoliov1.UpdateSessionRequest{
 		SessionId: patch.GetSessionId(),
 		Status:    statusText,
 		Error:     patch.GetReason(),
 		RuntimeId: rt.RuntimeID,
 	}
 	if payload := patch.GetPayload(); payload != nil {
-		embedded := &accountv1.UpdateSessionRequest{}
+		embedded := &portfoliov1.UpdateSessionRequest{}
 		if err := payload.UnmarshalTo(embedded); err == nil {
 			if embedded.GetSessionId() != "" {
 				req.SessionId = embedded.GetSessionId()
@@ -60,7 +60,7 @@ func (s *Service) handleRuntimeStatusPatch(rt AuthenticatedRuntime, frame *cpv1.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), statusPatchPersistTimeout)
 	defer cancel()
-	if _, err := s.platform.DispatchRuntimeRequest(ctx, rt, "account.UpdateSession", payload); err != nil {
+	if _, err := s.platform.DispatchRuntimeRequest(ctx, rt, "portfolio.UpdateSession", payload); err != nil {
 		if status.Code(err) == codes.FailedPrecondition {
 			logger.Warn(context.Background(), "system", fmt.Sprintf(
 				"runtime status patch rejected: runtime_id=%s session_id=%s status=%s err=%v",

@@ -46,7 +46,7 @@ type Event struct {
 	SourceService string            `json:"source_service,omitempty"`
 	RuntimeID     string            `json:"runtime_id,omitempty"`
 	RuntimeName   string            `json:"runtime_name,omitempty"`
-	AccountID     int64             `json:"account_id,omitempty"`
+	PortfolioID     int64             `json:"portfolio_id,omitempty"`
 	StrategyID    int64             `json:"strategy_id,omitempty"`
 	SessionID     string            `json:"session_id,omitempty"`
 	Title         string            `json:"title,omitempty"`

@@ -117,7 +117,7 @@ routes via control-panel but provisioner is NoOp → fail-closed; or
 provisioner runs containers but handler is not pointed at control-panel):
 
 1. **Apply migrations**: `make ensure-dbs` at repo root (creates
-   `control_panel` DB and applies `users.plan_code` to `account` DB).
+   `control_panel` DB and applies `users.plan_code` to `portfolio` DB).
 2. **Build the runtime image**:
    ```bash
    bash strategy-service/scripts/build_strategy_runtime.sh dev
@@ -168,14 +168,14 @@ once between `pg_dump` backup and the rolling restart of the 3 callers
      --table=market_data_requests \
      --table=market_data_leases \
      --table=market_data_history_requests \
-     "$ACCOUNT_DSN" > account_market_data_backup.sql
+     "$PORTFOLIO_DSN" > portfolio_market_data_backup.sql
    ```
 3. **Apply control-panel migrations**: `make ensure-dbs` (creates the 4
    `market_data_*` tables in the `control_panel` DB via control-panel
    migrations 0003-0006).
 4. **Run the one-shot migration tool**:
    ```bash
-   ACCOUNT_DSN="..." CONTROL_PANEL_DSN="..." \
+   PORTFOLIO_DSN="..." CONTROL_PANEL_DSN="..." \
      go run ./scripts/migrate_market_data
    ```
    Copies all 4 tables row-by-row (`ON CONFLICT DO NOTHING` for
@@ -225,7 +225,7 @@ Recommended smoke/onboarding sequence:
 5. **Start a bare debug runtime** only when the control-panel debug gate is enabled:
    ```bash
    cd strategy-service
-   uv run hushine-runtime start --config config.yaml --runtime-channel-addr 127.0.0.1:50055 --user-id <account.users.id>
+   uv run hushine-runtime start --config config.yaml --runtime-channel-addr 127.0.0.1:50055 --user-id <portfolio.users.id>
    ```
 6. **Observe the stream**: the runtime registry should show
    `source=hosted`, `source=self_hosted`, or `source=bare` with
@@ -407,7 +407,7 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
 `0002` creates it for replayability, and `0009_drop_runtime_pairings.sql`
 drops it.
 
-`users` and `users.plan_code` live in the `account` database owned by
+`users` and `users.plan_code` live in the `portfolio` database owned by
 `core-service`; control-panel-service reads `plan_code` via the
 `core-service` `GetUser` gRPC.
 

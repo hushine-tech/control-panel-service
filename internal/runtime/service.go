@@ -20,7 +20,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	"google.golang.org/grpc"
 )
 
@@ -104,8 +104,8 @@ type Service struct {
 }
 
 type sessionClient interface {
-	ListRunningSessions(ctx context.Context, in *accountv1.ListRunningSessionsRequest, opts ...grpc.CallOption) (*accountv1.ListRunningSessionsResponse, error)
-	MarkRuntimeSessionsRecoverable(ctx context.Context, in *accountv1.MarkRuntimeSessionsRecoverableRequest, opts ...grpc.CallOption) (*accountv1.MarkRuntimeSessionsRecoverableResponse, error)
+	ListRunningSessions(ctx context.Context, in *portfoliov1.ListRunningSessionsRequest, opts ...grpc.CallOption) (*portfoliov1.ListRunningSessionsResponse, error)
+	MarkRuntimeSessionsRecoverable(ctx context.Context, in *portfoliov1.MarkRuntimeSessionsRecoverableRequest, opts ...grpc.CallOption) (*portfoliov1.MarkRuntimeSessionsRecoverableResponse, error)
 }
 
 type runtimeStreamCloser interface {
@@ -483,7 +483,7 @@ type ForceEndAudit struct {
 	AffectedSessionIDs []string
 }
 
-func (r ForceEndRequest) Audit(runtimeID string, sessions []*accountv1.StrategySessionEntry) ForceEndAudit {
+func (r ForceEndRequest) Audit(runtimeID string, sessions []*portfoliov1.StrategySessionEntry) ForceEndAudit {
 	ids := make([]string, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess == nil || sess.GetSessionId() == "" {
@@ -608,14 +608,14 @@ func (s *Service) recordRuntimeCleanupState(runtimeID, status, reason string, at
 	}
 }
 
-func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) ([]*accountv1.StrategySessionEntry, error) {
+func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) ([]*portfoliov1.StrategySessionEntry, error) {
 	if runtimeID == "" {
 		return nil, nil
 	}
 	if s.sessionClient == nil {
 		return nil, fmt.Errorf("%w: core-service session client is not configured", ErrSessionLookupUnavailable)
 	}
-	resp, err := s.sessionClient.ListRunningSessions(ctx, &accountv1.ListRunningSessionsRequest{RuntimeId: runtimeID})
+	resp, err := s.sessionClient.ListRunningSessions(ctx, &portfoliov1.ListRunningSessionsRequest{RuntimeId: runtimeID})
 	if err != nil {
 		return nil, fmt.Errorf("%w: list runtime sessions for %s: %v", ErrSessionLookupUnavailable, runtimeID, err)
 	}
@@ -625,7 +625,7 @@ func (s *Service) listRuntimeEndBlockers(ctx context.Context, runtimeID string) 
 	return resp.GetSessions(), nil
 }
 
-func describeSessionBlocker(sess *accountv1.StrategySessionEntry) string {
+func describeSessionBlocker(sess *portfoliov1.StrategySessionEntry) string {
 	if sess == nil {
 		return "<unknown>"
 	}
@@ -674,7 +674,7 @@ func (s *Service) markRuntimeSessionsRecoverable(ctx context.Context, runtimeID,
 	if s.sessionClient == nil || runtimeID == "" {
 		return
 	}
-	_, _ = s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &accountv1.MarkRuntimeSessionsRecoverableRequest{
+	_, _ = s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &portfoliov1.MarkRuntimeSessionsRecoverableRequest{
 		RuntimeId: runtimeID,
 		Error:     errMsg,
 	})
@@ -688,7 +688,7 @@ type ResolveByIDArgs struct {
 	// Role is the intended session role. Empty means executor for backward
 	// compatibility with existing strategy launch paths.
 	Role string
-	// Environment is the requested account/session environment when the caller has it.
+	// Environment is the requested portfolio/session environment when the caller has it.
 	// Debugger routes require backtest; executor routes support backtest/demo.
 	Environment int
 }

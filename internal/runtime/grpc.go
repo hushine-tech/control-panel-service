@@ -18,7 +18,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
 
@@ -35,7 +35,7 @@ type ControlPanelGRPCService struct {
 }
 
 type strategyStatusReader interface {
-	GetSession(ctx context.Context, in *accountv1.GetSessionRequest, opts ...grpc.CallOption) (*accountv1.GetSessionResponse, error)
+	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
 }
 
 // NewControlPanelGRPCService constructs the gRPC adapter. credSvc may be
@@ -223,7 +223,7 @@ func debugDatasetToProto(state *domain.DebugDatasetState) *cpv1.DebugDatasetStat
 	return &cpv1.DebugDatasetState{
 		DatasetId:      state.DatasetID,
 		UserId:         state.UserID,
-		AccountId:      state.AccountID,
+		PortfolioId:      state.PortfolioID,
 		RuntimeId:      state.RuntimeID,
 		Market:         state.Market,
 		Symbol:         state.Symbol,
@@ -448,7 +448,7 @@ func (g *ControlPanelGRPCService) LoadDebugDataset(ctx context.Context, req *cpv
 	}
 	state, err := g.debugSvc.LoadDebugDataset(ctx, debugger.LoadDatasetArgs{
 		UserID:      req.GetUserId(),
-		AccountID:   req.GetAccountId(),
+		PortfolioID:   req.GetPortfolioId(),
 		RuntimeID:   req.GetRuntimeId(),
 		Market:      req.GetMarket(),
 		Symbol:      req.GetSymbol(),
@@ -507,7 +507,7 @@ func (g *ControlPanelGRPCService) PublishRuntimeNotification(ctx context.Context
 		Severity:      severity,
 		RuntimeID:     rt.RuntimeID,
 		RuntimeName:   rt.Name,
-		AccountID:     req.GetAccountId(),
+		PortfolioID:     req.GetPortfolioId(),
 		StrategyID:    req.GetStrategyId(),
 		SessionID:     strings.TrimSpace(req.GetSessionId()),
 		Title:         strings.TrimSpace(req.GetTitle()),

@@ -23,7 +23,7 @@ type TimescaleRepository struct {
 
 // NewTimescaleRepository opens a connection and pings. Migrations are applied
 // out-of-band by “cmd/ensure-control-panel-db“; this constructor does NOT
-// run migrations on every service boot (mirrors the convention; account-
+// run migrations on every service boot (mirrors the convention; portfolio-
 // service runs migrations on boot but that is the older pattern).
 func NewTimescaleRepository(dsn string, logger elog.Logger) (*TimescaleRepository, error) {
 	db, err := sql.Open("postgres", dsn)
@@ -922,7 +922,7 @@ func (r *TimescaleRepository) ReplaceActiveDebugDataset(ctx context.Context, sta
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO runtime_debug_datasets (
-			dataset_id, user_id, account_id, runtime_id, market, symbol, interval,
+			dataset_id, user_id, portfolio_id, runtime_id, market, symbol, interval,
 			start_at, end_at, bar_count, coverage_status, state, last_error, loaded_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
@@ -930,7 +930,7 @@ func (r *TimescaleRepository) ReplaceActiveDebugDataset(ctx context.Context, sta
 		)`,
 		state.DatasetID,
 		state.UserID,
-		state.AccountID,
+		state.PortfolioID,
 		state.RuntimeID,
 		state.Market,
 		state.Symbol,
@@ -954,7 +954,7 @@ func (r *TimescaleRepository) ReplaceActiveDebugDataset(ctx context.Context, sta
 
 func (r *TimescaleRepository) GetLatestDebugDataset(ctx context.Context, userID int64, runtimeID string) (domain.DebugDatasetState, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT dataset_id, user_id, account_id, runtime_id, market, symbol, interval,
+		SELECT dataset_id, user_id, portfolio_id, runtime_id, market, symbol, interval,
 		       start_at, end_at, bar_count, coverage_status, loaded_at, state, last_error
 		FROM runtime_debug_datasets
 		WHERE user_id = $1
@@ -1106,7 +1106,7 @@ func scanDebugDataset(scan func(...any) error) (domain.DebugDatasetState, error)
 	if err := scan(
 		&state.DatasetID,
 		&state.UserID,
-		&state.AccountID,
+		&state.PortfolioID,
 		&state.RuntimeID,
 		&state.Market,
 		&state.Symbol,

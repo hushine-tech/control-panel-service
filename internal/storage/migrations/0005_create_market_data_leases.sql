@@ -1,13 +1,13 @@
 -- Phase D2: market-data control plane moves into control-panel-service.
 -- Mirror of core-service 0009_create_market_data_control_plane.sql
--- (leases table portion). Cross-database FK to accounts dropped because
+-- (leases table portion). Cross-database FK to portfolios dropped because
 -- Postgres cannot enforce FKs across databases.
 --
 -- See migration 0004 for the full discussion of the orphan-on-delete
--- behaviour change. Short version: deleting an account in core-service
--- no longer NULLs the account_id on this table; rows orphan instead.
--- Acceptable because the platform does not delete accounts in normal
--- operation. Revisit if/when an account-delete path lands.
+-- behaviour change. Short version: deleting an portfolio in core-service
+-- no longer NULLs the portfolio_id on this table; rows orphan instead.
+-- Acceptable because the platform does not delete portfolios in normal
+-- operation. Revisit if/when an portfolio-delete path lands.
 --
 -- Session-scoped expiring claims. One row per (session_id, stream_id).
 -- Created by strategy-service when a demo session enters live data delivery
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS market_data_leases (
     lease_id           BIGSERIAL   PRIMARY KEY,
     session_id         TEXT        NOT NULL,
     strategy_id        BIGINT      NULL,
-    account_id         BIGINT      NULL,                 -- logical FK to account.accounts(account_id)
+    portfolio_id         BIGINT      NULL,                 -- logical FK to portfolio.portfolios(portfolio_id)
     stream_id          BIGINT      NOT NULL REFERENCES market_data_streams(stream_id) ON DELETE CASCADE,
     expires_at         TIMESTAMPTZ NOT NULL,
     last_heartbeat_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -15,14 +15,14 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:50054", "control-panel-service gRPC address")
-	userID := flag.Int64("user", 0, "account.users.id")
+	userID := flag.Int64("user", 0, "portfolio.users.id")
 	profile := flag.String("profile", "small", "hosted runtime resource profile")
 	name := flag.String("name", "", "optional hosted runtime display name")
 	timeout := flag.Duration("timeout", 150*time.Second, "smoke timeout")
 	flag.Parse()
 
 	if *userID <= 0 {
-		fmt.Fprintln(os.Stderr, "required: -user <account.users.id>")
+		fmt.Fprintln(os.Stderr, "required: -user <portfolio.users.id>")
 		os.Exit(2)
 	}
 

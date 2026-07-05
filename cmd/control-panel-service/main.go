@@ -23,7 +23,7 @@ import (
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
-	"github.com/hushine-tech/control-panel-service/internal/accountclient"
+	"github.com/hushine-tech/control-panel-service/internal/portfolioclient"
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/credential"
 	"github.com/hushine-tech/control-panel-service/internal/debugger"
@@ -153,15 +153,15 @@ func main() {
 	logger.Info(ctx, "system", "timescaledb connected (control_panel)")
 
 	// ── core-service client (for plan_code lookup) ───────────────────────────
-	accClient, err := accountclient.New(
-		cfg.Dependencies.AccountServiceGRPC,
+	accClient, err := portfolioclient.New(
+		cfg.Dependencies.PortfolioServiceGRPC,
 		grpc.WithUnaryInterceptor(grpcclientmw.UnaryClientInterceptor(logger.Instance())),
 	)
 	if err != nil {
 		log.Fatalf("init core-service client: %v", err)
 	}
 	defer accClient.Close()
-	logger.Info(ctx, "system", fmt.Sprintf("core-service client → %s", cfg.Dependencies.AccountServiceGRPC))
+	logger.Info(ctx, "system", fmt.Sprintf("core-service client → %s", cfg.Dependencies.PortfolioServiceGRPC))
 
 	var orderClient orderv1.OrderServiceClient
 	var orderConn *grpc.ClientConn

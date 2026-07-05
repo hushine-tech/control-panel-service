@@ -15,7 +15,7 @@ ALTER TABLE runtime_registry
 CREATE TABLE IF NOT EXISTS runtime_debug_datasets (
     dataset_id      TEXT PRIMARY KEY,
     user_id         BIGINT      NOT NULL,
-    account_id      BIGINT      NOT NULL,
+    portfolio_id      BIGINT      NOT NULL,
     runtime_id      TEXT        NOT NULL REFERENCES runtime_registry(runtime_id) ON DELETE CASCADE,
     market          TEXT        NOT NULL,
     symbol          TEXT        NOT NULL,

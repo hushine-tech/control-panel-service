@@ -190,7 +190,7 @@ message DebugWorkspaceState {
 message DebugDatasetState {
   string dataset_id = 1;
   int64 user_id = 2;
-  int64 account_id = 3;
+  int64 portfolio_id = 3;
   string runtime_id = 4;
   string market = 5;
   string symbol = 6;
@@ -218,7 +218,7 @@ message PrepareDebugWorkspaceResponse {
 
 message LoadDebugDatasetRequest {
   string runtime_id = 1;
-  int64 account_id = 2;
+  int64 portfolio_id = 2;
   string market = 3;
   string symbol = 4;
   string interval = 5;
@@ -294,7 +294,7 @@ message PublishRuntimeNotificationRequest {
   int64 user_id = 1;
   string runtime_id = 2;
   string session_id = 3;
-  int64 account_id = 4;
+  int64 portfolio_id = 4;
   int64 strategy_id = 5;
   string category = 6;
   string severity = 7;

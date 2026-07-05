@@ -13,8 +13,8 @@ func TestApplyEnvOverridesUsesCoreServiceGRPCAddr(t *testing.T) {
 	cfg := Default()
 	cfg.ApplyEnvOverrides()
 
-	if got := cfg.Dependencies.AccountServiceGRPC; got != "core.internal:50051" {
-		t.Fatalf("AccountServiceGRPC = %q, want core service addr", got)
+	if got := cfg.Dependencies.PortfolioServiceGRPC; got != "core.internal:50051" {
+		t.Fatalf("PortfolioServiceGRPC = %q, want core service addr", got)
 	}
 }
 

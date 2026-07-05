@@ -515,7 +515,7 @@ type DebugDatasetState struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	DatasetId      string                 `protobuf:"bytes,1,opt,name=dataset_id,json=datasetId,proto3" json:"dataset_id,omitempty"`
 	UserId         int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AccountId      int64                  `protobuf:"varint,3,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	PortfolioId    int64                  `protobuf:"varint,3,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"`
 	RuntimeId      string                 `protobuf:"bytes,4,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
 	Market         string                 `protobuf:"bytes,5,opt,name=market,proto3" json:"market,omitempty"`
 	Symbol         string                 `protobuf:"bytes,6,opt,name=symbol,proto3" json:"symbol,omitempty"`
@@ -575,9 +575,9 @@ func (x *DebugDatasetState) GetUserId() int64 {
 	return 0
 }
 
-func (x *DebugDatasetState) GetAccountId() int64 {
+func (x *DebugDatasetState) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -782,7 +782,7 @@ func (x *PrepareDebugWorkspaceResponse) GetWorkspace() *DebugWorkspaceState {
 type LoadDebugDatasetRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RuntimeId     string                 `protobuf:"bytes,1,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	AccountId     int64                  `protobuf:"varint,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	PortfolioId   int64                  `protobuf:"varint,2,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"`
 	Market        string                 `protobuf:"bytes,3,opt,name=market,proto3" json:"market,omitempty"`
 	Symbol        string                 `protobuf:"bytes,4,opt,name=symbol,proto3" json:"symbol,omitempty"`
 	Interval      string                 `protobuf:"bytes,5,opt,name=interval,proto3" json:"interval,omitempty"`
@@ -830,9 +830,9 @@ func (x *LoadDebugDatasetRequest) GetRuntimeId() string {
 	return ""
 }
 
-func (x *LoadDebugDatasetRequest) GetAccountId() int64 {
+func (x *LoadDebugDatasetRequest) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -1488,7 +1488,7 @@ type PublishRuntimeNotificationRequest struct {
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	RuntimeId     string                 `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
 	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	AccountId     int64                  `protobuf:"varint,4,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	PortfolioId   int64                  `protobuf:"varint,4,opt,name=portfolio_id,json=portfolioId,proto3" json:"portfolio_id,omitempty"`
 	StrategyId    int64                  `protobuf:"varint,5,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"`
 	Category      string                 `protobuf:"bytes,6,opt,name=category,proto3" json:"category,omitempty"`
 	Severity      string                 `protobuf:"bytes,7,opt,name=severity,proto3" json:"severity,omitempty"`
@@ -1550,9 +1550,9 @@ func (x *PublishRuntimeNotificationRequest) GetSessionId() string {
 	return ""
 }
 
-func (x *PublishRuntimeNotificationRequest) GetAccountId() int64 {
+func (x *PublishRuntimeNotificationRequest) GetPortfolioId() int64 {
 	if x != nil {
-		return x.AccountId
+		return x.PortfolioId
 	}
 	return 0
 }
@@ -4760,13 +4760,12 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\x0eprepared_at_ms\x18\t \x01(\x03R\fpreparedAtMs\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\n" +
-	" \x01(\tR\tlastError\"\xb6\x03\n" +
+	" \x01(\tR\tlastError\"\xba\x03\n" +
 	"\x11DebugDatasetState\x12\x1d\n" +
 	"\n" +
 	"dataset_id\x18\x01 \x01(\tR\tdatasetId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x03 \x01(\x03R\taccountId\x12\x1d\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
+	"\fportfolio_id\x18\x03 \x01(\x03R\vportfolioId\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x04 \x01(\tR\truntimeId\x12\x16\n" +
 	"\x06market\x18\x05 \x01(\tR\x06market\x12\x16\n" +
@@ -4790,12 +4789,11 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\auser_id\x18d \x01(\x03R\x06userId\"s\n" +
 	"\x1dPrepareDebugWorkspaceResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12B\n" +
-	"\tworkspace\x18\x02 \x01(\v2$.controlpanel.v1.DebugWorkspaceStateR\tworkspace\"\x80\x02\n" +
+	"\tworkspace\x18\x02 \x01(\v2$.controlpanel.v1.DebugWorkspaceStateR\tworkspace\"\x84\x02\n" +
 	"\x17LoadDebugDatasetRequest\x12\x1d\n" +
 	"\n" +
-	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x02 \x01(\x03R\taccountId\x12\x16\n" +
+	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12!\n" +
+	"\fportfolio_id\x18\x02 \x01(\x03R\vportfolioId\x12\x16\n" +
 	"\x06market\x18\x03 \x01(\tR\x06market\x12\x16\n" +
 	"\x06symbol\x18\x04 \x01(\tR\x06symbol\x12\x1a\n" +
 	"\binterval\x18\x05 \x01(\tR\binterval\x12\"\n" +
@@ -4844,15 +4842,14 @@ const file_control_panel_service_proto_rawDesc = "" +
 	"\n" +
 	"runtime_id\x18\x02 \x01(\tR\truntimeId\"H\n" +
 	"\x12EndRuntimeResponse\x122\n" +
-	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\"\xc1\x02\n" +
+	"\aruntime\x18\x01 \x01(\v2\x18.controlpanel.v1.RuntimeR\aruntime\"\xc5\x02\n" +
 	"!PublishRuntimeNotificationRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1d\n" +
 	"\n" +
 	"runtime_id\x18\x02 \x01(\tR\truntimeId\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x1d\n" +
-	"\n" +
-	"account_id\x18\x04 \x01(\x03R\taccountId\x12\x1f\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12!\n" +
+	"\fportfolio_id\x18\x04 \x01(\x03R\vportfolioId\x12\x1f\n" +
 	"\vstrategy_id\x18\x05 \x01(\x03R\n" +
 	"strategyId\x12\x1a\n" +
 	"\bcategory\x18\x06 \x01(\tR\bcategory\x12\x1a\n" +

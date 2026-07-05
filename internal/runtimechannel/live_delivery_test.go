@@ -122,7 +122,7 @@ func TestDeliverOrderLifecycleBatchSendsRuntimeChannelDataFrame(t *testing.T) {
 	packed, err := anypb.New(&orderv1.OrderLifecycleEventEntry{
 		EventId:   100,
 		SessionId: "sess-1",
-		AccountId: 7,
+		PortfolioId: 7,
 		VenueId:   10,
 		EventType: "fill",
 	})

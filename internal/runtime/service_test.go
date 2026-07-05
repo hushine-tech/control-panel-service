@@ -22,7 +22,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
-	accountv1 "github.com/hushine-tech/core-service/gen/accountv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
 var fixedNow = time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
@@ -202,7 +202,7 @@ func TestResolveRuntimeRouteByID_DebuggerEnvironmentAndCapacityPolicy(t *testing
 		t.Fatalf("environment=1 debugger err = %v, want ErrPermissionDenied", err)
 	}
 
-	blockers := &fakeSessionClient{listResp: []*accountv1.StrategySessionEntry{{
+	blockers := &fakeSessionClient{listResp: []*portfoliov1.StrategySessionEntry{{
 		SessionId: "sess-debug",
 		RuntimeId: "rt-debugger",
 		Status:    "running",
@@ -480,7 +480,7 @@ func TestEndRuntime_SelfHostedClosesRuntimeChannelStream(t *testing.T) {
 func TestEndRuntime_BlocksActiveSession(t *testing.T) {
 	repo := newStubRepo()
 	sessions := &fakeSessionClient{
-		listResp: []*accountv1.StrategySessionEntry{
+		listResp: []*portfoliov1.StrategySessionEntry{
 			{SessionId: "sess-active", RuntimeId: "rt_busy", Status: "running"},
 		},
 	}
@@ -528,7 +528,7 @@ func TestEndRuntime_BlocksActiveSession(t *testing.T) {
 func TestEndRuntime_ForceShapeReservedForAdminOnly(t *testing.T) {
 	repo := newStubRepo()
 	sessions := &fakeSessionClient{
-		listResp: []*accountv1.StrategySessionEntry{
+		listResp: []*portfoliov1.StrategySessionEntry{
 			{SessionId: "sess-active", RuntimeId: "rt_force", Status: "running"},
 		},
 	}
@@ -1758,10 +1758,10 @@ func TestEnsureHostedRuntime_RejectsZeroUserID(t *testing.T) {
 	}
 }
 
-// TestResolveByID_AccountServiceNotFound_FailsClosed: resolving for a user
+// TestResolveByID_PortfolioServiceNotFound_FailsClosed: resolving for a user
 // that doesn't exist anymore MUST surface NotFound — not return a stale
 // runtime that happens to still be in registry.
-func TestResolveByID_AccountServiceNotFound_FailsClosed(t *testing.T) {
+func TestResolveByID_PortfolioServiceNotFound_FailsClosed(t *testing.T) {
 	repo := newStubRepo()
 	// Plant a healthy runtime for user 42 directly in the stub.
 	now := fixedNow
