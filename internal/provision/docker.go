@@ -205,7 +205,7 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		}
 	}
 
-	// Per-runtime env vars consumed by `hushine-runtime start`.
+	// Per-runtime env vars consumed by the Go runtime-agent.
 	// Hosted containers use RuntimeChannel only. The runtime_id is
 	// provided so the first HELLO binds to the id allocated by control-panel;
 	// a later process restart still fails because the bootstrap credential is
