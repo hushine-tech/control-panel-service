@@ -42,9 +42,9 @@ Runtime traffic has one supported path now:
 
 | Runtime source | Handler path | Runtime process mode | Auth primitive |
 |---|---|---|---|
-| `hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker | hosted internal credential + provisioned mTLS bundle |
-| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start` in Docker or bare machine | user-issued credential + mTLS bundle when TLS is enabled |
-| `bare` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | `uv run hushine-runtime start --user-id <id>` | debug-gated mTLS client certificate bootstrap |
+| `hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | Go `runtime-agent` in a platform-managed container; one Python worker per session | hosted internal credential + provisioned mTLS bundle |
+| `self_hosted` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | Go `runtime-agent` in a user-managed container or bare machine | user-issued credential + mTLS bundle when TLS is enabled |
+| `bare` | `quant-handler` → control-panel proxy RPC → `RuntimeChannel` REQUEST frame | Go `runtime-agent` via the guarded debugpy launcher | debug-gated mTLS client certificate bootstrap |
 
 The `bare` source is accepted only when
 `runtime_platform.debug_bare_runtime_enabled=true`; production deployments
@@ -225,7 +225,8 @@ Recommended smoke/onboarding sequence:
 5. **Start a bare debug runtime** only when the control-panel debug gate is enabled:
    ```bash
    cd strategy-service
-   uv run hushine-runtime start --config config.yaml --runtime-channel-addr 127.0.0.1:50055 --user-id <portfolio.users.id>
+   make build
+   DEBUG_WAIT=0 scripts/start-bare-runtime-debugpy.sh --user-id <users.id> --platform-host 127.0.0.1
    ```
 6. **Observe the stream**: the runtime registry should show
    `source=hosted`, `source=self_hosted`, or `source=bare` with
@@ -350,7 +351,7 @@ or run any platform-side recovery tool.
 |---|---|---|---|
 | hosted internal runtime credential | `EnsureHostedRuntime` | server TLS + mTLS when enabled, then RuntimeChannel HELLO signature verification | one runtime bootstrap; revoked when runtime ends |
 | self-hosted runtime credential | `IssueRuntimeCredential` | server TLS + mTLS when enabled, then RuntimeChannel HELLO signature verification | user-held; revoked via `RevokeRuntimeCredential` |
-| bare debug user id | local `hushine-runtime start --user-id` | mTLS client identity + `RuntimeChannel` HELLO debug gate | only when `debug_bare_runtime_enabled=true` and bootstrap IP is allowlisted |
+| bare debug user id | guarded local runtime-agent launcher | mTLS client identity + `RuntimeChannel` HELLO debug gate | only when `debug_bare_runtime_enabled=true` and bootstrap IP is allowlisted |
 
 The RuntimeChannel listener supports server TLS and optional mTLS through
 the `runtime_channel_server.tls` config block.
