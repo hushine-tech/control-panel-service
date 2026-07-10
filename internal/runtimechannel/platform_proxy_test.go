@@ -16,8 +16,8 @@ import (
 
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
-	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
 func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.SaveSessionRequest{
 		SessionId:   "sess-1",
-		PortfolioId:   7,
+		PortfolioId: 7,
 		StrategyId:  9,
 		Environment: 1,
 	})
@@ -58,7 +58,7 @@ func TestPlatformProxySaveSessionPreservesHostedRuntimeSource(t *testing.T) {
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.SaveSessionRequest{
 		SessionId:   "sess-1",
-		PortfolioId:   7,
+		PortfolioId: 7,
 		StrategyId:  9,
 		Environment: 0,
 	})
@@ -80,6 +80,74 @@ func TestPlatformProxySaveSessionPreservesHostedRuntimeSource(t *testing.T) {
 		portfolio.saveReq.GetRuntimeSource() != "hosted" ||
 		portfolio.saveReq.GetRuntimeName() != "hosted-test" {
 		t.Fatalf("SaveSession runtime binding = %+v", portfolio.saveReq)
+	}
+}
+
+func TestPlatformProxyGetSessionAllowsOwningRuntime(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-1",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.GetSessionRequest{SessionId: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"portfolio.GetSession",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	sessionResp, ok := resp.(*portfoliov1.GetSessionResponse)
+	if !ok || sessionResp.GetSession().GetSessionId() != "sess-1" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if portfolio.getSessionReq.GetUserId() != 42 || portfolio.getSessionReq.GetSessionId() != "sess-1" {
+		t.Fatalf("GetSession req = %+v", portfolio.getSessionReq)
+	}
+}
+
+func TestPlatformProxyListSessionsBindsUserAndRuntime(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		listSessionsResp: []*portfoliov1.StrategySessionEntry{{
+			SessionId: "sess-1",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "running",
+		}},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.ListSessionsRequest{Limit: 1, RuntimeId: "runtime-other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"portfolio.ListSessions",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	listResp, ok := resp.(*portfoliov1.ListSessionsResponse)
+	if !ok || len(listResp.GetSessions()) != 1 {
+		t.Fatalf("response = %+v", resp)
+	}
+	if portfolio.listSessionsReq.GetUserId() != 42 || portfolio.listSessionsReq.GetRuntimeId() != "runtime-1" || portfolio.listSessionsReq.GetLimit() != 1 {
+		t.Fatalf("ListSessions req = %+v", portfolio.listSessionsReq)
 	}
 }
 
@@ -237,7 +305,7 @@ func TestPlatformProxyGetPortfolioSnapshotRejectsDifferentUser(t *testing.T) {
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.GetPortfolioSnapshotRequest{
 		PortfolioId: 7,
-		UserId:    99,
+		UserId:      99,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +364,7 @@ func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
 	proxy := NewPlatformProxy(portfolio, order, nil)
 	goodTillDate := timestamppb.New(time.Unix(1893456000, 0).UTC())
 	payload, err := anypb.New(&orderv1.PlaceOrderRequest{
-		PortfolioId:    7,
+		PortfolioId:  7,
 		Symbol:       "BTCUSDT",
 		Side:         "BUY",
 		Qty:          0.1,
@@ -335,7 +403,7 @@ func TestPlatformProxyUpdatePortfolioSnapshotIsRejected(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
-		PortfolioId:      7,
+		PortfolioId:    7,
 		SnapshotReason: 2,
 		StrategyId:     9,
 		SessionId:      "sess-1",
@@ -369,7 +437,7 @@ func TestPlatformProxyUpdatePortfolioWalletStateChecksSessionAndInjectsUser(t *t
 	}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{
-		PortfolioId:      7,
+		PortfolioId:    7,
 		TotalValue:     1200,
 		WalletBalance:  1100,
 		SnapshotReason: 1,
@@ -419,7 +487,7 @@ func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *t
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
 		PortfolioId: 7,
-		SessionId: "sess-1",
+		SessionId:   "sess-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +512,7 @@ func TestPlatformProxyUpdatePortfolioSnapshotRejectsEmptySessionID(t *testing.T)
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
 		PortfolioId: 7,
-		UserId:    42,
+		UserId:      42,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -721,24 +789,24 @@ func TestPlatformProxyEmitLogRejectsDifferentRuntimeSession(t *testing.T) {
 func TestPlatformProxyPublishNotificationUsesAuthenticatedRuntime(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{
 		session: &portfoliov1.StrategySessionEntry{
-			SessionId:  "sess-1",
-			UserId:     42,
-			RuntimeId:  "runtime-1",
-			PortfolioId:  7,
-			StrategyId: 9,
-			Status:     "running",
+			SessionId:   "sess-1",
+			UserId:      42,
+			RuntimeId:   "runtime-1",
+			PortfolioId: 7,
+			StrategyId:  9,
+			Status:      "running",
 		},
 	}
 	pub := &captureNotificationPublisher{}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	proxy.SetNotificationPublisher(pub)
 	payload, err := anypb.New(mustStruct(t, map[string]any{
-		"category":    "custom",
-		"severity":    "warn",
-		"message":     "threshold reached",
-		"session_id":  "sess-1",
-		"portfolio_id":  float64(7),
-		"strategy_id": float64(9),
+		"category":     "custom",
+		"severity":     "warn",
+		"message":      "threshold reached",
+		"session_id":   "sess-1",
+		"portfolio_id": float64(7),
+		"strategy_id":  float64(9),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -845,7 +913,7 @@ func TestPlatformProxyAllowsCleanupCallsForStoppedSession(t *testing.T) {
 	}
 
 	walletPayload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{
-		PortfolioId:      7,
+		PortfolioId:    7,
 		SessionId:      "sess-stopped",
 		SnapshotReason: portfolioSnapshotReasonStrategyEnd,
 		Futures:        &portfoliov1.FuturesWallet{WalletBalance: 1000},
@@ -877,7 +945,7 @@ func TestPlatformProxyRejectsNonCleanupWalletUpdateForStoppedSession(t *testing.
 	}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
 	payload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{
-		PortfolioId:      7,
+		PortfolioId:    7,
 		SessionId:      "sess-stopped",
 		SnapshotReason: 1,
 		Futures:        &portfoliov1.FuturesWallet{WalletBalance: 1000},
@@ -975,7 +1043,10 @@ func mustStruct(t *testing.T, fields map[string]any) *structpb.Struct {
 }
 
 type fakePortfolioPlatformClient struct {
-	getPortfolioReq        *portfoliov1.GetPortfolioRequest
+	getPortfolioReq      *portfoliov1.GetPortfolioRequest
+	getSessionReq        *portfoliov1.GetSessionRequest
+	listSessionsReq      *portfoliov1.ListSessionsRequest
+	listSessionsResp     []*portfoliov1.StrategySessionEntry
 	saveReq              *portfoliov1.SaveSessionRequest
 	updateReq            *portfoliov1.UpdateSessionRequest
 	saveIndicatorsReq    *portfoliov1.SaveStrategyIndicatorsRequest
@@ -991,12 +1062,13 @@ func (f *fakePortfolioPlatformClient) GetPortfolio(_ context.Context, req *portf
 	return &portfoliov1.GetPortfolioResponse{
 		Portfolio: &portfoliov1.PortfolioRegistryEntry{
 			PortfolioId: req.GetPortfolioId(),
-			UserId:    req.GetUserId(),
+			UserId:      req.GetUserId(),
 		},
 	}, nil
 }
 
 func (f *fakePortfolioPlatformClient) GetSession(_ context.Context, req *portfoliov1.GetSessionRequest, _ ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error) {
+	f.getSessionReq = req
 	session := f.session
 	if session == nil {
 		session = &portfoliov1.StrategySessionEntry{
@@ -1007,6 +1079,11 @@ func (f *fakePortfolioPlatformClient) GetSession(_ context.Context, req *portfol
 		}
 	}
 	return &portfoliov1.GetSessionResponse{Session: session}, nil
+}
+
+func (f *fakePortfolioPlatformClient) ListSessions(_ context.Context, req *portfoliov1.ListSessionsRequest, _ ...grpc.CallOption) (*portfoliov1.ListSessionsResponse, error) {
+	f.listSessionsReq = req
+	return &portfoliov1.ListSessionsResponse{Sessions: f.listSessionsResp, Total: int64(len(f.listSessionsResp))}, nil
 }
 
 func (f *fakePortfolioPlatformClient) GetPortfolioSnapshot(_ context.Context, req *portfoliov1.GetPortfolioSnapshotRequest, _ ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error) {
@@ -1041,9 +1118,9 @@ func (f *fakePortfolioPlatformClient) PreflightStrategySession(_ context.Context
 		ResolvedVenues: []*portfoliov1.VenueEntry{
 			{
 				PortfolioId: req.GetPortfolioId(),
-				UserId:    req.GetUserId(),
-				Exchange:  1,
-				Market:    2,
+				UserId:      req.GetUserId(),
+				Exchange:    1,
+				Market:      2,
 			},
 		},
 	}, nil

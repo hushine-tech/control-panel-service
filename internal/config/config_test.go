@@ -42,6 +42,7 @@ func TestRuntimeChannelServerEnvOverrides(t *testing.T) {
 	t.Setenv("RUNTIME_PLATFORM_DEBUG_BARE_RUNTIME_ENABLED", "true")
 	t.Setenv("RUNTIME_PLATFORM_BARE_BOOTSTRAP_IP_ALLOWLIST", "127.0.0.1/32,192.168.0.0/16")
 	t.Setenv("RUNTIME_PLATFORM_BARE_CERTIFICATE_TTL", "4h")
+	t.Setenv("RUNTIME_PLATFORM_BARE_RUNTIME_DEATH_GRACE_SECONDS", "1800")
 
 	cfg := Default()
 	cfg.ApplyEnvOverrides()
@@ -76,6 +77,9 @@ func TestRuntimeChannelServerEnvOverrides(t *testing.T) {
 	if cfg.RuntimePlatform.BareCertificateTTL != 4*time.Hour {
 		t.Fatalf("bare certificate ttl = %v", cfg.RuntimePlatform.BareCertificateTTL)
 	}
+	if cfg.RuntimePlatform.BareRuntimeDeathGraceSeconds != 1800 {
+		t.Fatalf("bare runtime death grace seconds = %d", cfg.RuntimePlatform.BareRuntimeDeathGraceSeconds)
+	}
 }
 
 func TestRuntimeChannelServerBareBootstrapDefaults(t *testing.T) {
@@ -86,6 +90,9 @@ func TestRuntimeChannelServerBareBootstrapDefaults(t *testing.T) {
 	}
 	if cfg.RuntimePlatform.BareCertificateTTL != 8*time.Hour {
 		t.Fatalf("bare certificate ttl = %v", cfg.RuntimePlatform.BareCertificateTTL)
+	}
+	if cfg.RuntimePlatform.BareRuntimeDeathGraceSeconds != cfg.RuntimePlatform.DeathGraceSeconds {
+		t.Fatalf("bare runtime death grace seconds = %d, want death grace %d", cfg.RuntimePlatform.BareRuntimeDeathGraceSeconds, cfg.RuntimePlatform.DeathGraceSeconds)
 	}
 }
 

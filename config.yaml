@@ -48,6 +48,7 @@ runtime_platform:
   default_plan_code: "pro"
   heartbeat_grace_seconds: 30
   death_grace_seconds: 300
+  bare_runtime_death_grace_seconds: 300
   debug_bare_runtime_enabled: false
   bare_bootstrap_ip_allowlist: ["127.0.0.1/32"]
   bare_certificate_ttl: "8h"

@@ -558,6 +558,10 @@ func (s *stubRepo) EndRuntimesByCredentialKey(_ context.Context, keyID, reason s
 }
 
 func (s *stubRepo) EndDeadRuntimes(_ context.Context, cutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error) {
+	return s.EndDeadRuntimesBySourceCutoffs(context.Background(), cutoff, cutoff, reason, endedAt)
+}
+
+func (s *stubRepo) EndDeadRuntimesBySourceCutoffs(_ context.Context, defaultCutoff, bareCutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var result []domain.Runtime
@@ -568,6 +572,10 @@ func (s *stubRepo) EndDeadRuntimes(_ context.Context, cutoff time.Time, reason s
 		lastSeen := rt.UpdatedAt
 		if rt.HeartbeatAt != nil {
 			lastSeen = *rt.HeartbeatAt
+		}
+		cutoff := defaultCutoff
+		if rt.Source == domain.RuntimeSourceBare {
+			cutoff = bareCutoff
 		}
 		if !lastSeen.Before(cutoff) {
 			continue
@@ -616,10 +624,11 @@ func makeService(repo *stubRepo, planCode string, plans map[string]config.Runtim
 	}
 	resolver := plan.NewResolver(constLookup{code: planCode}, plans, platform)
 	svc := New(repo, resolver, Config{
-		HeartbeatGrace:  time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
-		DeathGrace:      time.Duration(platform.DeathGraceSeconds) * time.Second,
-		SessionClient:   &fakeSessionClient{},
-		RuntimePlatform: platform,
+		HeartbeatGrace:        time.Duration(platform.HeartbeatGraceSeconds) * time.Second,
+		DeathGrace:            time.Duration(platform.DeathGraceSeconds) * time.Second,
+		BareRuntimeDeathGrace: time.Duration(platform.BareRuntimeDeathGraceSeconds) * time.Second,
+		SessionClient:         &fakeSessionClient{},
+		RuntimePlatform:       platform,
 	})
 	clock := now
 	svc.SetClock(func() time.Time { return clock })

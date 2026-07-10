@@ -233,9 +233,6 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		})
 		args = append(args,
 			"-e", "RUNTIME_CHANNEL_TLS_ENABLED=true",
-			"-e", "RUNTIME_CHANNEL_TLS_CLIENT_CERT_FILE=/etc/hushine/runtime-client.pem",
-			"-e", "RUNTIME_CHANNEL_TLS_CLIENT_KEY_FILE=/etc/hushine/runtime-client.key",
-			"-e", "RUNTIME_CHANNEL_TLS_ROOT_CERT_FILE=/etc/hushine/control-panel-ca.pem",
 			"-e", "RUNTIME_CHANNEL_TLS_BUNDLE_JSON="+string(bundleJSON),
 		)
 		if p.RuntimeChannelTLSServerName != "" {

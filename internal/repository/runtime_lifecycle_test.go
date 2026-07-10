@@ -62,6 +62,43 @@ func TestTimescaleRepositoryEndDeadRuntimesOnlyEndsUnhealthyCandidates(t *testin
 	}
 }
 
+func TestTimescaleRepositoryEndDeadRuntimesBySourceCutoffsKeepsBareUntilBareCutoff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db := openRepositoryTestDB(t, ctx)
+	defer db.Close()
+	if err := createTempRuntimeRegistry(ctx, db); err != nil {
+		t.Fatalf("create temp runtime_registry: %v", err)
+	}
+
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-10 * time.Minute)
+	repo := &TimescaleRepository{db: db}
+	for _, rt := range []domain.Runtime{
+		{RuntimeID: "rt_hosted_dead", UserID: 42, Name: "hosted-dead", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusUnhealthy, UpdatedAt: stale, CreatedAt: stale},
+		{RuntimeID: "rt_bare_debug", UserID: 42, Name: "bare-debug", Source: domain.RuntimeSourceBare, Status: domain.RuntimeStatusUnhealthy, UpdatedAt: stale, CreatedAt: stale},
+	} {
+		if err := repo.CreateRuntime(ctx, rt); err != nil {
+			t.Fatalf("CreateRuntime(%s): %v", rt.RuntimeID, err)
+		}
+	}
+
+	ended, err := repo.EndDeadRuntimesBySourceCutoffs(ctx, now.Add(-5*time.Minute), now.Add(-30*time.Minute), domain.RuntimeEndedReasonHeartbeatStale, now)
+	if err != nil {
+		t.Fatalf("EndDeadRuntimesBySourceCutoffs: %v", err)
+	}
+	if len(ended) != 1 || ended[0].RuntimeID != "rt_hosted_dead" {
+		t.Fatalf("ended = %+v, want only rt_hosted_dead", ended)
+	}
+	gotBare, err := repo.GetRuntime(ctx, "rt_bare_debug")
+	if err != nil {
+		t.Fatalf("GetRuntime(rt_bare_debug): %v", err)
+	}
+	if gotBare.Status != domain.RuntimeStatusUnhealthy || gotBare.EndedAt != nil {
+		t.Fatalf("bare runtime = %+v, want still unhealthy and not ended", gotBare)
+	}
+}
+
 func TestTimescaleRepositoryCreateSelfHostedRuntimeConsumesDownloadedCredential(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -17,18 +17,19 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/logger"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
-	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
 const (
 	portfolioSnapshotReasonStrategyEnd = 3
-	backtestPageSize                 = 8192
+	backtestPageSize                   = 8192
 )
 
 type PortfolioPlatformClient interface {
 	GetPortfolio(ctx context.Context, in *portfoliov1.GetPortfolioRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error)
 	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
+	ListSessions(ctx context.Context, in *portfoliov1.ListSessionsRequest, opts ...grpc.CallOption) (*portfoliov1.ListSessionsResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *portfoliov1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error)
 	UpdatePortfolioSnapshot(ctx context.Context, in *portfoliov1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error)
 	UpdatePortfolioWalletState(ctx context.Context, in *portfoliov1.UpdatePortfolioWalletStateRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error)
@@ -65,7 +66,7 @@ type DebugReplayStarter interface {
 }
 
 type PlatformProxy struct {
-	portfolio          PortfolioPlatformClient
+	portfolio        PortfolioPlatformClient
 	order            OrderPlatformClient
 	marketData       MarketDataPlatformServer
 	klineQuery       KlineQuerier
@@ -85,7 +86,7 @@ type datasetDeliveryRequest struct {
 
 func NewPlatformProxy(portfolio PortfolioPlatformClient, order OrderPlatformClient, marketData MarketDataPlatformServer) *PlatformProxy {
 	return &PlatformProxy{
-		portfolio:    portfolio,
+		portfolio:  portfolio,
 		order:      order,
 		marketData: marketData,
 	}
@@ -120,6 +121,54 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		return nil, status.Error(codes.PermissionDenied, "authenticated runtime user_id is required")
 	}
 	switch canonicalPlatformMethod(method) {
+	case "portfolio.GetSession":
+		req := &portfoliov1.GetSessionRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.UserId = rt.UserID
+		resp, err := p.requirePortfolio().GetSession(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		session := resp.GetSession()
+		if session == nil {
+			return nil, status.Error(codes.NotFound, "session not found")
+		}
+		if session.GetUserId() != 0 && session.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
+		}
+		if session.GetRuntimeId() == "" {
+			return nil, status.Error(codes.FailedPrecondition, "session is not bound to a runtime")
+		}
+		if session.GetRuntimeId() != rt.RuntimeID {
+			return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime")
+		}
+		return resp, nil
+
+	case "portfolio.ListSessions":
+		req := &portfoliov1.ListSessionsRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		if req.GetRuntimeId() != "" && req.GetRuntimeId() != rt.RuntimeID {
+			req.RuntimeId = rt.RuntimeID
+		}
+		req.UserId = rt.UserID
+		req.RuntimeId = rt.RuntimeID
+		if req.GetPortfolioId() > 0 {
+			if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
+				return nil, err
+			}
+		}
+		return p.requirePortfolio().ListSessions(ctx, req)
+
 	case "portfolio.GetPortfolioSnapshot":
 		req := &portfoliov1.GetPortfolioSnapshotRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
@@ -443,7 +492,7 @@ func (p *PlatformProxy) ensurePortfolioOwner(ctx context.Context, rt Authenticat
 	}
 	resp, err := p.requirePortfolio().GetPortfolio(ctx, &portfoliov1.GetPortfolioRequest{
 		PortfolioId: portfolioID,
-		UserId:    rt.UserID,
+		UserId:      rt.UserID,
 	})
 	if err != nil {
 		return err
@@ -520,6 +569,10 @@ func canonicalPlatformMethod(method string) string {
 		return "portfolio.UpdatePortfolioSnapshot"
 	case "UpdatePortfolioWalletState", "portfolio.v1.PortfolioService/UpdatePortfolioWalletState":
 		return "portfolio.UpdatePortfolioWalletState"
+	case "GetSession", "portfolio.v1.PortfolioService/GetSession":
+		return "portfolio.GetSession"
+	case "ListSessions", "portfolio.v1.PortfolioService/ListSessions":
+		return "portfolio.ListSessions"
 	case "PreflightStrategySession", "portfolio.v1.PortfolioService/PreflightStrategySession":
 		return "portfolio.PreflightStrategySession"
 	case "GetActiveStrategy", "portfolio.v1.PortfolioService/GetActiveStrategy":
@@ -565,7 +618,7 @@ func debugDatasetStateToProto(state domain.DebugDatasetState) *cpv1.DebugDataset
 	return &cpv1.DebugDatasetState{
 		DatasetId:      state.DatasetID,
 		UserId:         state.UserID,
-		PortfolioId:      state.PortfolioID,
+		PortfolioId:    state.PortfolioID,
 		RuntimeId:      state.RuntimeID,
 		Market:         state.Market,
 		Symbol:         state.Symbol,
@@ -925,7 +978,7 @@ func (p *PlatformProxy) publishRuntimeNotification(ctx context.Context, rt Authe
 		Severity:      severity,
 		RuntimeID:     rt.RuntimeID,
 		RuntimeName:   rt.Name,
-		PortfolioID:     portfolioID,
+		PortfolioID:   portfolioID,
 		StrategyID:    int64(numberField(fields, "strategy_id")),
 		SessionID:     sessionID,
 		Title:         strings.TrimSpace(stringField(fields, "title")),
@@ -1013,6 +1066,9 @@ func (unavailablePortfolioClient) GetPortfolio(context.Context, *portfoliov1.Get
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) GetSession(context.Context, *portfoliov1.GetSessionRequest, ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) ListSessions(context.Context, *portfoliov1.ListSessionsRequest, ...grpc.CallOption) (*portfoliov1.ListSessionsResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) GetPortfolioSnapshot(context.Context, *portfoliov1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error) {

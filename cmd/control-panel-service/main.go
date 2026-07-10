@@ -272,6 +272,7 @@ func main() {
 	runtimeCfg := runtime.Config{
 		HeartbeatGrace:              time.Duration(cfg.RuntimePlatform.HeartbeatGraceSeconds) * time.Second,
 		DeathGrace:                  time.Duration(cfg.RuntimePlatform.DeathGraceSeconds) * time.Second,
+		BareRuntimeDeathGrace:       time.Duration(cfg.RuntimePlatform.BareRuntimeDeathGraceSeconds) * time.Second,
 		RuntimePlatform:             cfg.RuntimePlatform,
 		Provisioning:                cfg.Provisioning,
 		Provisioner:                 provisioner,

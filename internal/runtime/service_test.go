@@ -717,6 +717,58 @@ func TestReapStaleRuntimes_EndsDeadRuntimeAndMarksSessionsRecoverable(t *testing
 	}
 }
 
+func TestReapStaleRuntimes_UsesLongerDeathGraceForBareRuntime(t *testing.T) {
+	repo := newStubRepo()
+	platform := config.RuntimePlatformConfig{
+		HeartbeatGraceSeconds:        30,
+		DeathGraceSeconds:            300,
+		BareRuntimeDeathGraceSeconds: 1800,
+	}
+	svc := makeService(repo, "pro", nil, platform, fixedNow)
+	sessions := &fakeSessionClient{}
+	svc.sessionClient = sessions
+
+	bareHeartbeat := fixedNow.Add(-10 * time.Minute)
+	if err := repo.CreateRuntime(context.Background(), domain.Runtime{
+		RuntimeID:   "bare-debug",
+		UserID:      42,
+		Source:      domain.RuntimeSourceBare,
+		Status:      domain.RuntimeStatusUnhealthy,
+		HeartbeatAt: &bareHeartbeat,
+		CreatedAt:   fixedNow.Add(-time.Hour),
+		UpdatedAt:   bareHeartbeat,
+	}); err != nil {
+		t.Fatalf("CreateRuntime bare: %v", err)
+	}
+	hostedHeartbeat := fixedNow.Add(-10 * time.Minute)
+	if err := repo.CreateRuntime(context.Background(), domain.Runtime{
+		RuntimeID:   "hosted-dead",
+		UserID:      43,
+		Source:      domain.RuntimeSourceHosted,
+		Status:      domain.RuntimeStatusUnhealthy,
+		HeartbeatAt: &hostedHeartbeat,
+		CreatedAt:   fixedNow.Add(-time.Hour),
+		UpdatedAt:   hostedHeartbeat,
+	}); err != nil {
+		t.Fatalf("CreateRuntime hosted: %v", err)
+	}
+
+	ended, err := svc.ReapStaleRuntimes(context.Background())
+	if err != nil {
+		t.Fatalf("ReapStaleRuntimes: %v", err)
+	}
+	if len(ended) != 1 || ended[0].RuntimeID != "hosted-dead" {
+		t.Fatalf("ended = %+v, want hosted-dead only", ended)
+	}
+	gotBare, _ := repo.GetRuntime(context.Background(), "bare-debug")
+	if gotBare.Status != domain.RuntimeStatusUnhealthy || gotBare.EndedAt != nil {
+		t.Fatalf("bare runtime = %+v, want still unhealthy and not ended", gotBare)
+	}
+	if len(sessions.markCalls) != 1 || sessions.markCalls[0].GetRuntimeId() != "hosted-dead" {
+		t.Fatalf("recoverable calls = %+v, want hosted-dead only", sessions.markCalls)
+	}
+}
+
 func TestReapStaleRuntimes_DeprovisionsDeadHostedRuntime(t *testing.T) {
 	repo := newStubRepo()
 	prov := &fakeProvisioner{repo: repo, onProvision: "ok", now: func() time.Time { return fixedNow }}

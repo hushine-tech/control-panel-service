@@ -149,7 +149,7 @@ func TestDockerProvisioner_Provision_InjectsHostedRuntimeCredentialJSON(t *testi
 	}
 }
 
-func TestDockerProvisioner_Provision_InjectsRuntimeMTLSFiles(t *testing.T) {
+func TestDockerProvisioner_Provision_InjectsRuntimeMTLSBundleJSON(t *testing.T) {
 	runner := &fakeRunner{output: []byte("container_full_id_abc\n")}
 	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
 	plan := defaultPlan()
@@ -165,11 +165,17 @@ func TestDockerProvisioner_Provision_InjectsRuntimeMTLSFiles(t *testing.T) {
 	args := runner.calls[0].args
 
 	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_ENABLED=true")
-	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_CLIENT_CERT_FILE=/etc/hushine/runtime-client.pem")
-	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_CLIENT_KEY_FILE=/etc/hushine/runtime-client.key")
-	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_ROOT_CERT_FILE=/etc/hushine/control-panel-ca.pem")
 	assertHasEnv(t, args, "RUNTIME_CHANNEL_TLS_SERVER_NAME=runtime-channel.local")
 	assertHasEnvPrefix(t, args, "RUNTIME_CHANNEL_TLS_BUNDLE_JSON=")
+	for _, key := range []string{
+		"RUNTIME_CHANNEL_TLS_CLIENT_CERT_FILE",
+		"RUNTIME_CHANNEL_TLS_CLIENT_KEY_FILE",
+		"RUNTIME_CHANNEL_TLS_ROOT_CERT_FILE",
+	} {
+		if envKeyIsPresent(args, key) {
+			t.Fatalf("hosted runtime should use TLS bundle JSON only; unexpected %s in args: %v", key, args)
+		}
+	}
 }
 
 func TestDockerProvisioner_Provision_BridgeNetworkDoesNotPublishRuntimePort(t *testing.T) {

@@ -65,7 +65,7 @@ type MarketDataConfig struct {
 
 type DependenciesConfig struct {
 	PortfolioServiceGRPC string `yaml:"portfolio_service_grpc"`
-	OrderServiceGRPC   string `yaml:"order_service_grpc"`
+	OrderServiceGRPC     string `yaml:"order_service_grpc"`
 }
 
 type NotificationConfig struct {
@@ -93,6 +93,10 @@ type RuntimePlatformConfig struct {
 	// watchdog terminally ends it and marks bound sessions recoverable.
 	// Must be > 0; falls back to 300 if unset.
 	DeathGraceSeconds int `yaml:"death_grace_seconds"`
+	// BareRuntimeDeathGraceSeconds overrides DeathGraceSeconds only for
+	// local/debug bare runtimes. Must be > 0; falls back to DeathGraceSeconds
+	// when unset.
+	BareRuntimeDeathGraceSeconds int `yaml:"bare_runtime_death_grace_seconds"`
 	// DebugBareRuntimeEnabled allows internal bare runtime certificate
 	// bootstrap only for local/debug control-panel deployments.
 	DebugBareRuntimeEnabled bool `yaml:"debug_bare_runtime_enabled"`
@@ -244,17 +248,18 @@ func Default() *Config {
 		},
 		Dependencies: DependenciesConfig{
 			PortfolioServiceGRPC: "127.0.0.1:50051",
-			OrderServiceGRPC:   "127.0.0.1:50051",
+			OrderServiceGRPC:     "127.0.0.1:50051",
 		},
 		RuntimePlatform: RuntimePlatformConfig{
-			MaxTotalHostedRuntimes:     50,
-			MaxTotalSelfHostedRuntimes: 100,
-			DefaultPlanCode:            "pro",
-			HeartbeatGraceSeconds:      30,
-			DeathGraceSeconds:          300,
-			DebugBareRuntimeEnabled:    false,
-			BareBootstrapIPAllowlist:   []string{"127.0.0.1/32"},
-			BareCertificateTTL:         8 * time.Hour,
+			MaxTotalHostedRuntimes:       50,
+			MaxTotalSelfHostedRuntimes:   100,
+			DefaultPlanCode:              "pro",
+			HeartbeatGraceSeconds:        30,
+			DeathGraceSeconds:            300,
+			BareRuntimeDeathGraceSeconds: 300,
+			DebugBareRuntimeEnabled:      false,
+			BareBootstrapIPAllowlist:     []string{"127.0.0.1/32"},
+			BareCertificateTTL:           8 * time.Hour,
 		},
 		RuntimePlans: defaultPlans(),
 		Provisioning: ProvisioningConfig{
@@ -457,6 +462,11 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("RUNTIME_PLATFORM_BARE_CERTIFICATE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			c.RuntimePlatform.BareCertificateTTL = d
+		}
+	}
+	if v := os.Getenv("RUNTIME_PLATFORM_BARE_RUNTIME_DEATH_GRACE_SECONDS"); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			c.RuntimePlatform.BareRuntimeDeathGraceSeconds = seconds
 		}
 	}
 }

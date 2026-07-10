@@ -792,6 +792,10 @@ func (r *TimescaleRepository) EndRuntimesByCredentialKey(ctx context.Context, ke
 }
 
 func (r *TimescaleRepository) EndDeadRuntimes(ctx context.Context, cutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error) {
+	return r.EndDeadRuntimesBySourceCutoffs(ctx, cutoff, cutoff, reason, endedAt)
+}
+
+func (r *TimescaleRepository) EndDeadRuntimesBySourceCutoffs(ctx context.Context, defaultCutoff, bareCutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error) {
 	terminalStatus := domain.RuntimeTerminalStatusForReason(reason)
 	rows, err := r.db.QueryContext(ctx, `
 		WITH updated AS (
@@ -800,14 +804,17 @@ func (r *TimescaleRepository) EndDeadRuntimes(ctx context.Context, cutoff time.T
 			    ended_at = $2,
 			    ended_reason = $3,
 			    updated_at = NOW()
-				WHERE status = 'unhealthy'
-				  AND COALESCE(heartbeat_at, updated_at, created_at) < $1
+			WHERE status = 'unhealthy'
+			  AND (
+			    (source = 'bare' AND COALESCE(heartbeat_at, updated_at, created_at) < $5)
+			    OR (source <> 'bare' AND COALESCE(heartbeat_at, updated_at, created_at) < $1)
+			  )
 			RETURNING runtime_id
 		)
 		`+runtimeSelectColumns+`
 		FROM runtime_registry
 		WHERE runtime_id IN (SELECT runtime_id FROM updated)
-		ORDER BY updated_at DESC`, cutoff, endedAt.UTC(), reason, terminalStatus)
+		ORDER BY updated_at DESC`, defaultCutoff, endedAt.UTC(), reason, terminalStatus, bareCutoff)
 	if err != nil {
 		return nil, err
 	}

@@ -100,6 +100,7 @@ type Service struct {
 	notifications               cpnotify.Publisher
 	heartbeatGrace              time.Duration
 	deathGrace                  time.Duration
+	bareRuntimeDeathGrace       time.Duration
 	now                         func() time.Time
 }
 
@@ -125,6 +126,10 @@ type runtimeCertSigner interface {
 type Config struct {
 	HeartbeatGrace time.Duration
 	DeathGrace     time.Duration
+	// BareRuntimeDeathGrace only applies to local/debug bare runtimes. When
+	// unset it inherits DeathGrace so existing deployments keep the old
+	// behavior.
+	BareRuntimeDeathGrace time.Duration
 	// Provisioning carries the operator-tunable provisioning settings:
 	// container image, advertise host, port range, registration timeout,
 	// and resource profiles. EnsureHostedRuntime reads it; other paths
@@ -169,6 +174,9 @@ func New(repo repository.Repository, plans *plan.Resolver, cfg Config) *Service 
 	if cfg.DeathGrace <= 0 {
 		cfg.DeathGrace = 5 * time.Minute
 	}
+	if cfg.BareRuntimeDeathGrace <= 0 {
+		cfg.BareRuntimeDeathGrace = cfg.DeathGrace
+	}
 	if cfg.Provisioner == nil {
 		cfg.Provisioner = provision.NoOpProvisioner{}
 	}
@@ -199,6 +207,7 @@ func New(repo repository.Repository, plans *plan.Resolver, cfg Config) *Service 
 		notifications:               cfg.NotificationPublisher,
 		heartbeatGrace:              cfg.HeartbeatGrace,
 		deathGrace:                  cfg.DeathGrace,
+		bareRuntimeDeathGrace:       cfg.BareRuntimeDeathGrace,
 		now:                         time.Now,
 	}
 	return s
@@ -654,7 +663,8 @@ func (s *Service) ReapStaleRuntimes(ctx context.Context) ([]domain.Runtime, erro
 		s.publishRuntimeEvent(ctx, rt, cpnotify.EventRuntimeUnhealthy, cpnotify.SeverityWarn, fmt.Sprintf("Runtime %s missed heartbeat.", rt.Name))
 	}
 	deadCutoff := now.Add(-s.deathGrace)
-	ended, err := s.repo.EndDeadRuntimes(ctx, deadCutoff, domain.RuntimeEndedReasonHeartbeatStale, now)
+	bareDeadCutoff := now.Add(-s.bareRuntimeDeathGrace)
+	ended, err := s.repo.EndDeadRuntimesBySourceCutoffs(ctx, deadCutoff, bareDeadCutoff, domain.RuntimeEndedReasonHeartbeatStale, now)
 	if err != nil {
 		return nil, err
 	}

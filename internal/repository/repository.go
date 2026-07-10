@@ -101,6 +101,11 @@ type Repository interface {
 	// than cutoff and returns the affected rows.
 	EndDeadRuntimes(ctx context.Context, cutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error)
 
+	// EndDeadRuntimesBySourceCutoffs terminally ends unhealthy runtimes using
+	// defaultCutoff for hosted/self-hosted runtimes and bareCutoff for local
+	// debug bare runtimes.
+	EndDeadRuntimesBySourceCutoffs(ctx context.Context, defaultCutoff, bareCutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error)
+
 	// UpdateRuntimeCleanupState persists hosted deprovision/self-hosted
 	// cleanup ownership state on the runtime row. reason must be non-secret
 	// operator/user guidance.
