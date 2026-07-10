@@ -7,38 +7,54 @@ import (
 	"testing"
 )
 
-func TestSessionDeliveryMigrationsUseEnvironmentNotLegacyPortfolioRouting(t *testing.T) {
-	files := []string{
-		"migrations/0017_create_runtime_data_delivery_leases.sql",
-		"migrations/0022_create_stream_delivery_failures.sql",
-	}
-	legacyPortfolioRoutingColumn := regexp.MustCompile(`(?i)\b[m]ode\b`)
-	for _, path := range files {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		if legacyPortfolioRoutingColumn.Match(raw) {
-			t.Fatalf("%s must use environment, not the legacy portfolio-routing column", path)
-		}
-	}
-}
-
-func TestPortfolioHardCutMigrationBackfillsAppliedControlPanelSchemas(t *testing.T) {
-	raw, err := os.ReadFile("migrations/0031_rename_account_columns_to_portfolio.sql")
+func TestCurrentControlPanelBaselineContainsFinalContracts(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0001_current_schema_baseline.sql")
 	if err != nil {
-		t.Fatalf("read portfolio hard-cut compatibility migration: %v", err)
+		t.Fatalf("read current schema baseline: %v", err)
 	}
 	sql := strings.ToLower(string(raw))
+
+	for _, forbidden := range []string{
+		"rename column",
+		"drop table",
+		"drop column",
+		"account_id",
+		"runtime_pairings",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("current baseline contains historical operation/name %q", forbidden)
+		}
+	}
+	legacyPortfolioRoutingColumn := regexp.MustCompile(`(?i)\bmode\b`)
+	if legacyPortfolioRoutingColumn.MatchString(sql) {
+		t.Fatal("current baseline must use environment, not the legacy portfolio-routing column")
+	}
+
 	for _, required := range []string{
-		"market_data_requests",
-		"market_data_leases",
-		"market_data_history_requests",
-		"runtime_debug_datasets",
-		"rename column account_id to portfolio_id",
+		"create table if not exists runtime_registry",
+		"create table if not exists runtime_credentials",
+		"create table if not exists runtime_commands",
+		"create table if not exists runtime_channel_leases",
+		"create table if not exists runtime_admission_failures",
+		"create table if not exists market_data_streams",
+		"create table if not exists market_data_requests",
+		"create table if not exists market_data_history_requests",
+		"create table if not exists market_data_leases",
+		"create table if not exists market_data_writer_leases",
+		"create table if not exists market_data_coverage_segments",
+		"create table if not exists session_market_data_subscriptions",
+		"create table if not exists stream_delivery_leases",
+		"create table if not exists stream_delivery_failures",
+		"create table if not exists runtime_debug_datasets",
+		"array['hosted'::text, 'self_hosted'::text, 'bare'::text]",
+		"array['executor'::text, 'debugger'::text]",
+		"client_cert_fingerprint",
+		"connection_owner_instance_id",
+		"uq_runtime_registry_user_name",
+		"environment integer not null",
 	} {
 		if !strings.Contains(sql, required) {
-			t.Fatalf("compatibility migration must include %q", required)
+			t.Fatalf("current baseline missing final control contract %q", required)
 		}
 	}
 }

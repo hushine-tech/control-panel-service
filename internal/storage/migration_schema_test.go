@@ -49,7 +49,7 @@ func TestControlPanelMigrationsExposeRuntimeIdentitySchema(t *testing.T) {
 	migrationsDir := filepath.Join(repoRoot(t), "internal", "storage", "migrations")
 	files := migrationFiles(t, migrationsDir)
 	applyMigrationFiles(ctx, t, db, files, "fresh")
-	applyMigrationFiles(ctx, t, db, filesWithPrefixAtLeast(files, "0014_"), "new-schema-idempotency")
+	applyMigrationFiles(ctx, t, db, files, "full-idempotency")
 	assertRuntimeIdentitySchema(ctx, t, db, schema)
 }
 
@@ -68,16 +68,6 @@ func applyMigrationFiles(ctx context.Context, t *testing.T, db *sql.DB, files []
 			t.Fatalf("exec %s during %s: %v", filepath.Base(m), label, err)
 		}
 	}
-}
-
-func filesWithPrefixAtLeast(files []string, minPrefix string) []string {
-	out := make([]string, 0, len(files))
-	for _, f := range files {
-		if filepath.Base(f) >= minPrefix {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, schema string) {

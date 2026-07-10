@@ -7,7 +7,7 @@ import "time"
 // These types were ported verbatim from core-service/internal/domain
 // when D2 moved control-plane ownership into control-panel-service. The
 // underlying tables live in the `control_panel` database
-// (migrations 0003–0006). Cross-database FK references to
+// (the current control-panel schema baseline). Cross-database FK references to
 // `portfolio.users(id)` / `portfolio.portfolios(portfolio_id)` were dropped at
 // the schema level; UserID and PortfolioID are validated at the service
 // layer via core-service.GetUser when applicable.

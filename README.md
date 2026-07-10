@@ -145,60 +145,6 @@ To roll back runtime provisioning, switch control-panel backend back to
 `noop` and restart control-panel-service. Handler strategy traffic still
 requires a registered runtime and RuntimeChannel route.
 
-## D2 cutover rollout sequence (market-data control plane)
-
-Phase D2 (2026-05-06) moved the demand-driven market-data control plane
-(4 tables + 10 RPCs) out of `core-service` into this service.
-control-panel-service now owns both the runtime control plane and the
-market-data control plane on `:50054`.
-
-Hard cut: same PR removes the source RPCs/tables from core-service
-and brings the destination online. Operator runs the migration script
-once between `pg_dump` backup and the rolling restart of the 3 callers
-(scraper / quant-handler / strategy-service).
-
-1. **Pause writes to the source tables** (or accept a small data window
-   loss — strategy-service demo/live lease renewals during the cutover are
-   not catastrophic since leases auto-expire and are renewed every
-   30s).
-2. **Backup the source tables**:
-   ```bash
-   pg_dump --data-only \
-     --table=market_data_streams \
-     --table=market_data_requests \
-     --table=market_data_leases \
-     --table=market_data_history_requests \
-     "$PORTFOLIO_DSN" > portfolio_market_data_backup.sql
-   ```
-3. **Apply control-panel migrations**: `make ensure-dbs` (creates the 4
-   `market_data_*` tables in the `control_panel` DB via control-panel
-   migrations 0003-0006).
-4. **Run the one-shot migration tool**:
-   ```bash
-   PORTFOLIO_DSN="..." CONTROL_PANEL_DSN="..." \
-     go run ./scripts/migrate_market_data
-   ```
-   Copies all 4 tables row-by-row (`ON CONFLICT DO NOTHING` for
-   idempotency) and resyncs destination BIGSERIAL sequences via
-   `setval(MAX(<pk>))` so the next INSERT does not collide. Exits
-   non-zero on row-count parity failure.
-5. **Restart all 3 callers in any order** — they now dial
-   control-panel-service for market-data RPCs:
-   - `scraper`: `market_data.control_plane.market_data_control_panel_grpc:
-     "127.0.0.1:50054"` (default).
-   - `quant-handler`: reuses `dependencies.control_panel_service_grpc`.
-   - `strategy-service`: `dependencies.market_data_control_panel_grpc`
-     (defaults to `dependencies.control_panel_service_grpc` if unset).
-6. **Apply core-service migration 0012** to drop the now-orphaned
-   source tables: `cd core-service && make ensure-db` runs
-   `0012_drop_market_data_control_plane.sql`.
-7. **Verify** the live path end-to-end: `quant-frontend` market-data
-   CRUD; scraper reconcile loop; demo/live strategy session preflight +
-   lease renewal.
-
-Roll back: there is no in-product rollback after step 6. Restore from
-the `pg_dump` taken in step 2; revert the same PR; rebuild.
-
 ## Runtime Onboarding
 
 Recommended smoke/onboarding sequence:
@@ -404,9 +350,7 @@ Owned tables in the `control_panel` database (single-instance TimescaleDB):
   in runtime memory.
 - `schema_migrations` — applied-migration ledger.
 
-`runtime_pairings` is not part of the final D3 schema. Historical migration
-`0002` creates it for replayability, and `0009_drop_runtime_pairings.sql`
-drops it.
+`runtime_pairings` is not part of the current schema or runtime flow.
 
 `users` and `users.plan_code` live in the `portfolio` database owned by
 `core-service`; control-panel-service reads `plan_code` via the

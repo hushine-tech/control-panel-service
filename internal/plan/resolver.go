@@ -63,7 +63,7 @@ type EffectiveLimits struct {
 //
 // The configured default plan is used ONLY when core-service returns
 // the user successfully but the user's plan_code field is empty (legacy
-// row written before migration 0011 backfill). It is NOT a fallback for
+// row with incomplete plan metadata). It is NOT a fallback for
 // missing users or transient failures.
 type Resolver struct {
 	lookup   PlanLookup
@@ -87,8 +87,7 @@ func NewResolver(lookup PlanLookup, plans map[string]config.RuntimePlan, platfor
 //   - default plan missing from config     → wrapped fmt error (config bug)
 //
 // The "OK + empty code" branch exists only for the migration window:
-// migration 0011 backfills `plan_code='pro'` so production rows always
-// have a non-empty plan_code. This branch SHOULD be tightened to also
+// Current bootstrap guarantees a non-empty plan_code. This branch SHOULD be tightened to also
 // fail closed once that backfill is verified.
 func (r *Resolver) Resolve(ctx context.Context, userID int64) (EffectiveLimits, error) {
 	if userID <= 0 {
@@ -109,7 +108,7 @@ func (r *Resolver) Resolve(ctx context.Context, userID int64) (EffectiveLimits, 
 
 	planCode := code
 	if planCode == "" {
-		// Migration window only: row missing plan_code → use platform default.
+		// Defensive compatibility: row missing plan_code → use platform default.
 		planCode = r.platform.DefaultPlanCode
 	}
 

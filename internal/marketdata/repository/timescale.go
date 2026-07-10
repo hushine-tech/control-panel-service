@@ -18,7 +18,7 @@ import (
 // database. Phase D2: SQL queries were ported verbatim from
 // core-service (sources `market_data_control_plane.go` and
 // `market_data_history.go` were deleted in the same change); behaviour
-// is unchanged. Schema lives in migrations 0003-0006.
+// is unchanged. Schema lives in the current control-panel baseline.
 //
 // The connection pool is SHARED with the runtime control-plane
 // repository (see internal/repository/timescale.go.DB() accessor).
