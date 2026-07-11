@@ -123,14 +123,6 @@ provisioning:
     # "host.docker.internal:50055" or routable LAN/service address.
     runtime_channel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
-    runtime_env:
-      CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
-      ORDER_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
-      KAFKA_BROKERS: "127.0.0.1:19092"
-      DATABASE_HOST: "127.0.0.1"
-      DATABASE_PORT: "5432"
-      DATABASE_USER: "postgres"
-      DATABASE_PASSWORD: "postgres"
 
 notification:
   enabled: true

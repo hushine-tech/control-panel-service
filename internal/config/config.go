@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -175,11 +176,10 @@ type ProvisioningConfig struct {
 // configuration applied to every hosted runtime container.
 type DockerProvisioningConfig struct {
 	// NetworkMode passed verbatim to `docker run --network`. D1 single-
-	// host default is "host" so the container can reach
-	// core-service / order-service / kafka / timescaledb on
-	// localhost without extra config. Empty string falls back to "host"
-	// for single-host dev. Cluster operators set "bridge" or a custom
-	// network and use RuntimeEnv to point at routable addresses.
+	// host default is "host" so the container can reach RuntimeChannel
+	// on localhost. Empty string falls back to "host" for single-host dev.
+	// Cluster operators set "bridge" or a custom network together with an
+	// explicit RuntimeChannelDialAddr.
 	NetworkMode string `yaml:"network_mode"`
 
 	// RuntimeChannelDialAddr is the value the runtime container should use
@@ -192,17 +192,32 @@ type DockerProvisioningConfig struct {
 	// "host.docker.internal:50055" or a service DNS name).
 	RuntimeChannelDialAddr string `yaml:"runtime_channel_dial_addr"`
 
-	// RuntimeEnv is a static map of env vars forwarded to every runtime
-	// container as `-e KEY=VALUE`. Used for upstream service addresses
-	// (CORE_SERVICE_GRPC_ADDR, ORDER_SERVICE_GRPC_ADDR, KAFKA_BROKERS,
-	// TIMESCALEDB_DSN, etc.) that the runtime needs but the platform
-	// doesn't generate per-runtime.
+	// RuntimeEnv is retained only to parse legacy configuration and return
+	// a useful isolation error. Every non-empty map is rejected and no item
+	// is forwarded to hosted runtime containers.
 	RuntimeEnv map[string]string `yaml:"runtime_env"`
 
 	// LabelPrefix is the docker label namespace used for traceability:
 	//   <prefix>.runtime_id, <prefix>.user_id, <prefix>.name.
 	// Defaults to "hushine.runtime".
 	LabelPrefix string `yaml:"label_prefix"`
+}
+
+// ValidateRuntimeIsolation rejects legacy operator-provided environment
+// variables that would cross the hosted Runtime isolation boundary.
+func (c ProvisioningConfig) ValidateRuntimeIsolation() error {
+	if len(c.Docker.RuntimeEnv) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(c.Docker.RuntimeEnv))
+	for key := range c.Docker.RuntimeEnv {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return fmt.Errorf(
+		"provisioning.docker.runtime_env is not supported for Runtime isolation; configure explicit Runtime fields instead: %s",
+		strings.Join(keys, ", "),
+	)
 }
 
 // Default returns a baseline config so env-driven deployments can start
@@ -340,6 +355,9 @@ func Load(path string) (*Config, error) {
 	cfg := Default()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := cfg.Provisioning.ValidateRuntimeIsolation(); err != nil {
+		return nil, fmt.Errorf("validate config %s: %w", path, err)
 	}
 	return cfg, nil
 }

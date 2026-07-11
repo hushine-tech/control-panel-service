@@ -110,11 +110,13 @@ into "unlimited" by inheriting the platform fallback.
 
 ## RuntimeChannel rollout sequence
 
-For local smoke, `config.local.yaml` is already set to the Docker
-backend and handler control-panel routing. Other environments should flip
-the cutover toggles in this order to avoid half-cutover states (handler
-routes via control-panel but provisioner is NoOp → fail-closed; or
-provisioner runs containers but handler is not pointed at control-panel):
+For local smoke, create or update the ignored `config.local.yaml` locally
+to select the Docker backend and handler control-panel routing. Before
+restarting, remove any stale `provisioning.docker.runtime_env`; every
+non-empty map is rejected. Other environments should flip the cutover
+toggles in this order to avoid half-cutover states (handler routes via
+control-panel but provisioner is NoOp → fail-closed; or provisioner runs
+containers but handler is not pointed at control-panel):
 
 1. **Apply migrations**: `make ensure-dbs` at repo root (creates
    `control_panel` DB and applies `users.plan_code` to `portfolio` DB).
@@ -131,10 +133,10 @@ provisioner runs containers but handler is not pointed at control-panel):
      docker:
        network_mode: "bridge"                  # Docker Desktop friendly
        runtime_channel_dial_addr: "host.docker.internal:50055"
-       runtime_env:
-         CORE_SERVICE_GRPC_ADDR: "host.docker.internal:50051"
-         # ... etc
    ```
+   Database, market-data Kafka, notification Kafka, log Kafka, core, and
+   order addresses remain platform-side control-panel inputs and are never
+   passed to a hosted Runtime.
 4. **Restart control-panel-service** so the new backend takes effect.
 5. **Smoke**: start a hosted runtime from the frontend or handler flow and
    confirm `runtime_registry.status=active` after the RuntimeChannel HELLO.

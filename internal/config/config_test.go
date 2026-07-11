@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,5 +114,44 @@ provisioning:
 
 	if got := cfg.Provisioning.Docker.RuntimeChannelDialAddr; got != "runtime-channel.internal:50055" {
 		t.Fatalf("RuntimeChannelDialAddr = %q", got)
+	}
+}
+
+func TestLoadRejectsHostedRuntimeEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(`
+provisioning:
+  docker:
+    runtime_env:
+      CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
+      KAFKA_BROKERS: "127.0.0.1:19092"
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
+		t.Fatalf("Load error = %v, want Runtime isolation error", err)
+	}
+}
+
+func TestLoadAllowsUnsetHostedRuntimeEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{name: "absent", yaml: "provisioning:\n  docker:\n    runtime_channel_dial_addr: runtime-channel.internal:50055\n"},
+		{name: "null", yaml: "provisioning:\n  docker:\n    runtime_env: null\n"},
+		{name: "empty", yaml: "provisioning:\n  docker:\n    runtime_env: {}\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.yaml), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := Load(path); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+		})
 	}
 }

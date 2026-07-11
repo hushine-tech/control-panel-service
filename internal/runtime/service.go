@@ -945,7 +945,6 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 		Limits:              profileLimits,
 		ResourceProfileName: profileName,
 		Capabilities:        []string{"strategy", "spot", "futures"},
-		ControlPanelGRPC:    "", // operator-controlled; the runtime container env carries it
 	}
 	if hostedCredential.KeyID != "" {
 		plan.RuntimeCredentialKeyID = hostedCredential.KeyID

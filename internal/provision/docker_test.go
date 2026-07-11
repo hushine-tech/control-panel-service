@@ -60,10 +60,7 @@ func defaultCfg() config.ProvisioningConfig {
 		Docker: config.DockerProvisioningConfig{
 			NetworkMode: "host",
 			LabelPrefix: "hushine.runtime",
-			RuntimeEnv: map[string]string{
-				"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-				"KAFKA_BROKERS":          "127.0.0.1:19092",
-			},
+			RuntimeEnv:  map[string]string{},
 		},
 	}
 }
@@ -114,9 +111,22 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	assertHasEnv(t, args, "RUNTIME_NAME=hosted-steady-river")
 	assertHasEnv(t, args, "RUNTIME_RESOURCE_PROFILE=small")
 	assertHasEnv(t, args, "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055")
-	// Operator-supplied static env forwarded.
-	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
-	assertHasEnv(t, args, "KAFKA_BROKERS=127.0.0.1:19092")
+	wantEnvKeys := map[string]struct{}{
+		"RUNTIME_SOURCE":            {},
+		"RUNTIME_RUNTIME_ID":        {},
+		"RUNTIME_NAME":              {},
+		"RUNTIME_RESOURCE_PROFILE":  {},
+		"RUNTIME_CHANNEL_GRPC_ADDR": {},
+	}
+	gotEnvKeys := envKeys(args)
+	if len(gotEnvKeys) != len(wantEnvKeys) {
+		t.Fatalf("hosted Runtime env keys = %v, want exactly %v", gotEnvKeys, wantEnvKeys)
+	}
+	for key := range gotEnvKeys {
+		if _, ok := wantEnvKeys[key]; !ok {
+			t.Fatalf("unmodeled hosted Runtime env key present: %s", key)
+		}
+	}
 	// Labels for traceability.
 	assertHasLabel(t, args, "hushine.runtime.runtime_id=rt_abc123")
 	assertHasLabel(t, args, "hushine.runtime.user_id=42")
@@ -224,61 +234,38 @@ func TestDockerProvisioner_Provision_FailsWhenImageEmpty(t *testing.T) {
 	}
 }
 
-// Operator-supplied runtime_env MUST NOT be able to shadow platform-
-// controlled env vars (RUNTIME_*, RUNTIME_CHANNEL_GRPC_ADDR,
-// SERVER_GRPC_ADDR). Defense against operator footgun (#20).
-func TestDockerProvisioner_Provision_FiltersReservedEnvKeys(t *testing.T) {
+func TestDockerProvisioner_Provision_RejectsRuntimeEnvBeforeDocker(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.Docker.RuntimeEnv = map[string]string{
-		// Forbidden — must be ignored.
-		"RUNTIME_BIND_USER_ID":      "999",
-		"RUNTIME_RUNTIME_ID":        "rt_attacker",
-		"RUNTIME_CHANNEL_GRPC_ADDR": "evil:50055",
-		"SERVER_GRPC_ADDR":          ":1",
-		// Allowed — legit operator env.
 		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-		"MY_CUSTOM_VAR":          "hello",
+		"KAFKA_BROKERS":          "127.0.0.1:19092",
+		"DATABASE_PASSWORD":      "secret",
+		"MY_CUSTOM_VAR":          "also-not-an-explicit-runtime-field",
 	}
 	runner := &fakeRunner{output: []byte("container_xyz\n")}
 	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
 
 	_, err := prov.Provision(context.Background(), defaultPlan())
-	if err != nil {
-		t.Fatalf("Provision: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
+		t.Fatalf("Provision error = %v, want Runtime isolation error", err)
 	}
-	args := runner.calls[0].args
-
-	// Platform values must remain.
-	assertHasEnv(t, args, "RUNTIME_RUNTIME_ID=rt_abc123")
-	assertHasEnv(t, args, "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055")
-	if envKeyIsPresent(args, "SERVER_GRPC_ADDR") {
-		t.Error("reserved SERVER_GRPC_ADDR from runtime_env should not reach hosted runtime")
+	if len(runner.calls) != 0 {
+		t.Fatalf("docker was called despite invalid runtime_env: %+v", runner.calls)
 	}
-	// Forbidden runtime_env entries must NOT appear.
-	for _, forbidden := range []string{
-		"RUNTIME_BIND_USER_ID=999",
-		"RUNTIME_RUNTIME_ID=rt_attacker",
-		"RUNTIME_CHANNEL_GRPC_ADDR=evil:50055",
-		"SERVER_GRPC_ADDR=:1",
-	} {
-		if envIsPresent(args, forbidden) {
-			t.Errorf("forbidden runtime_env entry %q reached docker args", forbidden)
-		}
-	}
-	// Allowed entries DO appear.
-	assertHasEnv(t, args, "CORE_SERVICE_GRPC_ADDR=127.0.0.1:50051")
-	assertHasEnv(t, args, "MY_CUSTOM_VAR=hello")
 }
 
-// envIsPresent is a strict-form-only existence check (different from
-// assertHasEnv which is positive-test).
-func envIsPresent(args []string, want string) bool {
-	for i, a := range args {
-		if a == "-e" && i+1 < len(args) && args[i+1] == want {
-			return true
+func envKeys(args []string) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for i, arg := range args {
+		if arg != "-e" || i+1 >= len(args) {
+			continue
+		}
+		key, _, ok := strings.Cut(args[i+1], "=")
+		if ok {
+			keys[key] = struct{}{}
 		}
 	}
-	return false
+	return keys
 }
 
 func envKeyIsPresent(args []string, key string) bool {

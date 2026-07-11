@@ -82,6 +82,9 @@ func NewDockerProvisioner(runner CommandRunner, cfg config.ProvisioningConfig, r
 // resource-limited via cgroup flags. On success returns the container
 // ID; on failure returns the wrapped command output for diagnostics.
 func (d *DockerProvisioner) Provision(ctx context.Context, p Plan) (string, error) {
+	if err := d.cfg.ValidateRuntimeIsolation(); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrProvisionFailed, err)
+	}
 	if d.cfg.Image == "" {
 		return "", fmt.Errorf("%w: provisioning.image is empty", ErrNotConfigured)
 	}
@@ -240,40 +243,8 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		}
 	}
 
-	// Operator-supplied static env (core-service / order-service /
-	// kafka / timescaledb addresses, etc.).
-	//
-	// Platform-controlled keys are intentionally rejected here so a
-	// misconfigured `runtime_env` cannot shadow per-runtime values
-	// (RUNTIME_SOURCE=self_hosted would otherwise change admission shape;
-	// RUNTIME_CHANNEL_GRPC_ADDR=evil would redirect RuntimeChannel
-	// traffic).
-	for k, v := range dc.RuntimeEnv {
-		if isPlatformReservedEnvKey(k) {
-			// We don't fail-fast on the operator's behalf — log via the
-			// args themselves would leak through; instead skip silently.
-			// A unit test asserts these keys never reach docker.
-			continue
-		}
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
-
 	args = append(args, d.cfg.Image)
 	return args
-}
-
-// isPlatformReservedEnvKey identifies env-var keys whose values the
-// platform owns. operators MUST NOT override them via runtime_env.
-//
-// Reserved set:
-//   - RUNTIME_*        — per-runtime identity / RuntimeChannel endpoint
-//   - SERVER_GRPC_ADDR — legacy runtime server address
-func isPlatformReservedEnvKey(k string) bool {
-	switch k {
-	case "SERVER_GRPC_ADDR":
-		return true
-	}
-	return strings.HasPrefix(k, "RUNTIME_")
 }
 
 func needsDockerHostGateway(addr string) bool {

@@ -74,11 +74,6 @@ type Plan struct {
 	// register.
 	Capabilities []string
 
-	// ControlPanelGRPC is the address the runtime should dial for
-	// RuntimeChannel. The provisioner sets this as an env var when
-	// starting the container.
-	ControlPanelGRPC string
-
 	// RuntimeCredential* are platform-generated hosted-internal credentials.
 	// They are injected into the container by the provisioner and are never
 	// exposed through user-facing credential APIs.
