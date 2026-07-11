@@ -219,6 +219,42 @@ func TestDockerCoverageValidationRejectsRelativeOutputDir(t *testing.T) {
 	}
 }
 
+func TestDockerCoverageValidationRejectsMissingImage(t *testing.T) {
+	for name, image := range map[string]string{
+		"empty":      "",
+		"whitespace": " \t ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Provisioning.Docker.Coverage.Enabled = true
+			cfg.Provisioning.Docker.Coverage.Image = image
+			cfg.Provisioning.Docker.Coverage.OutputDir = t.TempDir()
+
+			err := cfg.Provisioning.ValidateRuntimeIsolation()
+			if err == nil || !strings.Contains(err.Error(), "provisioning.docker.coverage.image") {
+				t.Fatalf("ValidateRuntimeIsolation error = %v, want missing coverage image error", err)
+			}
+		})
+	}
+}
+
+func TestDockerCoverageValidationRejectsWhitespaceImageEnvOverride(t *testing.T) {
+	t.Setenv("RUNTIME_COVERAGE_ENABLED", "true")
+	t.Setenv("RUNTIME_COVERAGE_OUTPUT_DIR", t.TempDir())
+	t.Setenv("RUNTIME_COVERAGE_IMAGE", " \t ")
+
+	cfg := Default()
+	cfg.ApplyEnvOverrides()
+	if got, want := cfg.Provisioning.Docker.Coverage.Image, " \t "; got != want {
+		t.Fatalf("coverage image = %q, want exact environment override %q", got, want)
+	}
+
+	err := cfg.Provisioning.ValidateRuntimeIsolation()
+	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.coverage.image") {
+		t.Fatalf("ValidateRuntimeIsolation error = %v, want missing coverage image error", err)
+	}
+}
+
 func TestDockerCoverageValidationRejectsNonPositiveStopTimeout(t *testing.T) {
 	for _, timeout := range []int{0, -1} {
 		t.Run(strconv.Itoa(timeout), func(t *testing.T) {

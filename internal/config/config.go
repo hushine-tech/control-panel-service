@@ -237,6 +237,9 @@ func (c ProvisioningConfig) ValidateRuntimeIsolation() error {
 	if !coverage.Enabled {
 		return nil
 	}
+	if strings.TrimSpace(coverage.Image) == "" {
+		return fmt.Errorf("provisioning.docker.coverage.image is required when coverage is enabled")
+	}
 	if strings.TrimSpace(coverage.OutputDir) == "" {
 		return fmt.Errorf("provisioning.docker.coverage.output_dir is required when coverage is enabled")
 	}
