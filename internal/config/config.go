@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -197,27 +198,55 @@ type DockerProvisioningConfig struct {
 	// is forwarded to hosted runtime containers.
 	RuntimeEnv map[string]string `yaml:"runtime_env"`
 
+	// Coverage holds the explicitly modeled settings for opt-in hosted
+	// runtime coverage. Coverage settings are never sourced from RuntimeEnv.
+	Coverage DockerCoverageConfig `yaml:"coverage"`
+
 	// LabelPrefix is the docker label namespace used for traceability:
 	//   <prefix>.runtime_id, <prefix>.user_id, <prefix>.name.
 	// Defaults to "hushine.runtime".
 	LabelPrefix string `yaml:"label_prefix"`
 }
 
+// DockerCoverageConfig controls the instrumented image and durable host
+// output root used only when hosted runtime coverage is explicitly enabled.
+type DockerCoverageConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Image              string `yaml:"image"`
+	OutputDir          string `yaml:"output_dir"`
+	StopTimeoutSeconds int    `yaml:"stop_timeout_seconds"`
+}
+
 // ValidateRuntimeIsolation rejects legacy operator-provided environment
-// variables that would cross the hosted Runtime isolation boundary.
+// variables and invalid typed coverage settings that would cross the hosted
+// Runtime isolation boundary.
 func (c ProvisioningConfig) ValidateRuntimeIsolation() error {
-	if len(c.Docker.RuntimeEnv) == 0 {
+	if len(c.Docker.RuntimeEnv) > 0 {
+		keys := make([]string, 0, len(c.Docker.RuntimeEnv))
+		for key := range c.Docker.RuntimeEnv {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		return fmt.Errorf(
+			"provisioning.docker.runtime_env is not supported for Runtime isolation; configure explicit Runtime fields instead: %s",
+			strings.Join(keys, ", "),
+		)
+	}
+
+	coverage := c.Docker.Coverage
+	if !coverage.Enabled {
 		return nil
 	}
-	keys := make([]string, 0, len(c.Docker.RuntimeEnv))
-	for key := range c.Docker.RuntimeEnv {
-		keys = append(keys, key)
+	if strings.TrimSpace(coverage.OutputDir) == "" {
+		return fmt.Errorf("provisioning.docker.coverage.output_dir is required when coverage is enabled")
 	}
-	sort.Strings(keys)
-	return fmt.Errorf(
-		"provisioning.docker.runtime_env is not supported for Runtime isolation; configure explicit Runtime fields instead: %s",
-		strings.Join(keys, ", "),
-	)
+	if !filepath.IsAbs(coverage.OutputDir) {
+		return fmt.Errorf("provisioning.docker.coverage.output_dir must be an absolute host path")
+	}
+	if coverage.StopTimeoutSeconds <= 0 {
+		return fmt.Errorf("provisioning.docker.coverage.stop_timeout_seconds must be greater than zero")
+	}
+	return nil
 }
 
 // Default returns a baseline config so env-driven deployments can start
@@ -284,6 +313,12 @@ func Default() *Config {
 			PortRangeSize:              200,
 			RegistrationTimeoutSeconds: 30,
 			Profiles:                   defaultResourceProfiles(),
+			Docker: DockerProvisioningConfig{
+				Coverage: DockerCoverageConfig{
+					Image:              "hushine/strategy-runtime:executor-coverage",
+					StopTimeoutSeconds: 10,
+				},
+			},
 		},
 		Notification: NotificationConfig{
 			Enabled: false,
@@ -486,6 +521,16 @@ func (c *Config) ApplyEnvOverrides() {
 		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
 			c.RuntimePlatform.BareRuntimeDeathGraceSeconds = seconds
 		}
+	}
+
+	if v := os.Getenv("RUNTIME_COVERAGE_ENABLED"); v != "" {
+		c.Provisioning.Docker.Coverage.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("RUNTIME_COVERAGE_OUTPUT_DIR"); v != "" {
+		c.Provisioning.Docker.Coverage.OutputDir = v
+	}
+	if v := os.Getenv("RUNTIME_COVERAGE_IMAGE"); v != "" {
+		c.Provisioning.Docker.Coverage.Image = v
 	}
 }
 

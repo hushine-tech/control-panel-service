@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,136 @@ provisioning:
 
 	if got := cfg.Provisioning.Docker.RuntimeChannelDialAddr; got != "runtime-channel.internal:50055" {
 		t.Fatalf("RuntimeChannelDialAddr = %q", got)
+	}
+}
+
+func TestDockerCoverageDefaultsDisabled(t *testing.T) {
+	coverage := Default().Provisioning.Docker.Coverage
+
+	if coverage.Enabled {
+		t.Fatal("coverage enabled by default")
+	}
+	if got, want := coverage.Image, "hushine/strategy-runtime:executor-coverage"; got != want {
+		t.Fatalf("coverage image = %q, want %q", got, want)
+	}
+	if coverage.OutputDir != "" {
+		t.Fatalf("coverage output dir = %q, want empty", coverage.OutputDir)
+	}
+	if got, want := coverage.StopTimeoutSeconds, 10; got != want {
+		t.Fatalf("coverage stop timeout = %d, want %d", got, want)
+	}
+}
+
+func TestDockerCoverageYAML(t *testing.T) {
+	outputDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := `
+provisioning:
+  docker:
+    coverage:
+      enabled: true
+      image: "hushine/strategy-runtime:test-cover"
+      output_dir: "` + outputDir + `"
+      stop_timeout_seconds: 17
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	coverage := cfg.Provisioning.Docker.Coverage
+	if !coverage.Enabled {
+		t.Fatal("coverage disabled, want enabled from YAML")
+	}
+	if got, want := coverage.Image, "hushine/strategy-runtime:test-cover"; got != want {
+		t.Fatalf("coverage image = %q, want %q", got, want)
+	}
+	if coverage.OutputDir != outputDir {
+		t.Fatalf("coverage output dir = %q, want %q", coverage.OutputDir, outputDir)
+	}
+	if got, want := coverage.StopTimeoutSeconds, 17; got != want {
+		t.Fatalf("coverage stop timeout = %d, want %d", got, want)
+	}
+}
+
+func TestDockerCoverageEnvOverrides(t *testing.T) {
+	t.Setenv("RUNTIME_COVERAGE_ENABLED", "true")
+	t.Setenv("RUNTIME_COVERAGE_OUTPUT_DIR", "/tmp/census/run-1/coverage/runtime-agent")
+	t.Setenv("RUNTIME_COVERAGE_IMAGE", "hushine/strategy-runtime:test-cover")
+
+	cfg := Default()
+	cfg.ApplyEnvOverrides()
+	if err := cfg.Provisioning.ValidateRuntimeIsolation(); err != nil {
+		t.Fatalf("ValidateRuntimeIsolation: %v", err)
+	}
+
+	coverage := cfg.Provisioning.Docker.Coverage
+	if !coverage.Enabled {
+		t.Fatal("coverage disabled, want enabled from environment")
+	}
+	if got, want := coverage.OutputDir, "/tmp/census/run-1/coverage/runtime-agent"; got != want {
+		t.Fatalf("coverage output dir = %q, want %q", got, want)
+	}
+	if got, want := coverage.Image, "hushine/strategy-runtime:test-cover"; got != want {
+		t.Fatalf("coverage image = %q, want %q", got, want)
+	}
+}
+
+func TestDockerCoverageValidationRejectsMissingOutputDir(t *testing.T) {
+	for _, outputDir := range []string{"", "   "} {
+		t.Run(outputDir, func(t *testing.T) {
+			cfg := Default()
+			cfg.Provisioning.Docker.Coverage.Enabled = true
+			cfg.Provisioning.Docker.Coverage.OutputDir = outputDir
+
+			err := cfg.Provisioning.ValidateRuntimeIsolation()
+			if err == nil || !strings.Contains(err.Error(), "provisioning.docker.coverage.output_dir") {
+				t.Fatalf("ValidateRuntimeIsolation error = %v, want missing coverage output dir error", err)
+			}
+		})
+	}
+}
+
+func TestDockerCoverageValidationRejectsRelativeOutputDir(t *testing.T) {
+	cfg := Default()
+	cfg.Provisioning.Docker.Coverage.Enabled = true
+	cfg.Provisioning.Docker.Coverage.OutputDir = "census/run-1/coverage/runtime-agent"
+
+	err := cfg.Provisioning.ValidateRuntimeIsolation()
+	if err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("ValidateRuntimeIsolation error = %v, want absolute coverage output dir error", err)
+	}
+}
+
+func TestDockerCoverageValidationRejectsNonPositiveStopTimeout(t *testing.T) {
+	for _, timeout := range []int{0, -1} {
+		t.Run(strconv.Itoa(timeout), func(t *testing.T) {
+			cfg := Default()
+			cfg.Provisioning.Docker.Coverage.Enabled = true
+			cfg.Provisioning.Docker.Coverage.OutputDir = t.TempDir()
+			cfg.Provisioning.Docker.Coverage.StopTimeoutSeconds = timeout
+
+			err := cfg.Provisioning.ValidateRuntimeIsolation()
+			if err == nil || !strings.Contains(err.Error(), "provisioning.docker.coverage.stop_timeout_seconds") {
+				t.Fatalf("ValidateRuntimeIsolation error = %v, want stop timeout error", err)
+			}
+		})
+	}
+}
+
+func TestValidateRuntimeIsolationStillRejectsRuntimeEnv(t *testing.T) {
+	cfg := Default()
+	cfg.Provisioning.Docker.RuntimeEnv = map[string]string{
+		"KAFKA_BROKERS":          "127.0.0.1:19092",
+		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
+	}
+
+	err := cfg.Provisioning.ValidateRuntimeIsolation()
+	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
+		t.Fatalf("ValidateRuntimeIsolation error = %v, want Runtime isolation error", err)
 	}
 }
 

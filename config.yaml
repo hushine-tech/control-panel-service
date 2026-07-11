@@ -123,6 +123,14 @@ provisioning:
     # "host.docker.internal:50055" or routable LAN/service address.
     runtime_channel_dial_addr: "host.docker.internal:50055"
     label_prefix: "hushine.runtime"
+    # Hosted runtime coverage is opt-in. RUNTIME_COVERAGE_ENABLED,
+    # RUNTIME_COVERAGE_OUTPUT_DIR (an absolute host path), and optionally
+    # RUNTIME_COVERAGE_IMAGE override these typed settings.
+    coverage:
+      enabled: false
+      image: "hushine/strategy-runtime:executor-coverage"
+      output_dir: ""
+      stop_timeout_seconds: 10
 
 notification:
   enabled: true

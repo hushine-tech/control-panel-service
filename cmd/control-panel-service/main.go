@@ -23,7 +23,6 @@ import (
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
-	"github.com/hushine-tech/control-panel-service/internal/portfolioclient"
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/credential"
 	"github.com/hushine-tech/control-panel-service/internal/debugger"
@@ -33,6 +32,7 @@ import (
 	mdrepo "github.com/hushine-tech/control-panel-service/internal/marketdata/repository"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
+	"github.com/hushine-tech/control-panel-service/internal/portfolioclient"
 	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
 	"github.com/hushine-tech/control-panel-service/internal/runtime"
@@ -124,6 +124,9 @@ func main() {
 		}
 	}
 	cfg.ApplyEnvOverrides()
+	if err := cfg.Provisioning.ValidateRuntimeIsolation(); err != nil {
+		log.Fatalf("validate runtime isolation config: %v", err)
+	}
 
 	// ── Logger ────────────────────────────────────────────────────────────────
 	if err := logger.InitWithConfig(&cfg.Log); err != nil {
