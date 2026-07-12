@@ -223,6 +223,9 @@ func main() {
 			fallbackString(cfg.Provisioning.Docker.NetworkMode, "host"),
 			dialAddr,
 		))
+		if message := runtimeCoverageStartupLog(cfg.Provisioning.Docker.Coverage); message != "" {
+			logger.Info(ctx, "system", message)
+		}
 	default:
 		log.Fatalf("unknown provisioning.backend=%q (expected: noop, docker)", cfg.Provisioning.Backend)
 	}
@@ -477,4 +480,16 @@ func main() {
 	runtimeChannelGRPCSrv.GracefulStop()
 
 	logger.Info(context.Background(), "system", "control-panel-service stopped")
+}
+
+func runtimeCoverageStartupLog(coverage config.DockerCoverageConfig) string {
+	if !coverage.Enabled {
+		return ""
+	}
+	return fmt.Sprintf(
+		"runtime coverage: enabled image=%s output_dir=%s stop_timeout_seconds=%d",
+		coverage.Image,
+		coverage.OutputDir,
+		coverage.StopTimeoutSeconds,
+	)
 }

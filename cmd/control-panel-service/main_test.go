@@ -77,6 +77,31 @@ func TestRuntimeServerCAPEMFromConfigReadsServerCertFile(t *testing.T) {
 	}
 }
 
+func TestRuntimeCoverageStartupLogReportsEffectiveSettings(t *testing.T) {
+	got := runtimeCoverageStartupLog(config.DockerCoverageConfig{
+		Enabled:            true,
+		Image:              "hushine/strategy-runtime:executor-coverage",
+		OutputDir:          "/tmp/census/manual-1/coverage/runtime-agent",
+		StopTimeoutSeconds: 10,
+	})
+	for _, want := range []string{
+		"runtime coverage: enabled",
+		"image=hushine/strategy-runtime:executor-coverage",
+		"output_dir=/tmp/census/manual-1/coverage/runtime-agent",
+		"stop_timeout_seconds=10",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("runtimeCoverageStartupLog() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestRuntimeCoverageStartupLogDisabledIsEmpty(t *testing.T) {
+	if got := runtimeCoverageStartupLog(config.DockerCoverageConfig{}); got != "" {
+		t.Fatalf("runtimeCoverageStartupLog() = %q, want empty", got)
+	}
+}
+
 func writeRuntimeClientCAForTest(t *testing.T) (string, string) {
 	t.Helper()
 	certPEM, keyPEM := mustCAForMainTest(t)
