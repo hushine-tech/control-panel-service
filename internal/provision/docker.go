@@ -29,8 +29,8 @@ var diagnosticsSensitivePatterns = []struct {
 	pattern     *regexp.Regexp
 	replacement string
 }{
-	{regexp.MustCompile(`(?i)("?(?:api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?)"?\s*:\s*)("[^"]*"|[^,\s}]+)`), "${1}<redacted>"},
-	{regexp.MustCompile(`(?i)\b(api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|,;]+)`), "${1}${2}<redacted>"},
+	{regexp.MustCompile(`(?i)("?(?:api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?|client[_-]?key(?:_pem)?)"?\s*:\s*)("[^"]*"|[^,\s}]+)`), "${1}<redacted>"},
+	{regexp.MustCompile(`(?i)\b(api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?|client[_-]?key(?:_pem)?)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|,;]+)`), "${1}${2}<redacted>"},
 }
 
 func redactDiagnostics(text string) string {
@@ -113,10 +113,7 @@ func (d *DockerProvisioner) Provision(ctx context.Context, p Plan) (string, erro
 	if err != nil {
 		output := strings.TrimSpace(string(out))
 		if partialHandle := partialContainerHandleFromDockerRunOutput(output); partialHandle != "" {
-			cleanupTimeout := 10 * time.Second
-			if d.cfg.Docker.Coverage.Enabled {
-				cleanupTimeout += time.Duration(d.cfg.Docker.Coverage.StopTimeoutSeconds) * time.Second
-			}
+			cleanupTimeout := d.DeprovisionTimeout()
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 			cleanupErr := d.Deprovision(cleanupCtx, partialHandle)
 			cancel()
@@ -140,18 +137,52 @@ func (d *DockerProvisioner) Deprovision(ctx context.Context, handle string) erro
 	if handle == "" {
 		return errors.New("deprovision: empty handle")
 	}
-	if d.cfg.Docker.Coverage.Enabled {
-		_, stopErr := d.runner.Run(ctx, "docker", "stop", "--time", strconv.Itoa(d.cfg.Docker.Coverage.StopTimeoutSeconds), handle)
-		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		_, removeErr := d.runner.Run(removeCtx, "docker", "rm", "-f", handle)
-		if removeErr != nil {
-			return errors.Join(stopErr, removeErr)
-		}
-		return nil
+	labelPrefix := strings.TrimSpace(d.cfg.Docker.LabelPrefix)
+	if labelPrefix == "" {
+		labelPrefix = "hushine.runtime"
 	}
-	_, err := d.runner.Run(ctx, "docker", "rm", "-f", handle)
-	return err
+	inspectCtx, cancelInspect := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	inspectOut, inspectErr := d.runner.Run(
+		inspectCtx,
+		"docker",
+		"inspect",
+		"--format",
+		fmt.Sprintf(`{{index .Config.Labels %q}}`, labelPrefix+".coverage"),
+		handle,
+	)
+	cancelInspect()
+	coverageFact := strings.ToLower(strings.TrimSpace(string(inspectOut)))
+	stopFirst := inspectErr != nil || coverageFact == "true"
+	var factErr error
+	if inspectErr != nil {
+		factErr = fmt.Errorf("inspect container coverage fact: %w", inspectErr)
+	} else if coverageFact != "" && coverageFact != "<no value>" && coverageFact != "false" && coverageFact != "true" {
+		stopFirst = true
+		factErr = fmt.Errorf("inspect container coverage fact: unexpected label value")
+	}
+
+	var stopErr error
+	if stopFirst {
+		stopSeconds := d.coverageStopTimeoutSeconds()
+		stopCtx, cancelStop := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(stopSeconds+2)*time.Second)
+		_, stopErr = d.runner.Run(stopCtx, "docker", "stop", "--time", strconv.Itoa(stopSeconds), handle)
+		cancelStop()
+	}
+	removeCtx, cancelRemove := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	_, removeErr := d.runner.Run(removeCtx, "docker", "rm", "-f", handle)
+	cancelRemove()
+	return errors.Join(factErr, stopErr, removeErr)
+}
+
+func (d *DockerProvisioner) DeprovisionTimeout() time.Duration {
+	return time.Duration(d.coverageStopTimeoutSeconds()+17) * time.Second
+}
+
+func (d *DockerProvisioner) coverageStopTimeoutSeconds() int {
+	if seconds := d.cfg.Docker.Coverage.StopTimeoutSeconds; seconds > 0 {
+		return seconds
+	}
+	return 10
 }
 
 // Diagnostics returns a compact snapshot of a started container. It is used

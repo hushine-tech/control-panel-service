@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hushine-tech/control-panel-service/internal/config"
 )
@@ -109,6 +110,13 @@ type Provisioner interface {
 	// are logged but not propagated since we may be cancelling a
 	// half-started container after a registration timeout.
 	Deprovision(ctx context.Context, handle string) error
+}
+
+// CleanupTimeoutProvider lets a backend declare the complete bounded cleanup
+// budget needed by Deprovision. Service callers use it instead of truncating a
+// configured graceful-stop window with a generic deadline.
+type CleanupTimeoutProvider interface {
+	DeprovisionTimeout() time.Duration
 }
 
 // NoOpProvisioner refuses every call with ErrNotConfigured. This is the

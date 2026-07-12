@@ -582,7 +582,13 @@ func (s *Service) deprovisionHostedRuntimeHandle(runtimeID, handle string) runti
 	// Hosted runtime handles are deterministic container names. Cleanup is
 	// best-effort so a missing local Docker container does not make the
 	// already-ended registry row routeable again.
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	cleanupTimeout := 10 * time.Second
+	if provider, ok := s.provisioner.(provision.CleanupTimeoutProvider); ok {
+		if declared := provider.DeprovisionTimeout(); declared > cleanupTimeout {
+			cleanupTimeout = declared
+		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 	defer cancel()
 	status := domain.RuntimeCleanupStatusSucceeded
 	reason := ""

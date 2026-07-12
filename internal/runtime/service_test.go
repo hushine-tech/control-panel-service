@@ -366,7 +366,7 @@ func TestBootstrapBareRuntimeCertificateIssuesExecutorCredential(t *testing.T) {
 
 func TestEndRuntime_HostedCancelsAndDeprovisions(t *testing.T) {
 	repo := newStubRepo()
-	prov := &fakeProvisioner{repo: repo, onProvision: "ok", now: func() time.Time { return fixedNow }}
+	prov := &fakeProvisioner{repo: repo, onProvision: "ok", now: func() time.Time { return fixedNow }, deprovisionTimeout: 27 * time.Second}
 	svc := makeServiceWithProvisioner(repo, "pro", prov, fixedNow, 1)
 	rt := domain.Runtime{
 		RuntimeID:       "rt_stop",
@@ -393,6 +393,13 @@ func TestEndRuntime_HostedCancelsAndDeprovisions(t *testing.T) {
 	}
 	if prov.deprovisions != 1 || len(prov.deprovisionHandles) != 1 || prov.deprovisionHandles[0] != "hushine-runtime-rt_stop" {
 		t.Fatalf("deprovision = %d/%v, want one hushine-runtime-rt_stop", prov.deprovisions, prov.deprovisionHandles)
+	}
+	if !prov.deprovisionHasDeadline {
+		t.Fatal("deprovision context has no deadline")
+	}
+	remaining := time.Until(prov.deprovisionDeadline)
+	if remaining < 25*time.Second || remaining > 28*time.Second {
+		t.Fatalf("deprovision deadline remaining = %v, want provisioner budget near 27s", remaining)
 	}
 	if got.CleanupStatus != domain.RuntimeCleanupStatusSucceeded {
 		t.Fatalf("cleanup_status = %q, want succeeded", got.CleanupStatus)

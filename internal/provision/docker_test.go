@@ -589,9 +589,11 @@ func TestDockerProvisioner_Provision_DockerRunFailureRemovesPartialContainer(t *
 		multiOut: [][]byte{
 			[]byte(partialID + "\ndocker: Error response from daemon: failed to set up container networking"),
 			[]byte(""),
+			[]byte(""),
 		},
 		multiErr: []error{
 			errors.New("exit status 125"),
+			nil,
 			nil,
 		},
 	}
@@ -601,12 +603,12 @@ func TestDockerProvisioner_Provision_DockerRunFailureRemovesPartialContainer(t *
 	if !errors.Is(err, ErrProvisionFailed) {
 		t.Fatalf("err = %v, want ErrProvisionFailed", err)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("calls = %d, want docker run + docker rm", len(runner.calls))
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls = %d, want docker run + inspect + docker rm", len(runner.calls))
 	}
 	want := []string{"rm", "-f", partialID}
-	if !equalStringSlice(runner.calls[1].args, want) {
-		t.Fatalf("cleanup args = %v, want %v", runner.calls[1].args, want)
+	if !equalStringSlice(runner.calls[2].args, want) {
+		t.Fatalf("cleanup args = %v, want %v", runner.calls[2].args, want)
 	}
 }
 
@@ -616,11 +618,13 @@ func TestDockerProvisioner_Provision_CoverageDockerRunFailureRemovesPartialConta
 	runner := &fakeRunner{
 		multiOut: [][]byte{
 			[]byte(partialID + "\ndocker: Error response from daemon: failed to set up container networking"),
+			[]byte("true\n"),
 			[]byte(""),
 			[]byte(""),
 		},
 		multiErr: []error{
 			errors.New("exit status 125"),
+			nil,
 			stopErr,
 			nil,
 		},
@@ -631,19 +635,19 @@ func TestDockerProvisioner_Provision_CoverageDockerRunFailureRemovesPartialConta
 	if !errors.Is(err, ErrProvisionFailed) {
 		t.Fatalf("err = %v, want ErrProvisionFailed", err)
 	}
-	if strings.Contains(err.Error(), "cleanup partial container") {
-		t.Fatalf("successful forced removal reported as cleanup failure: %v", err)
+	if !strings.Contains(err.Error(), "cleanup partial container") || !strings.Contains(err.Error(), stopErr.Error()) {
+		t.Fatalf("graceful stop failure was not reported after forced removal: %v", err)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("calls = %d, want docker run + docker stop + docker rm", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("calls = %d, want docker run + inspect + docker stop + docker rm", len(runner.calls))
 	}
 	wantStop := []string{"stop", "--time", "10", partialID}
-	if !equalStringSlice(runner.calls[1].args, wantStop) {
-		t.Fatalf("stop args = %v, want %v", runner.calls[1].args, wantStop)
+	if !equalStringSlice(runner.calls[2].args, wantStop) {
+		t.Fatalf("stop args = %v, want %v", runner.calls[2].args, wantStop)
 	}
 	wantRemove := []string{"rm", "-f", partialID}
-	if !equalStringSlice(runner.calls[2].args, wantRemove) {
-		t.Fatalf("remove args = %v, want %v", runner.calls[2].args, wantRemove)
+	if !equalStringSlice(runner.calls[3].args, wantRemove) {
+		t.Fatalf("remove args = %v, want %v", runner.calls[3].args, wantRemove)
 	}
 }
 
@@ -653,10 +657,13 @@ func TestDockerProvisioner_Deprovision_CallsDockerRm(t *testing.T) {
 	if err := prov.Deprovision(context.Background(), "container_xyz"); err != nil {
 		t.Fatalf("Deprovision: %v", err)
 	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("calls = %d, want 1", len(runner.calls))
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %d, want inspect + rm", len(runner.calls))
 	}
-	call := runner.calls[0]
+	if runner.calls[0].args[0] != "inspect" {
+		t.Fatalf("first call = %v, want inspect", runner.calls[0].args)
+	}
+	call := runner.calls[1]
 	if call.name != "docker" {
 		t.Errorf("called %q, want docker", call.name)
 	}
@@ -676,14 +683,14 @@ func TestDockerProvisioner_Deprovision_CoverageStopsThenAlwaysRemoves(t *testing
 		wantErrors []error
 	}{
 		{name: "success"},
-		{name: "stop failure is cleared by removal", stopErr: stopErr},
+		{name: "stop failure remains visible after removal", stopErr: stopErr, wantErrors: []error{stopErr}},
 		{name: "remove failure", removeErr: removeErr, wantErrors: []error{removeErr}},
 		{name: "stop and remove failure", stopErr: stopErr, removeErr: removeErr, wantErrors: []error{stopErr, removeErr}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &fakeRunner{
-				multiOut: [][]byte{[]byte(""), []byte("")},
-				multiErr: []error{tc.stopErr, tc.removeErr},
+				multiOut: [][]byte{[]byte("true\n"), []byte(""), []byte("")},
+				multiErr: []error{nil, tc.stopErr, tc.removeErr},
 			}
 			prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
 
@@ -696,18 +703,82 @@ func TestDockerProvisioner_Deprovision_CoverageStopsThenAlwaysRemoves(t *testing
 					t.Fatalf("Deprovision error = %v, want %v", err, wantErr)
 				}
 			}
-			if len(runner.calls) != 2 {
-				t.Fatalf("calls = %d, want stop + rm", len(runner.calls))
+			if len(runner.calls) != 3 {
+				t.Fatalf("calls = %d, want inspect + stop + rm", len(runner.calls))
 			}
 			wantStop := []string{"stop", "--time", "10", "container_xyz"}
-			if !equalStringSlice(runner.calls[0].args, wantStop) {
-				t.Fatalf("stop args = %v, want %v", runner.calls[0].args, wantStop)
+			if !equalStringSlice(runner.calls[1].args, wantStop) {
+				t.Fatalf("stop args = %v, want %v", runner.calls[1].args, wantStop)
 			}
 			wantRemove := []string{"rm", "-f", "container_xyz"}
-			if !equalStringSlice(runner.calls[1].args, wantRemove) {
-				t.Fatalf("remove args = %v, want %v", runner.calls[1].args, wantRemove)
+			if !equalStringSlice(runner.calls[2].args, wantRemove) {
+				t.Fatalf("remove args = %v, want %v", runner.calls[2].args, wantRemove)
 			}
 		})
+	}
+}
+
+func TestDockerProvisioner_Deprovision_UsesContainerCoverageFactAcrossConfigChanges(t *testing.T) {
+	t.Run("disabled config still stops a labeled coverage container", func(t *testing.T) {
+		cfg := defaultCfg()
+		cfg.Docker.Coverage.StopTimeoutSeconds = 17
+		runner := &fakeRunner{multiOut: [][]byte{[]byte("true\n"), nil, nil}}
+		prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
+		if err := prov.Deprovision(context.Background(), "container_xyz"); err != nil {
+			t.Fatalf("Deprovision: %v", err)
+		}
+		want := [][]string{
+			{"inspect", "--format", `{{index .Config.Labels "hushine.runtime.coverage"}}`, "container_xyz"},
+			{"stop", "--time", "17", "container_xyz"},
+			{"rm", "-f", "container_xyz"},
+		}
+		if len(runner.calls) != len(want) {
+			t.Fatalf("calls = %d, want %d", len(runner.calls), len(want))
+		}
+		for index := range want {
+			if !equalStringSlice(runner.calls[index].args, want[index]) {
+				t.Fatalf("call %d args = %v, want %v", index, runner.calls[index].args, want[index])
+			}
+		}
+	})
+
+	t.Run("enabled config does not stop a normal container", func(t *testing.T) {
+		runner := &fakeRunner{multiOut: [][]byte{[]byte("false\n"), nil}}
+		prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+		if err := prov.Deprovision(context.Background(), "container_xyz"); err != nil {
+			t.Fatalf("Deprovision: %v", err)
+		}
+		if len(runner.calls) != 2 || runner.calls[0].args[0] != "inspect" || runner.calls[1].args[0] != "rm" {
+			t.Fatalf("calls = %+v, want inspect then rm", runner.calls)
+		}
+	})
+}
+
+func TestDockerProvisioner_Deprovision_UnknownFactStopsRemovesAndReportsInspectFailure(t *testing.T) {
+	inspectErr := errors.New("inspect failed")
+	runner := &fakeRunner{
+		multiOut: [][]byte{nil, nil, nil},
+		multiErr: []error{inspectErr, nil, nil},
+	}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+	err := prov.Deprovision(context.Background(), "container_xyz")
+	if !errors.Is(err, inspectErr) {
+		t.Fatalf("Deprovision error = %v, want inspect failure", err)
+	}
+	if len(runner.calls) != 3 || runner.calls[1].args[0] != "stop" || runner.calls[2].args[0] != "rm" {
+		t.Fatalf("calls = %+v, want inspect, conservative stop, rm", runner.calls)
+	}
+}
+
+func TestDockerProvisioner_Deprovision_StopFailureRemainsVisibleAfterRemoval(t *testing.T) {
+	stopErr := errors.New("stop failed")
+	runner := &fakeRunner{
+		multiOut: [][]byte{[]byte("true\n"), nil, nil},
+		multiErr: []error{nil, stopErr, nil},
+	}
+	prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+	if err := prov.Deprovision(context.Background(), "container_xyz"); !errors.Is(err, stopErr) {
+		t.Fatalf("Deprovision error = %v, want stop failure", err)
 	}
 }
 
@@ -715,10 +786,10 @@ func TestDockerProvisioner_Deprovision_CoverageRemovalGetsFreshBoundedContext(t 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runner := &fakeRunner{
-		multiOut: [][]byte{[]byte(""), []byte("")},
-		multiErr: []error{context.Canceled, nil},
+		multiOut: [][]byte{[]byte("true\n"), []byte(""), []byte("")},
+		multiErr: []error{nil, context.Canceled, nil},
 		onRun: func(callIndex int) {
-			if callIndex == 0 {
+			if callIndex == 1 {
 				cancel()
 			}
 		},
@@ -726,13 +797,13 @@ func TestDockerProvisioner_Deprovision_CoverageRemovalGetsFreshBoundedContext(t 
 	prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
 	startedAt := time.Now()
 
-	if err := prov.Deprovision(ctx, "container_xyz"); err != nil {
-		t.Fatalf("Deprovision: %v", err)
+	if err := prov.Deprovision(ctx, "container_xyz"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Deprovision error = %v, want visible stop cancellation", err)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("calls = %d, want stop + rm", len(runner.calls))
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls = %d, want inspect + stop + rm", len(runner.calls))
 	}
-	removeCall := runner.calls[1]
+	removeCall := runner.calls[2]
 	if removeCall.contextErr != nil {
 		t.Fatalf("remove context was already canceled: %v", removeCall.contextErr)
 	}
@@ -793,6 +864,26 @@ func TestDockerProvisioner_DiagnosticsRedactsSensitiveLogValues(t *testing.T) {
 	}
 	if !strings.Contains(diag, "API_SECRET=<redacted>") || !strings.Contains(diag, "token: <redacted>") {
 		t.Fatalf("diag = %q, want redacted markers", diag)
+	}
+}
+
+func TestDockerProvisioner_DiagnosticsRedactsActualClientKeyPEM(t *testing.T) {
+	privateBody := "CLIENT-PRIVATE-KEY-BODY"
+	runner := &fakeRunner{
+		multiOut: [][]byte{
+			[]byte("state=exited exit=1\n"),
+			[]byte("{\"client_key_pem\":\"-----BEGIN PRIVATE KEY-----\\n" + privateBody + "\\n-----END PRIVATE KEY-----\"}\nclient_key_pem=second-secret\n"),
+		},
+	}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+	diag, err := prov.Diagnostics(context.Background(), "container_xyz")
+	if err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	for _, leaked := range []string{privateBody, "second-secret", "BEGIN PRIVATE KEY", "END PRIVATE KEY"} {
+		if strings.Contains(diag, leaked) {
+			t.Fatalf("diag leaked client key material %q: %s", leaked, diag)
+		}
 	}
 }
 

@@ -32,16 +32,19 @@ type fakeProvisioner struct {
 	//   "ok_no_register"  → success; do NOT insert row (timeout test)
 	//   "fail"            → return provision.ErrProvisionFailed
 	//   "not_configured"  → return provision.ErrNotConfigured
-	onProvision        string
-	now                func() time.Time
-	calls              int
-	lastPlan           provision.Plan
-	deprovisions       int
-	deprovisionHandles []string
-	deprovisionErr     error
-	diagnostics        string
-	diagnosticsErr     error
-	diagnosticsCalls   int
+	onProvision            string
+	now                    func() time.Time
+	calls                  int
+	lastPlan               provision.Plan
+	deprovisions           int
+	deprovisionHandles     []string
+	deprovisionErr         error
+	deprovisionTimeout     time.Duration
+	deprovisionDeadline    time.Time
+	deprovisionHasDeadline bool
+	diagnostics            string
+	diagnosticsErr         error
+	diagnosticsCalls       int
 }
 
 type fakeHostedCredentialIssuer struct {
@@ -168,11 +171,14 @@ func (f *fakeHostedCredentialIssuer) IssueHostedInternalRuntimeCredential(_ cont
 	return issued, nil
 }
 
-func (f *fakeProvisioner) Deprovision(_ context.Context, handle string) error {
+func (f *fakeProvisioner) Deprovision(ctx context.Context, handle string) error {
 	f.deprovisions++
 	f.deprovisionHandles = append(f.deprovisionHandles, handle)
+	f.deprovisionDeadline, f.deprovisionHasDeadline = ctx.Deadline()
 	return f.deprovisionErr
 }
+
+func (f *fakeProvisioner) DeprovisionTimeout() time.Duration { return f.deprovisionTimeout }
 
 func (f *fakeProvisioner) Diagnostics(_ context.Context, _ string) (string, error) {
 	f.diagnosticsCalls++
