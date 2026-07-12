@@ -29,6 +29,7 @@ var diagnosticsSensitivePatterns = []struct {
 	pattern     *regexp.Regexp
 	replacement string
 }{
+	{regexp.MustCompile(`(?is)(\b(?:private[_-]?key(?:_pem)?|client[_-]?key(?:_pem)?)\b["']?\s*[:=]\s*(?:[>|][+-]?\s*)?["']?\s*)-----BEGIN[ \t]+[A-Z0-9 _-]+-----.*?(?:-----END[ \t]+[A-Z0-9 _-]+-----|$)["']?`), "${1}<redacted>"},
 	{regexp.MustCompile(`(?i)("?(?:api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?|client[_-]?key(?:_pem)?)"?\s*:\s*)("[^"]*"|[^,\s}]+)`), "${1}<redacted>"},
 	{regexp.MustCompile(`(?i)\b(api[_-]?secret|api[_-]?key|token|password|private[_-]?key(?:_pem)?|client[_-]?key(?:_pem)?)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s|,;]+)`), "${1}${2}<redacted>"},
 }

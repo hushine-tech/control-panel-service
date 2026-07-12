@@ -815,6 +815,28 @@ func TestDockerProvisioner_Deprovision_CoverageRemovalGetsFreshBoundedContext(t 
 	}
 }
 
+func TestDockerProvisioner_Deprovision_AllPhasesIgnoreCanceledCallerWithinOwnBounds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner := &fakeRunner{multiOut: [][]byte{[]byte("true\n"), nil, nil}}
+	prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+
+	if err := prov.Deprovision(ctx, "container_xyz"); err != nil {
+		t.Fatalf("Deprovision: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls = %d, want inspect + stop + rm", len(runner.calls))
+	}
+	for index, call := range runner.calls {
+		if call.contextErr != nil {
+			t.Fatalf("phase %d inherited canceled caller context: %v", index, call.contextErr)
+		}
+		if !call.hasDeadline {
+			t.Fatalf("phase %d has no self-owned deadline", index)
+		}
+	}
+}
+
 func TestDockerProvisioner_DiagnosticsIncludesInspectAndTailLogs(t *testing.T) {
 	runner := &fakeRunner{
 		multiOut: [][]byte{
@@ -884,6 +906,34 @@ func TestDockerProvisioner_DiagnosticsRedactsActualClientKeyPEM(t *testing.T) {
 		if strings.Contains(diag, leaked) {
 			t.Fatalf("diag leaked client key material %q: %s", leaked, diag)
 		}
+	}
+}
+
+func TestDockerProvisioner_DiagnosticsRedactsUnquotedAndYAMLMultilineClientKeyPEM(t *testing.T) {
+	runner := &fakeRunner{
+		multiOut: [][]byte{
+			[]byte("state=exited exit=1\n"),
+			[]byte("client_key_pem=-----BEGIN PRIVATE KEY-----\nUNQUOTED-CLIENT-PRIVATE-BODY\n-----END PRIVATE KEY-----\n" +
+				"client_key_pem: |\n  -----BEGIN PRIVATE KEY-----\n  YAML-CLIENT-PRIVATE-BODY\n  -----END PRIVATE KEY-----\n"),
+		},
+	}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+	diag, err := prov.Diagnostics(context.Background(), "container_xyz")
+	if err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	for _, leaked := range []string{
+		"UNQUOTED-CLIENT-PRIVATE-BODY",
+		"YAML-CLIENT-PRIVATE-BODY",
+		"BEGIN PRIVATE KEY",
+		"END PRIVATE KEY",
+	} {
+		if strings.Contains(diag, leaked) {
+			t.Fatalf("diag leaked multiline client key material %q: %s", leaked, diag)
+		}
+	}
+	if strings.Count(diag, "client_key_pem") != 2 || strings.Count(diag, "<redacted>") < 2 {
+		t.Fatalf("diag = %q, want both client_key_pem blocks redacted", diag)
 	}
 }
 
