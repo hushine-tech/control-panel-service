@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -132,6 +134,191 @@ func TestDockerProvisioner_Provision_BuildsExpectedRunArgs(t *testing.T) {
 	assertHasLabel(t, args, "hushine.runtime.user_id=42")
 	assertHasLabel(t, args, "hushine.runtime.name=hosted-steady-river")
 	assertHasLabel(t, args, "hushine.runtime.resource_profile=small")
+}
+
+func TestDockerProvisioner_Provision_CoverageDisabledPreservesExactRunArgs(t *testing.T) {
+	runner := &fakeRunner{output: []byte("container_full_id_abc\n")}
+	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+
+	if _, err := prov.Provision(context.Background(), defaultPlan()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	want := []string{
+		"run",
+		"-d",
+		"--name", "hushine-runtime-rt_abc123",
+		"--label", "hushine.runtime.runtime_id=rt_abc123",
+		"--label", "hushine.runtime.user_id=42",
+		"--label", "hushine.runtime.name=hosted-steady-river",
+		"--label", "hushine.runtime.resource_profile=small",
+		"--cpus", "0.5",
+		"--memory", "512m",
+		"--pids-limit", "256",
+		"--network", "host",
+		"-e", "RUNTIME_SOURCE=hosted",
+		"-e", "RUNTIME_RUNTIME_ID=rt_abc123",
+		"-e", "RUNTIME_NAME=hosted-steady-river",
+		"-e", "RUNTIME_RESOURCE_PROFILE=small",
+		"-e", "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055",
+		"hushine/strategy-runtime:executor-dev",
+	}
+	if got := runner.calls[0].args; !equalStringSlice(got, want) {
+		t.Fatalf("docker args = %v, want exact disabled args %v", got, want)
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageBuildsExactRunArgsAndDirectories(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "manual-coverage-run", "coverage", "runtime-agent")
+	runner := &fakeRunner{output: []byte("coverage_container_id\n")}
+	prov := NewDockerProvisioner(runner, coverageCfg(outputDir), "127.0.0.1:50055")
+	plan := defaultPlan()
+	plan.RuntimeID = "rt-123"
+
+	handle, err := prov.Provision(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if handle != "coverage_container_id" {
+		t.Fatalf("handle = %q, want coverage_container_id", handle)
+	}
+
+	runtimeRoot := filepath.Join(outputDir, "runtimes", "rt-123")
+	want := []string{
+		"run",
+		"-d",
+		"--name", "hushine-runtime-rt-123",
+		"--label", "hushine.runtime.runtime_id=rt-123",
+		"--label", "hushine.runtime.user_id=42",
+		"--label", "hushine.runtime.name=hosted-steady-river",
+		"--label", "hushine.runtime.resource_profile=small",
+		"--label", "hushine.runtime.coverage=true",
+		"--label", "hushine.runtime.coverage_run_id=manual-coverage-run",
+		"--cpus", "0.5",
+		"--memory", "512m",
+		"--pids-limit", "256",
+		"--network", "host",
+		"--mount", "type=bind,src=" + runtimeRoot + ",dst=/coverage",
+		"-e", "RUNTIME_SOURCE=hosted",
+		"-e", "RUNTIME_RUNTIME_ID=rt-123",
+		"-e", "RUNTIME_NAME=hosted-steady-river",
+		"-e", "RUNTIME_RESOURCE_PROFILE=small",
+		"-e", "RUNTIME_CHANNEL_GRPC_ADDR=127.0.0.1:50055",
+		"-e", "GOCOVERDIR=/coverage/go",
+		"-e", "HUSHINE_RUNTIME_COVERAGE_DIR=/coverage",
+		"hushine/strategy-runtime:test-cover",
+	}
+	if got := runner.calls[0].args; !equalStringSlice(got, want) {
+		t.Fatalf("docker args = %v, want exact coverage args %v", got, want)
+	}
+
+	for _, path := range []string{runtimeRoot, filepath.Join(runtimeRoot, "go"), filepath.Join(runtimeRoot, "python")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%q): %v", path, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("coverage path %q is not a directory", path)
+		}
+		if got, want := info.Mode().Perm(), os.FileMode(0o700); got != want {
+			t.Fatalf("coverage path %q mode = %o, want %o", path, got, want)
+		}
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageUsesFallbackRunIDAndLabelPrefix(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "custom-runtime-output")
+	cfg := coverageCfg(outputDir)
+	cfg.Docker.LabelPrefix = "example.runtime"
+	runner := &fakeRunner{output: []byte("coverage_container_id\n")}
+	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
+
+	if _, err := prov.Provision(context.Background(), defaultPlan()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	args := runner.calls[0].args
+	assertHasLabel(t, args, "example.runtime.coverage=true")
+	assertHasLabel(t, args, "example.runtime.coverage_run_id=custom-runtime-output")
+	for i, arg := range args {
+		if arg == "--label" && i+1 < len(args) && strings.Contains(args[i+1], outputDir) {
+			t.Fatalf("coverage label exposes host output path: %q", args[i+1])
+		}
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageRejectsInvalidRuntimeIDBeforeDocker(t *testing.T) {
+	absoluteID := filepath.Join(t.TempDir(), "escape")
+	for _, runtimeID := range []string{".", "..", "../x", "nested/x", `nested\x`, absoluteID} {
+		t.Run(strings.ReplaceAll(runtimeID, string(os.PathSeparator), "_"), func(t *testing.T) {
+			runner := &fakeRunner{output: []byte("must_not_run\n")}
+			prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+			plan := defaultPlan()
+			plan.RuntimeID = runtimeID
+
+			if _, err := prov.Provision(context.Background(), plan); !errors.Is(err, ErrProvisionFailed) {
+				t.Fatalf("Provision runtime ID %q error = %v, want ErrProvisionFailed", runtimeID, err)
+			}
+			if len(runner.calls) != 0 {
+				t.Fatalf("docker called for invalid runtime ID %q: %+v", runtimeID, runner.calls)
+			}
+		})
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageRejectsInvalidDerivedRunIDBeforeDocker(t *testing.T) {
+	runner := &fakeRunner{output: []byte("must_not_run\n")}
+	prov := NewDockerProvisioner(runner, coverageCfg(string(os.PathSeparator)), "127.0.0.1:50055")
+
+	if _, err := prov.Provision(context.Background(), defaultPlan()); !errors.Is(err, ErrProvisionFailed) {
+		t.Fatalf("Provision error = %v, want ErrProvisionFailed for invalid coverage run ID", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("docker called for invalid coverage run ID: %+v", runner.calls)
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageRejectsSymlinkEscapeBeforeDocker(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		linkRel string
+	}{
+		{name: "runtimes directory", linkRel: "runtimes"},
+		{name: "runtime directory", linkRel: filepath.Join("runtimes", "rt-123")},
+		{name: "language directory", linkRel: filepath.Join("runtimes", "rt-123", "go")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			outputDir := filepath.Join(base, "output")
+			outside := filepath.Join(base, "outside")
+			linkPath := filepath.Join(outputDir, tc.linkRel)
+			if err := os.MkdirAll(filepath.Dir(linkPath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(outside, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, linkPath); err != nil {
+				t.Skipf("create symlink: %v", err)
+			}
+
+			assertCoverageProvisionFailsBeforeDocker(t, outputDir, "rt-123")
+		})
+	}
+}
+
+func assertCoverageProvisionFailsBeforeDocker(t *testing.T, outputDir, runtimeID string) {
+	t.Helper()
+	runner := &fakeRunner{output: []byte("must_not_run\n")}
+	prov := NewDockerProvisioner(runner, coverageCfg(outputDir), "127.0.0.1:50055")
+	plan := defaultPlan()
+	plan.RuntimeID = runtimeID
+
+	if _, err := prov.Provision(context.Background(), plan); !errors.Is(err, ErrProvisionFailed) {
+		t.Fatalf("Provision error = %v, want ErrProvisionFailed", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("docker called for escaping coverage path: %+v", runner.calls)
+	}
 }
 
 func TestDockerProvisioner_Provision_InjectsHostedRuntimeCredentialJSON(t *testing.T) {
@@ -340,6 +527,43 @@ func TestDockerProvisioner_Provision_DockerRunFailureRemovesPartialContainer(t *
 	}
 }
 
+func TestDockerProvisioner_Provision_CoverageDockerRunFailureRemovesPartialContainerWhenStopFails(t *testing.T) {
+	partialID := "78ba67562094c58ad9cbc4bc9956030d01f9389dea1ea017487edffa6f81b12d"
+	stopErr := errors.New("container is not running")
+	runner := &fakeRunner{
+		multiOut: [][]byte{
+			[]byte(partialID + "\ndocker: Error response from daemon: failed to set up container networking"),
+			[]byte(""),
+			[]byte(""),
+		},
+		multiErr: []error{
+			errors.New("exit status 125"),
+			stopErr,
+			nil,
+		},
+	}
+	prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+
+	_, err := prov.Provision(context.Background(), defaultPlan())
+	if !errors.Is(err, ErrProvisionFailed) {
+		t.Fatalf("err = %v, want ErrProvisionFailed", err)
+	}
+	if strings.Contains(err.Error(), "cleanup partial container") {
+		t.Fatalf("successful forced removal reported as cleanup failure: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls = %d, want docker run + docker stop + docker rm", len(runner.calls))
+	}
+	wantStop := []string{"stop", "--time", "10", partialID}
+	if !equalStringSlice(runner.calls[1].args, wantStop) {
+		t.Fatalf("stop args = %v, want %v", runner.calls[1].args, wantStop)
+	}
+	wantRemove := []string{"rm", "-f", partialID}
+	if !equalStringSlice(runner.calls[2].args, wantRemove) {
+		t.Fatalf("remove args = %v, want %v", runner.calls[2].args, wantRemove)
+	}
+}
+
 func TestDockerProvisioner_Deprovision_CallsDockerRm(t *testing.T) {
 	runner := &fakeRunner{output: []byte("")}
 	prov := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
@@ -356,6 +580,51 @@ func TestDockerProvisioner_Deprovision_CallsDockerRm(t *testing.T) {
 	want := []string{"rm", "-f", "container_xyz"}
 	if !equalStringSlice(call.args, want) {
 		t.Errorf("args = %v, want %v", call.args, want)
+	}
+}
+
+func TestDockerProvisioner_Deprovision_CoverageStopsThenAlwaysRemoves(t *testing.T) {
+	stopErr := errors.New("stop failed")
+	removeErr := errors.New("remove failed")
+	for _, tc := range []struct {
+		name       string
+		stopErr    error
+		removeErr  error
+		wantErrors []error
+	}{
+		{name: "success"},
+		{name: "stop failure is cleared by removal", stopErr: stopErr},
+		{name: "remove failure", removeErr: removeErr, wantErrors: []error{removeErr}},
+		{name: "stop and remove failure", stopErr: stopErr, removeErr: removeErr, wantErrors: []error{stopErr, removeErr}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeRunner{
+				multiOut: [][]byte{[]byte(""), []byte("")},
+				multiErr: []error{tc.stopErr, tc.removeErr},
+			}
+			prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+
+			err := prov.Deprovision(context.Background(), "container_xyz")
+			if len(tc.wantErrors) == 0 && err != nil {
+				t.Fatalf("Deprovision error = %v, want nil", err)
+			}
+			for _, wantErr := range tc.wantErrors {
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("Deprovision error = %v, want %v", err, wantErr)
+				}
+			}
+			if len(runner.calls) != 2 {
+				t.Fatalf("calls = %d, want stop + rm", len(runner.calls))
+			}
+			wantStop := []string{"stop", "--time", "10", "container_xyz"}
+			if !equalStringSlice(runner.calls[0].args, wantStop) {
+				t.Fatalf("stop args = %v, want %v", runner.calls[0].args, wantStop)
+			}
+			wantRemove := []string{"rm", "-f", "container_xyz"}
+			if !equalStringSlice(runner.calls[1].args, wantRemove) {
+				t.Fatalf("remove args = %v, want %v", runner.calls[1].args, wantRemove)
+			}
+		})
 	}
 }
 
@@ -469,4 +738,15 @@ func equalStringSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func coverageCfg(outputDir string) config.ProvisioningConfig {
+	cfg := defaultCfg()
+	cfg.Docker.Coverage = config.DockerCoverageConfig{
+		Enabled:            true,
+		Image:              "hushine/strategy-runtime:test-cover",
+		OutputDir:          outputDir,
+		StopTimeoutSeconds: 10,
+	}
+	return cfg
 }

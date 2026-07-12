@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,6 +66,11 @@ type DockerProvisioner struct {
 	runtimeChannelGRPC string
 }
 
+type dockerCoverageRun struct {
+	hostRoot string
+	runID    string
+}
+
 // NewDockerProvisioner constructs a DockerProvisioner. Pass
 // ExecCommandRunner{} in production; tests inject a stub.
 func NewDockerProvisioner(runner CommandRunner, cfg config.ProvisioningConfig, runtimeChannelGRPC string) *DockerProvisioner {
@@ -92,12 +99,25 @@ func (d *DockerProvisioner) Provision(ctx context.Context, p Plan) (string, erro
 		return "", fmt.Errorf("%w: incomplete Plan (runtime_id / user_id / name required)", ErrProvisionFailed)
 	}
 
-	args := d.buildRunArgs(p)
+	var coverageRun *dockerCoverageRun
+	if d.cfg.Docker.Coverage.Enabled {
+		prepared, err := prepareDockerCoverageRun(d.cfg.Docker.Coverage.OutputDir, p.RuntimeID)
+		if err != nil {
+			return "", fmt.Errorf("%w: prepare coverage output: %v", ErrProvisionFailed, err)
+		}
+		coverageRun = &prepared
+	}
+
+	args := d.buildRunArgs(p, coverageRun)
 	out, err := d.runner.Run(ctx, "docker", args...)
 	if err != nil {
 		output := strings.TrimSpace(string(out))
 		if partialHandle := partialContainerHandleFromDockerRunOutput(output); partialHandle != "" {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			cleanupTimeout := 10 * time.Second
+			if d.cfg.Docker.Coverage.Enabled {
+				cleanupTimeout += time.Duration(d.cfg.Docker.Coverage.StopTimeoutSeconds) * time.Second
+			}
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 			cleanupErr := d.Deprovision(cleanupCtx, partialHandle)
 			cancel()
 			if cleanupErr != nil {
@@ -113,12 +133,22 @@ func (d *DockerProvisioner) Provision(ctx context.Context, p Plan) (string, erro
 	return containerID, nil
 }
 
-// Deprovision removes the container via `docker rm -f`. Best-effort:
-// the service layer ignores the error so a stale half-started container
-// surfaces only as a log line.
+// Deprovision removes the container. Coverage containers receive a bounded
+// graceful stop first so instrumented processes can flush mounted output;
+// forced removal is still attempted even when stopping fails.
 func (d *DockerProvisioner) Deprovision(ctx context.Context, handle string) error {
 	if handle == "" {
 		return errors.New("deprovision: empty handle")
+	}
+	if d.cfg.Docker.Coverage.Enabled {
+		_, stopErr := d.runner.Run(ctx, "docker", "stop", "--time", strconv.Itoa(d.cfg.Docker.Coverage.StopTimeoutSeconds), handle)
+		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_, removeErr := d.runner.Run(removeCtx, "docker", "rm", "-f", handle)
+		if removeErr != nil {
+			return errors.Join(stopErr, removeErr)
+		}
+		return nil
 	}
 	_, err := d.runner.Run(ctx, "docker", "rm", "-f", handle)
 	return err
@@ -160,10 +190,9 @@ func (d *DockerProvisioner) Diagnostics(ctx context.Context, handle string) (str
 	return out, nil
 }
 
-// buildRunArgs assembles the `docker run` argument list. Exposed for
-// unit tests so they can assert on the exact command shape without
-// running real docker.
-func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
+// buildRunArgs assembles the `docker run` argument list. The optional coverage
+// run contains only paths and labels prepared by the provisioner.
+func (d *DockerProvisioner) buildRunArgs(p Plan, coverageRun *dockerCoverageRun) []string {
 	dc := d.cfg.Docker
 	labelPrefix := dc.LabelPrefix
 	if labelPrefix == "" {
@@ -184,6 +213,12 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		"--label", fmt.Sprintf("%s.user_id=%d", labelPrefix, p.UserID),
 		"--label", fmt.Sprintf("%s.name=%s", labelPrefix, p.Name),
 		"--label", fmt.Sprintf("%s.resource_profile=%s", labelPrefix, p.ResourceProfileName),
+	}
+	if coverageRun != nil {
+		args = append(args,
+			"--label", fmt.Sprintf("%s.coverage=true", labelPrefix),
+			"--label", fmt.Sprintf("%s.coverage_run_id=%s", labelPrefix, coverageRun.runID),
+		)
 	}
 
 	// Resource limits. Skip empty/zero so docker uses its default.
@@ -207,6 +242,9 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 			args = append(args, "--add-host", "host.docker.internal:host-gateway")
 		}
 	}
+	if coverageRun != nil {
+		args = append(args, "--mount", "type=bind,src="+coverageRun.hostRoot+",dst=/coverage")
+	}
 
 	// Per-runtime env vars consumed by the Go runtime-agent.
 	// Hosted containers use RuntimeChannel only. The runtime_id is
@@ -220,6 +258,12 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		"-e", fmt.Sprintf("RUNTIME_RESOURCE_PROFILE=%s", p.ResourceProfileName),
 		"-e", fmt.Sprintf("RUNTIME_CHANNEL_GRPC_ADDR=%s", d.runtimeChannelGRPC),
 	)
+	if coverageRun != nil {
+		args = append(args,
+			"-e", "GOCOVERDIR=/coverage/go",
+			"-e", "HUSHINE_RUNTIME_COVERAGE_DIR=/coverage",
+		)
+	}
 	if p.RuntimeCredentialKeyID != "" && p.RuntimeCredentialPrivateKeyPEM != "" {
 		credentialJSON, _ := json.Marshal(map[string]any{
 			"version":         1,
@@ -243,8 +287,106 @@ func (d *DockerProvisioner) buildRunArgs(p Plan) []string {
 		}
 	}
 
-	args = append(args, d.cfg.Image)
+	image := d.cfg.Image
+	if coverageRun != nil {
+		image = d.cfg.Docker.Coverage.Image
+	}
+	args = append(args, image)
 	return args
+}
+
+func prepareDockerCoverageRun(outputDir, runtimeID string) (dockerCoverageRun, error) {
+	if !isSafePathComponent(runtimeID) {
+		return dockerCoverageRun{}, fmt.Errorf("runtime_id %q must be one safe path component", runtimeID)
+	}
+
+	root := filepath.Clean(outputDir)
+	runID, err := dockerCoverageRunID(root)
+	if err != nil {
+		return dockerCoverageRun{}, err
+	}
+	runtimeRoot := filepath.Join(root, "runtimes", runtimeID)
+	if err := requirePathWithin(root, runtimeRoot); err != nil {
+		return dockerCoverageRun{}, fmt.Errorf("runtime coverage path: %w", err)
+	}
+
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return dockerCoverageRun{}, fmt.Errorf("create coverage root: %w", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return dockerCoverageRun{}, fmt.Errorf("resolve coverage root: %w", err)
+	}
+	for _, path := range []string{
+		filepath.Join(root, "runtimes"),
+		runtimeRoot,
+		filepath.Join(runtimeRoot, "go"),
+		filepath.Join(runtimeRoot, "python"),
+	} {
+		if err := makeCoverageDirectory(path); err != nil {
+			return dockerCoverageRun{}, err
+		}
+		resolvedPath, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return dockerCoverageRun{}, fmt.Errorf("resolve coverage directory %q: %w", path, err)
+		}
+		if err := requirePathWithin(resolvedRoot, resolvedPath); err != nil {
+			return dockerCoverageRun{}, fmt.Errorf("coverage directory %q: %w", path, err)
+		}
+	}
+
+	return dockerCoverageRun{hostRoot: runtimeRoot, runID: runID}, nil
+}
+
+func dockerCoverageRunID(outputDir string) (string, error) {
+	cleaned := filepath.Clean(outputDir)
+	runID := filepath.Base(cleaned)
+	if runID == "runtime-agent" && filepath.Base(filepath.Dir(cleaned)) == "coverage" {
+		runID = filepath.Base(filepath.Dir(filepath.Dir(cleaned)))
+	}
+	if !isSafePathComponent(runID) {
+		return "", fmt.Errorf("cannot derive a safe coverage run id from output directory")
+	}
+	return runID, nil
+}
+
+func isSafePathComponent(value string) bool {
+	return value != "" &&
+		value != "." &&
+		value != ".." &&
+		!filepath.IsAbs(value) &&
+		filepath.Clean(value) == value &&
+		filepath.Base(value) == value &&
+		!strings.ContainsAny(value, `/\\`)
+}
+
+func makeCoverageDirectory(path string) error {
+	err := os.Mkdir(path, 0o700)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("create coverage directory %q: %w", path, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect coverage directory %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("coverage directory %q must not be a symlink", path)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("coverage path %q is not a directory", path)
+	}
+	return nil
+}
+
+func requirePathWithin(root, path string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return fmt.Errorf("compare with root: %w", err)
+	}
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes configured coverage root")
+	}
+	return nil
 }
 
 func needsDockerHostGateway(addr string) bool {
