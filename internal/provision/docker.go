@@ -313,6 +313,9 @@ func prepareDockerCoverageRun(outputDir, runtimeID string) (dockerCoverageRun, e
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return dockerCoverageRun{}, fmt.Errorf("create coverage root: %w", err)
 	}
+	if err := makeCoverageDirectory(root); err != nil {
+		return dockerCoverageRun{}, err
+	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return dockerCoverageRun{}, fmt.Errorf("resolve coverage root: %w", err)
@@ -335,7 +338,18 @@ func prepareDockerCoverageRun(outputDir, runtimeID string) (dockerCoverageRun, e
 		}
 	}
 
-	return dockerCoverageRun{hostRoot: runtimeRoot, runID: runID}, nil
+	resolvedRuntimeRoot, err := filepath.EvalSymlinks(runtimeRoot)
+	if err != nil {
+		return dockerCoverageRun{}, fmt.Errorf("resolve runtime coverage directory: %w", err)
+	}
+	if err := requirePathWithin(resolvedRoot, resolvedRuntimeRoot); err != nil {
+		return dockerCoverageRun{}, fmt.Errorf("runtime coverage directory: %w", err)
+	}
+	// Every managed parent is mode 0700 before this canonical path is returned,
+	// preventing untrusted users from replacing descendants. Returning the
+	// resolved path also makes a lexical ancestor symlink unable to retarget the
+	// later Docker bind mount.
+	return dockerCoverageRun{hostRoot: resolvedRuntimeRoot, runID: runID}, nil
 }
 
 func dockerCoverageRunID(outputDir string) (string, error) {
@@ -374,6 +388,9 @@ func makeCoverageDirectory(path string) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("coverage path %q is not a directory", path)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return fmt.Errorf("secure coverage directory %q: %w", path, err)
 	}
 	return nil
 }

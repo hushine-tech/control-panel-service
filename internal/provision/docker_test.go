@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hushine-tech/control-panel-service/internal/config"
 )
@@ -20,16 +21,30 @@ type fakeRunner struct {
 	err      error
 	multiOut [][]byte // indexed per call when more than one is expected
 	multiErr []error
+	onRun    func(callIndex int)
 }
 
 type fakeRunnerCall struct {
-	name string
-	args []string
+	name        string
+	args        []string
+	contextErr  error
+	deadline    time.Time
+	hasDeadline bool
 }
 
-func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	idx := len(f.calls)
-	f.calls = append(f.calls, fakeRunnerCall{name: name, args: append([]string(nil), args...)})
+	deadline, hasDeadline := ctx.Deadline()
+	f.calls = append(f.calls, fakeRunnerCall{
+		name:        name,
+		args:        append([]string(nil), args...),
+		contextErr:  ctx.Err(),
+		deadline:    deadline,
+		hasDeadline: hasDeadline,
+	})
+	if f.onRun != nil {
+		f.onRun(idx)
+	}
 	if idx < len(f.multiOut) {
 		var err error
 		if idx < len(f.multiErr) {
@@ -184,6 +199,10 @@ func TestDockerProvisioner_Provision_CoverageBuildsExactRunArgsAndDirectories(t 
 	}
 
 	runtimeRoot := filepath.Join(outputDir, "runtimes", "rt-123")
+	canonicalRuntimeRoot, err := filepath.EvalSymlinks(runtimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		"run",
 		"-d",
@@ -198,7 +217,7 @@ func TestDockerProvisioner_Provision_CoverageBuildsExactRunArgsAndDirectories(t 
 		"--memory", "512m",
 		"--pids-limit", "256",
 		"--network", "host",
-		"--mount", "type=bind,src=" + runtimeRoot + ",dst=/coverage",
+		"--mount", "type=bind,src=" + canonicalRuntimeRoot + ",dst=/coverage",
 		"-e", "RUNTIME_SOURCE=hosted",
 		"-e", "RUNTIME_RUNTIME_ID=rt-123",
 		"-e", "RUNTIME_NAME=hosted-steady-river",
@@ -224,6 +243,68 @@ func TestDockerProvisioner_Provision_CoverageBuildsExactRunArgsAndDirectories(t 
 			t.Fatalf("coverage path %q mode = %o, want %o", path, got, want)
 		}
 	}
+}
+
+func TestDockerProvisioner_Provision_CoverageTightensExistingDirectoryModes(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "existing-output")
+	runtimeRoot := filepath.Join(outputDir, "runtimes", "rt-existing")
+	paths := []string{
+		outputDir,
+		filepath.Join(outputDir, "runtimes"),
+		runtimeRoot,
+		filepath.Join(runtimeRoot, "go"),
+		filepath.Join(runtimeRoot, "python"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runner := &fakeRunner{output: []byte("coverage_container_id\n")}
+	prov := NewDockerProvisioner(runner, coverageCfg(outputDir), "127.0.0.1:50055")
+	plan := defaultPlan()
+	plan.RuntimeID = "rt-existing"
+	if _, err := prov.Provision(context.Background(), plan); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := info.Mode().Perm(), os.FileMode(0o700); got != want {
+			t.Fatalf("managed coverage directory %q mode = %o, want %o", path, got, want)
+		}
+	}
+}
+
+func TestDockerProvisioner_Provision_CoverageMountsCanonicalRuntimeRoot(t *testing.T) {
+	base := t.TempDir()
+	resolvedParent := filepath.Join(base, "resolved")
+	if err := os.Mkdir(resolvedParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	aliasParent := filepath.Join(base, "alias")
+	if err := os.Symlink(resolvedParent, aliasParent); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	outputDir := filepath.Join(aliasParent, "runtime-output")
+	runner := &fakeRunner{output: []byte("coverage_container_id\n")}
+	prov := NewDockerProvisioner(runner, coverageCfg(outputDir), "127.0.0.1:50055")
+
+	if _, err := prov.Provision(context.Background(), defaultPlan()); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	wantRoot, err := filepath.EvalSymlinks(filepath.Join(resolvedParent, "runtime-output", "runtimes", defaultPlan().RuntimeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFlagValue(t, runner.calls[0].args, "--mount", "type=bind,src="+wantRoot+",dst=/coverage")
 }
 
 func TestDockerProvisioner_Provision_CoverageUsesFallbackRunIDAndLabelPrefix(t *testing.T) {
@@ -282,9 +363,11 @@ func TestDockerProvisioner_Provision_CoverageRejectsSymlinkEscapeBeforeDocker(t 
 		name    string
 		linkRel string
 	}{
+		{name: "output root", linkRel: "."},
 		{name: "runtimes directory", linkRel: "runtimes"},
 		{name: "runtime directory", linkRel: filepath.Join("runtimes", "rt-123")},
-		{name: "language directory", linkRel: filepath.Join("runtimes", "rt-123", "go")},
+		{name: "go directory", linkRel: filepath.Join("runtimes", "rt-123", "go")},
+		{name: "python directory", linkRel: filepath.Join("runtimes", "rt-123", "python")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base := t.TempDir()
@@ -625,6 +708,39 @@ func TestDockerProvisioner_Deprovision_CoverageStopsThenAlwaysRemoves(t *testing
 				t.Fatalf("remove args = %v, want %v", runner.calls[1].args, wantRemove)
 			}
 		})
+	}
+}
+
+func TestDockerProvisioner_Deprovision_CoverageRemovalGetsFreshBoundedContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner := &fakeRunner{
+		multiOut: [][]byte{[]byte(""), []byte("")},
+		multiErr: []error{context.Canceled, nil},
+		onRun: func(callIndex int) {
+			if callIndex == 0 {
+				cancel()
+			}
+		},
+	}
+	prov := NewDockerProvisioner(runner, coverageCfg(t.TempDir()), "127.0.0.1:50055")
+	startedAt := time.Now()
+
+	if err := prov.Deprovision(ctx, "container_xyz"); err != nil {
+		t.Fatalf("Deprovision: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls = %d, want stop + rm", len(runner.calls))
+	}
+	removeCall := runner.calls[1]
+	if removeCall.contextErr != nil {
+		t.Fatalf("remove context was already canceled: %v", removeCall.contextErr)
+	}
+	if !removeCall.hasDeadline {
+		t.Fatal("remove context has no deadline")
+	}
+	if timeout := removeCall.deadline.Sub(startedAt); timeout <= 0 || timeout > 11*time.Second {
+		t.Fatalf("remove context timeout = %v, want a fresh bound near 10s", timeout)
 	}
 }
 
