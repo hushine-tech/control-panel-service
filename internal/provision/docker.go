@@ -72,6 +72,8 @@ type dockerCoverageRun struct {
 	runID    string
 }
 
+const hostedRuntimePlatformLabelPrefix = "hushine.runtime"
+
 // NewDockerProvisioner constructs a DockerProvisioner. Pass
 // ExecCommandRunner{} in production; tests inject a stub.
 func NewDockerProvisioner(runner CommandRunner, cfg config.ProvisioningConfig, runtimeChannelGRPC string) *DockerProvisioner {
@@ -138,17 +140,13 @@ func (d *DockerProvisioner) Deprovision(ctx context.Context, handle string) erro
 	if handle == "" {
 		return errors.New("deprovision: empty handle")
 	}
-	labelPrefix := strings.TrimSpace(d.cfg.Docker.LabelPrefix)
-	if labelPrefix == "" {
-		labelPrefix = "hushine.runtime"
-	}
 	inspectCtx, cancelInspect := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	inspectOut, inspectErr := d.runner.Run(
 		inspectCtx,
 		"docker",
 		"inspect",
 		"--format",
-		fmt.Sprintf(`{{index .Config.Labels %q}}`, labelPrefix+".coverage"),
+		fmt.Sprintf(`{{index .Config.Labels %q}}`, hostedRuntimePlatformLabelPrefix+".coverage"),
 		handle,
 	)
 	cancelInspect()
@@ -228,7 +226,7 @@ func (d *DockerProvisioner) buildRunArgs(p Plan, coverageRun *dockerCoverageRun)
 	dc := d.cfg.Docker
 	labelPrefix := dc.LabelPrefix
 	if labelPrefix == "" {
-		labelPrefix = "hushine.runtime"
+		labelPrefix = hostedRuntimePlatformLabelPrefix
 	}
 	networkMode := dc.NetworkMode
 	if networkMode == "" {
@@ -247,9 +245,15 @@ func (d *DockerProvisioner) buildRunArgs(p Plan, coverageRun *dockerCoverageRun)
 		"--label", fmt.Sprintf("%s.resource_profile=%s", labelPrefix, p.ResourceProfileName),
 	}
 	if coverageRun != nil {
+		if labelPrefix != hostedRuntimePlatformLabelPrefix {
+			args = append(args,
+				"--label", fmt.Sprintf("%s.runtime_id=%s", hostedRuntimePlatformLabelPrefix, p.RuntimeID),
+				"--label", fmt.Sprintf("%s.user_id=%d", hostedRuntimePlatformLabelPrefix, p.UserID),
+			)
+		}
 		args = append(args,
-			"--label", fmt.Sprintf("%s.coverage=true", labelPrefix),
-			"--label", fmt.Sprintf("%s.coverage_run_id=%s", labelPrefix, coverageRun.runID),
+			"--label", hostedRuntimePlatformLabelPrefix+".coverage=true",
+			"--label", fmt.Sprintf("%s.coverage_run_id=%s", hostedRuntimePlatformLabelPrefix, coverageRun.runID),
 		)
 	}
 

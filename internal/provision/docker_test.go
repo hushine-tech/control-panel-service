@@ -307,7 +307,7 @@ func TestDockerProvisioner_Provision_CoverageMountsCanonicalRuntimeRoot(t *testi
 	assertFlagValue(t, runner.calls[0].args, "--mount", "type=bind,src="+wantRoot+",dst=/coverage")
 }
 
-func TestDockerProvisioner_Provision_CoverageUsesFallbackRunIDAndLabelPrefix(t *testing.T) {
+func TestDockerProvisioner_Provision_CoverageUsesFallbackRunIDAndStableCensusLabels(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "custom-runtime-output")
 	cfg := coverageCfg(outputDir)
 	cfg.Docker.LabelPrefix = "example.runtime"
@@ -318,8 +318,18 @@ func TestDockerProvisioner_Provision_CoverageUsesFallbackRunIDAndLabelPrefix(t *
 		t.Fatalf("Provision: %v", err)
 	}
 	args := runner.calls[0].args
-	assertHasLabel(t, args, "example.runtime.coverage=true")
-	assertHasLabel(t, args, "example.runtime.coverage_run_id=custom-runtime-output")
+	// Generic trace labels remain operator-configurable.
+	assertHasLabel(t, args, "example.runtime.runtime_id=rt_abc123")
+	assertHasLabel(t, args, "example.runtime.user_id=42")
+	assertHasLabel(t, args, "example.runtime.name=hosted-steady-river")
+	assertHasLabel(t, args, "example.runtime.resource_profile=small")
+	// Coverage identity is a platform contract consumed by Census and cleanup,
+	// so these labels remain stable even when generic trace labels use a custom
+	// prefix.
+	assertHasLabel(t, args, "hushine.runtime.runtime_id=rt_abc123")
+	assertHasLabel(t, args, "hushine.runtime.user_id=42")
+	assertHasLabel(t, args, "hushine.runtime.coverage=true")
+	assertHasLabel(t, args, "hushine.runtime.coverage_run_id=custom-runtime-output")
 	for i, arg := range args {
 		if arg == "--label" && i+1 < len(args) && strings.Contains(args[i+1], outputDir) {
 			t.Fatalf("coverage label exposes host output path: %q", args[i+1])
@@ -750,6 +760,28 @@ func TestDockerProvisioner_Deprovision_UsesContainerCoverageFactAcrossConfigChan
 		}
 		if len(runner.calls) != 2 || runner.calls[0].args[0] != "inspect" || runner.calls[1].args[0] != "rm" {
 			t.Fatalf("calls = %+v, want inspect then rm", runner.calls)
+		}
+	})
+
+	t.Run("custom trace prefix still inspects the stable coverage label", func(t *testing.T) {
+		cfg := defaultCfg()
+		cfg.Docker.LabelPrefix = "current.runtime"
+		runner := &fakeRunner{multiOut: [][]byte{[]byte("true\n"), nil, nil}}
+		prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
+		if err := prov.Deprovision(context.Background(), "container_xyz"); err != nil {
+			t.Fatalf("Deprovision: %v", err)
+		}
+		wantInspect := []string{
+			"inspect",
+			"--format",
+			`{{index .Config.Labels "hushine.runtime.coverage"}}`,
+			"container_xyz",
+		}
+		if got := runner.calls[0].args; !equalStringSlice(got, wantInspect) {
+			t.Fatalf("inspect args = %v, want stable coverage label lookup %v", got, wantInspect)
+		}
+		if len(runner.calls) != 3 || runner.calls[1].args[0] != "stop" || runner.calls[2].args[0] != "rm" {
+			t.Fatalf("calls = %+v, want inspect, stop, rm", runner.calls)
 		}
 	})
 }
