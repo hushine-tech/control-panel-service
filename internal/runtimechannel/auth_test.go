@@ -16,6 +16,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -463,10 +464,7 @@ func TestRuntimeChannelRegistersHostedInternalCredentialAsHostedRuntime(t *testi
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for repo.createdRuntime == nil && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	_ = waitForHelloAck(t, stream)
 	stream.cancel()
 	_ = <-done
 
@@ -826,10 +824,7 @@ func TestRuntimeChannelRecordsAndClearsConnectionOwner(t *testing.T) {
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for repo.ownerInstance == "" && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	_ = waitForHelloAck(t, stream)
 	if repo.ownerInstance != "cp-test-a" {
 		t.Fatalf("owner = %q, want cp-test-a", repo.ownerInstance)
 	}
@@ -1245,8 +1240,11 @@ func TestMetricsSnapshotIncludesStreamHealthFields(t *testing.T) {
 func TestRuntimeChannelHeartbeatKeepsIdleStreamAlive(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := New(repo)
-	clock := now
-	svc.SetClock(func() time.Time { return clock })
+	var clockUnixNano atomic.Int64
+	clockUnixNano.Store(now.UnixNano())
+	svc.SetClock(func() time.Time {
+		return time.Unix(0, clockUnixNano.Load()).UTC()
+	})
 	svc.streamIdleTimeout = 40 * time.Millisecond
 	svc.streamCheckInterval = 5 * time.Millisecond
 
@@ -1259,11 +1257,12 @@ func TestRuntimeChannelHeartbeatKeepsIdleStreamAlive(t *testing.T) {
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 	time.Sleep(15 * time.Millisecond)
-	clock = now.Add(30 * time.Millisecond)
+	advanced := now.Add(30 * time.Millisecond)
+	clockUnixNano.Store(advanced.UnixNano())
 	stream.recv <- &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_HEARTBEAT,
 		Payload: &cpv1.RuntimeFrame_Heartbeat{Heartbeat: &cpv1.Heartbeat{
-			SentAtUnixMs: clock.UnixMilli(),
+			SentAtUnixMs: advanced.UnixMilli(),
 			Fingerprint:  waitForHelloAck(t, stream).GetHelloAck().GetFingerprint(),
 		}},
 	}
@@ -1475,8 +1474,11 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 func TestRuntimeChannelNoFrameTimeoutDeclaresStreamDead(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := New(repo)
-	clock := now
-	svc.SetClock(func() time.Time { return clock })
+	var clockUnixNano atomic.Int64
+	clockUnixNano.Store(now.UnixNano())
+	svc.SetClock(func() time.Time {
+		return time.Unix(0, clockUnixNano.Load()).UTC()
+	})
 	svc.streamIdleTimeout = 15 * time.Millisecond
 	svc.streamCheckInterval = 5 * time.Millisecond
 
@@ -1488,7 +1490,7 @@ func TestRuntimeChannelNoFrameTimeoutDeclaresStreamDead(t *testing.T) {
 		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
 	}
 	time.Sleep(20 * time.Millisecond)
-	clock = now.Add(30 * time.Millisecond)
+	clockUnixNano.Store(now.Add(30 * time.Millisecond).UnixNano())
 
 	err := <-done
 	if status.Code(err) != codes.Unavailable {
