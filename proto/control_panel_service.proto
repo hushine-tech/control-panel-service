@@ -110,6 +110,11 @@ service ControlPanelService {
   // REQUEST frames and the runtime responds on the same correlation_id.
   rpc RuntimeChannel(stream RuntimeFrame) returns (stream RuntimeFrame);
 
+  // ReportRuntimeStartupFailure authenticates a failure-only self-hosted
+  // startup report. It records admission diagnostics but never registers,
+  // leases, rotates, or makes a Runtime routable.
+  rpc ReportRuntimeStartupFailure(ReportRuntimeStartupFailureRequest) returns (ReportRuntimeStartupFailureResponse);
+
   // PrepareDebugWorkspace asks a connected self-hosted debugger runtime to
   // prepare its mounted /workspace. The control-plane never writes to the
   // user's local filesystem directly.
@@ -132,6 +137,9 @@ service ControlPanelService {
 
   rpc RunStrategy(strategy.v1.RunStrategyRequest) returns (strategy.v1.RunStrategyResponse);
   rpc PreviewRunStrategy(strategy.v1.PreviewRunStrategyRequest) returns (strategy.v1.PreviewRunStrategyResponse);
+  // ValidateStrategySource proxies dependency validation without creating a
+  // strategy session or mutating runtime state.
+  rpc ValidateStrategySource(strategy.v1.ValidateStrategySourceRequest) returns (strategy.v1.ValidateStrategySourceResponse);
   rpc StopStrategy(strategy.v1.StopStrategyRequest) returns (strategy.v1.StopStrategyResponse);
   rpc GetStrategyStatus(strategy.v1.GetStrategyStatusRequest) returns (strategy.v1.GetStrategyStatusResponse);
 }
@@ -574,6 +582,22 @@ message RuntimeHello {
   string source = 13;
   // Required only when source=bare.
   int64 user_id = 14;
+  strategy.v1.RuntimeDependencyProfile dependency_profile = 15;
+}
+
+message ReportRuntimeStartupFailureRequest {
+  string key_id = 1;
+  string runtime_id = 2;
+  string source = 3;
+  int64 issued_at_unix_ms = 4;
+  string nonce = 5;
+  strategy.v1.RuntimeDependencyError dependency_error = 6;
+  strategy.v1.RuntimeDependencyProfile actual_profile = 7;
+  string signature = 8;
+}
+
+message ReportRuntimeStartupFailureResponse {
+  bool recorded = 1;
 }
 
 message RuntimeHelloAck {
@@ -588,6 +612,7 @@ message RuntimeResume {
   string runtime_id = 1;
   string resume_token = 2;
   string fingerprint = 3;
+  strategy.v1.RuntimeDependencyProfile dependency_profile = 4;
 }
 
 message StrategyRequest {
@@ -626,6 +651,7 @@ message RuntimeHeartbeatAck {
 message StreamError {
   string code = 1;
   string message = 2;
+  strategy.v1.RuntimeDependencyError dependency_error = 3;
 }
 
 message RuntimeCommandFrame {
