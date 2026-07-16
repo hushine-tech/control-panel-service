@@ -3,8 +3,9 @@
 Runtime and market-data control plane. It owns runtime registry, route
 resolution, hosted runtime provisioning, self-hosted RuntimeChannel streams,
 runtime credentials, per-user plan/quota, and the D2 market-data control
-plane. The active unification work lives at
-`openspec/changes/unify-runtime-control-plane-and-debugger-isolation/`.
+plane. Current behavior is defined by this repository, the shared protobuf
+contracts, and the project architecture/runtime documentation; archived design
+changes are historical context only.
 
 ## Run
 
@@ -34,6 +35,7 @@ make proto            # regenerate gen/controlpanelv1 from proto/
 | `EnsureHostedRuntime` | lazy-create hosted RuntimeChannel runtime if missing; idempotent reuse | hosted path |
 | `RuntimeChannel` | hosted/self-hosted/bare-debug runtime outbound bidi stream | dedicated listener |
 | `RunStrategy` / `PreviewRunStrategy` / `StopStrategy` / `GetStrategyStatus` | proxy strategy RPCs over `RuntimeChannel` | all runtime sources |
+| `ValidateStrategySource` | side-effect-free source validation routed by explicit `runtime_id` | existing active runtime only |
 | `IssueRuntimeCredential` / `ListRuntimeCredentials` / `RevokeRuntimeCredential` | runtime credential lifecycle: HELLO signing key + optional mTLS client certificate metadata | self-hosted path |
 
 ## Runtime Traffic Paths
@@ -55,6 +57,49 @@ Backtest market data also uses this route now. RuntimeChannel runtimes call
 market-data tables and returns pages of at most `8192` bars. Large backtests are
 therefore streamed page by page instead of being pushed to the runtime as one
 dataset blob.
+
+## Runtime dependency profile admission
+
+`runtime_channel_server.dependency_profile` is the control-plane deployment
+expectation:
+
+```yaml
+runtime_channel_server:
+  dependency_profile:
+    schema_version: 1
+    name: platform-python-3.13
+    version: 1.0.0
+    contract_sha256: 8457b3c35618558fc8bfc74d4135b7eb52e00c33a8c9a49d202830f3fd5b62c5
+```
+
+HELLO and RESUME must carry a structurally complete profile: schema/name/
+version/digest, Hosted Python, sorted unique public import roots,
+strategy-service/library commits, and image build ID. Admission compares the
+first four fields exactly with configuration and fail-closes if any remaining
+fact is missing or unsafe. A mismatch is recorded as
+`RUNTIME_DEPENDENCY_PROFILE_MISMATCH`; it never creates or refreshes a route.
+
+runtime-agent performs its local installed-closure probe before connecting. A
+Hosted failure is accepted only through the provisioner's single-line bounded
+startup record. A Self-hosted failure is accepted only by the dedicated
+credential-bound, timestamped, nonce-protected, Ed25519-signed failure RPC.
+That RPC permits only source `self_hosted`, records
+`RUNTIME_DEPENDENCY_PROFILE_INVALID`, and cannot register a runtime or send
+RuntimeChannel frames. Bare does not use this failure-report surface.
+
+Strategy proxy calls continue to route only by `(user_id, runtime_id)`.
+`ValidateStrategySource` calls the existing stream and returns validation
+issues/profile without provisioning a Runtime or creating a Session.
+Preview/Run/download errors preserve only six allowlisted dependency fields:
+`code`, `module`, `runtime_profile`, `runtime_profile_version`,
+`image_build_id`, and bounded single-line `message`. The stable cross-service
+codes are:
+
+- `UNSUPPORTED_STRATEGY_DEPENDENCY`
+- `STRATEGY_DEPENDENCY_UNAVAILABLE`
+- `STRATEGY_IMPORT_FAILED`
+- `RUNTIME_DEPENDENCY_PROFILE_INVALID`
+- `RUNTIME_DEPENDENCY_PROFILE_MISMATCH`
 
 ## Provisioning
 
