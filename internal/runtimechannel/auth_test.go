@@ -1087,6 +1087,43 @@ func TestInvokeStrategyUnaryByRuntimeIDSupportsGetStrategyStatus(t *testing.T) {
 	}
 }
 
+func TestInvokeStrategyUnaryByRuntimeIDSupportsValidateStrategySource(t *testing.T) {
+	svc := New(&stubRepo{cred: domain.RuntimeCredential{KeyID: "key-1"}})
+	stream := mustRegister(t, svc.registry, AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-validate"}, time.Now())
+	sent := make(chan *cpv1.RuntimeFrame, 1)
+	stream.setSender(func(frame *cpv1.RuntimeFrame) error { sent <- frame; return nil })
+
+	done := make(chan error, 1)
+	response := &strategyv1.ValidateStrategySourceResponse{}
+	go func() {
+		done <- svc.InvokeStrategyUnaryByRuntimeID(
+			context.Background(), 42, "runtime-validate", "ValidateStrategySource",
+			&strategyv1.ValidateStrategySourceRequest{UserId: 42, RuntimeId: "runtime-validate", Source: "import numpy"},
+			response,
+		)
+	}()
+
+	request := <-sent
+	if request.GetRequest().GetMethod() != "ValidateStrategySource" {
+		t.Fatalf("method = %q, want ValidateStrategySource", request.GetRequest().GetMethod())
+	}
+	packed, err := anypb.New(&strategyv1.ValidateStrategySourceResponse{Ok: true, RuntimeProfile: completeDependencyProfile("normal-build")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.deliver(&cpv1.RuntimeFrame{
+		CorrelationId: request.GetCorrelationId(),
+		FrameType:     cpv1.FrameType_FRAME_TYPE_RESPONSE,
+		Payload:       &cpv1.RuntimeFrame_Response{Response: &cpv1.StrategyResponse{Response: packed}},
+	})
+	if err := <-done; err != nil {
+		t.Fatalf("InvokeStrategyUnaryByRuntimeID: %v", err)
+	}
+	if !response.GetOk() || response.GetRuntimeProfile().GetImageBuildId() != "normal-build" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestInvokeStrategyUnaryByRuntimeIDDoesNotAbortTimedOutStatusPoll(t *testing.T) {
 	svc := New(&stubRepo{cred: domain.RuntimeCredential{KeyID: "key-1"}})
 	now := time.Unix(1_700_000_000, 0)

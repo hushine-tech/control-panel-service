@@ -26,3 +26,17 @@ func TestGetStrategyStatusRequiresRuntimeChannel(t *testing.T) {
 		t.Fatalf("code = %v, want Unavailable (err=%v)", status.Code(err), err)
 	}
 }
+
+func TestValidateStrategySourceRoutesOnlyBySelectedRuntime(t *testing.T) {
+	channelSvc := runtimechannel.New(newStubRepo())
+	g := NewControlPanelGRPCService(nil, nil, channelSvc)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	_, err := g.ValidateStrategySource(ctx, &strategyv1.ValidateStrategySourceRequest{
+		Source: "import numpy", UserId: 42, RuntimeId: "runtime-1",
+	})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("code = %v, want Unavailable from selected runtime route (err=%v)", status.Code(err), err)
+	}
+}

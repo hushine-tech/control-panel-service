@@ -223,7 +223,7 @@ func debugDatasetToProto(state *domain.DebugDatasetState) *cpv1.DebugDatasetStat
 	return &cpv1.DebugDatasetState{
 		DatasetId:      state.DatasetID,
 		UserId:         state.UserID,
-		PortfolioId:      state.PortfolioID,
+		PortfolioId:    state.PortfolioID,
 		RuntimeId:      state.RuntimeID,
 		Market:         state.Market,
 		Symbol:         state.Symbol,
@@ -448,7 +448,7 @@ func (g *ControlPanelGRPCService) LoadDebugDataset(ctx context.Context, req *cpv
 	}
 	state, err := g.debugSvc.LoadDebugDataset(ctx, debugger.LoadDatasetArgs{
 		UserID:      req.GetUserId(),
-		PortfolioID:   req.GetPortfolioId(),
+		PortfolioID: req.GetPortfolioId(),
 		RuntimeID:   req.GetRuntimeId(),
 		Market:      req.GetMarket(),
 		Symbol:      req.GetSymbol(),
@@ -507,7 +507,7 @@ func (g *ControlPanelGRPCService) PublishRuntimeNotification(ctx context.Context
 		Severity:      severity,
 		RuntimeID:     rt.RuntimeID,
 		RuntimeName:   rt.Name,
-		PortfolioID:     req.GetPortfolioId(),
+		PortfolioID:   req.GetPortfolioId(),
 		StrategyID:    req.GetStrategyId(),
 		SessionID:     strings.TrimSpace(req.GetSessionId()),
 		Title:         strings.TrimSpace(req.GetTitle()),
@@ -545,6 +545,20 @@ func (g *ControlPanelGRPCService) PreviewRunStrategy(ctx context.Context, req *s
 	}
 	resp := &strategyv1.PreviewRunStrategyResponse{}
 	if err := g.channelSvc.InvokeStrategyUnaryByRuntimeID(ctx, req.GetUserId(), req.GetRuntimeId(), "PreviewRunStrategy", req, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (g *ControlPanelGRPCService) ValidateStrategySource(ctx context.Context, req *strategyv1.ValidateStrategySourceRequest) (*strategyv1.ValidateStrategySourceResponse, error) {
+	if g.channelSvc == nil {
+		return nil, status.Error(codes.FailedPrecondition, "runtime channel service is not configured")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	resp := &strategyv1.ValidateStrategySourceResponse{}
+	if err := g.channelSvc.InvokeStrategyUnaryByRuntimeID(ctx, req.GetUserId(), req.GetRuntimeId(), "ValidateStrategySource", req, resp); err != nil {
 		return nil, err
 	}
 	return resp, nil

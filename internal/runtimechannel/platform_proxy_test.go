@@ -3,6 +3,8 @@ package runtimechannel
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +16,48 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
+	cerrors "github.com/hushine-tech/golang-lib/pkg/errors"
+	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
+
+func TestStreamErrorToStatusPreservesDependencyDetails(t *testing.T) {
+	dependency := &strategyv1.RuntimeDependencyError{
+		Code:                  "STRATEGY_DEPENDENCY_UNAVAILABLE",
+		Module:                "google.cloud",
+		RuntimeProfile:        "platform-python-3.13",
+		RuntimeProfileVersion: "1.0.0",
+		ImageBuildId:          "build-1",
+		Message:               "Python module 'google.cloud' is not available",
+	}
+	err := streamErrorToStatus(&cpv1.StreamError{
+		Code:            "FailedPrecondition",
+		Message:         dependency.GetMessage(),
+		DependencyError: dependency,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("status code = %s, want FailedPrecondition", status.Code(err))
+	}
+	common := cerrors.FromGRPCStatus(status.Convert(err))
+	want := map[string]string{
+		"code":                    dependency.GetCode(),
+		"module":                  dependency.GetModule(),
+		"runtime_profile":         dependency.GetRuntimeProfile(),
+		"runtime_profile_version": dependency.GetRuntimeProfileVersion(),
+		"image_build_id":          dependency.GetImageBuildId(),
+		"message":                 dependency.GetMessage(),
+	}
+	if !reflect.DeepEqual(common.Details, want) {
+		t.Fatalf("details = %#v, want %#v", common.Details, want)
+	}
+	if common.HTTPStatus != http.StatusBadRequest {
+		t.Fatalf("http status = %d, want %d", common.HTTPStatus, http.StatusBadRequest)
+	}
+}
 
 func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}

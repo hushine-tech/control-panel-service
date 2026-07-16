@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
+	cerrors "github.com/hushine-tech/golang-lib/pkg/errors"
 )
 
 const reconnectWait = 2 * time.Second
@@ -159,6 +160,18 @@ func streamErrorToStatus(errFrame *cpv1.StreamError) error {
 		code = codes.Unavailable
 	case "Unimplemented":
 		code = codes.Unimplemented
+	}
+	if dependency := errFrame.GetDependencyError(); dependency != nil {
+		details := map[string]string{
+			"code":                    dependency.GetCode(),
+			"module":                  dependency.GetModule(),
+			"runtime_profile":         dependency.GetRuntimeProfile(),
+			"runtime_profile_version": dependency.GetRuntimeProfileVersion(),
+			"image_build_id":          dependency.GetImageBuildId(),
+			"message":                 dependency.GetMessage(),
+		}
+		common := cerrors.FromGRPCStatus(status.New(code, errFrame.GetMessage())).WithDetails(details)
+		return cerrors.ToGRPCStatusWithCode(common, code).Err()
 	}
 	return status.Error(code, errFrame.GetMessage())
 }
