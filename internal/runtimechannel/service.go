@@ -28,23 +28,25 @@ const runtimeChannelLeaseTTL = 24 * time.Hour
 var ErrRuntimeAlreadyEnded = errors.New("runtime already ended")
 
 type Service struct {
-	repo                Repository
-	registry            *Registry
-	replay              *ReplayCache
-	auth                AuthConfig
-	platform            PlatformDispatcher
-	dataTransfer        RuntimeDataTransfer
-	dataWindow          *RuntimeDataWindow
-	notifications       cpnotify.Publisher
-	instanceID          string
-	now                 func() time.Time
-	streamIdleTimeout   time.Duration
-	streamCheckInterval time.Duration
+	repo                      Repository
+	registry                  *Registry
+	replay                    *ReplayCache
+	auth                      AuthConfig
+	expectedDependencyProfile ExpectedDependencyProfile
+	platform                  PlatformDispatcher
+	dataTransfer              RuntimeDataTransfer
+	dataWindow                *RuntimeDataWindow
+	notifications             cpnotify.Publisher
+	instanceID                string
+	now                       func() time.Time
+	streamIdleTimeout         time.Duration
+	streamCheckInterval       time.Duration
 }
 
 type Config struct {
-	Auth                  AuthConfig
-	NotificationPublisher cpnotify.Publisher
+	Auth                      AuthConfig
+	ExpectedDependencyProfile ExpectedDependencyProfile
+	NotificationPublisher     cpnotify.Publisher
 }
 
 func New(repo Repository) *Service {
@@ -66,17 +68,21 @@ func newWithConfigAndInstanceID(repo Repository, cfg Config, instanceID string) 
 	if cfg.NotificationPublisher == nil {
 		cfg.NotificationPublisher = cpnotify.NoopPublisher{}
 	}
+	if !cfg.ExpectedDependencyProfile.configured() {
+		cfg.ExpectedDependencyProfile = defaultExpectedDependencyProfile()
+	}
 	return &Service{
-		repo:                repo,
-		registry:            NewRegistry(),
-		replay:              NewReplayCache(replayTTL, 8192),
-		auth:                cfg.Auth,
-		dataWindow:          NewRuntimeDataWindow(1024),
-		notifications:       cfg.NotificationPublisher,
-		instanceID:          instanceID,
-		now:                 time.Now,
-		streamIdleTimeout:   streamDeadAfter,
-		streamCheckInterval: time.Second,
+		repo:                      repo,
+		registry:                  NewRegistry(),
+		replay:                    NewReplayCache(replayTTL, 8192),
+		auth:                      cfg.Auth,
+		expectedDependencyProfile: cfg.ExpectedDependencyProfile,
+		dataWindow:                NewRuntimeDataWindow(1024),
+		notifications:             cfg.NotificationPublisher,
+		instanceID:                instanceID,
+		now:                       time.Now,
+		streamIdleTimeout:         streamDeadAfter,
+		streamCheckInterval:       time.Second,
 	}
 }
 
@@ -287,6 +293,10 @@ func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.Runtim
 				return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.PermissionDenied, err.Error())
 			}
 		}
+		if err := validateDependencyAdmission(s.expectedDependencyProfile, rt.DependencyProfile); err != nil {
+			s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
+			return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.FailedPrecondition, err.Error())
+		}
 		if err := s.upsertRuntime(ctx, rt); err != nil {
 			s.recordAdmissionFailure(ctx, first.GetHello(), rt, err)
 			if errors.Is(err, ErrRuntimeAlreadyEnded) {
@@ -309,6 +319,9 @@ func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.Runtim
 		rt, token, expiresAt, err := s.verifyResume(ctx, first.GetResume())
 		if err != nil {
 			s.recordResumeFailure(ctx, first.GetResume(), err)
+			if errors.Is(err, ErrDependencyProfileMismatch) {
+				return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.FailedPrecondition, err.Error())
+			}
 			return AuthenticatedRuntime{}, "", time.Time{}, err
 		}
 		if hasPeerID {
@@ -413,25 +426,30 @@ func (s *Service) verifyResume(ctx context.Context, resume *cpv1.RuntimeResume) 
 	if domain.IsRuntimeTerminalStatus(rt.Status) {
 		return AuthenticatedRuntime{}, "", time.Time{}, status.Error(codes.FailedPrecondition, "runtime already ended")
 	}
+	authenticated := AuthenticatedRuntime{
+		KeyID:             rt.CredentialKeyID,
+		UserID:            rt.UserID,
+		RuntimeID:         rt.RuntimeID,
+		Name:              rt.Name,
+		Source:            rt.Source,
+		Role:              rt.Role,
+		EndpointHost:      rt.EndpointHost,
+		GRPCPort:          rt.GRPCPort,
+		DebugPort:         rt.DebugPort,
+		Capabilities:      append([]string(nil), rt.Capabilities...),
+		ResourceProfile:   rt.ResourceProfile,
+		Version:           rt.Version,
+		DependencyProfile: cloneDependencyProfile(resume.GetDependencyProfile()),
+		AuthenticatedAt:   now,
+	}
+	if err := validateDependencyAdmission(s.expectedDependencyProfile, authenticated.DependencyProfile); err != nil {
+		return AuthenticatedRuntime{}, "", time.Time{}, err
+	}
 	nextToken, expiresAt, err := s.rotateRuntimeFingerprintWithHash(ctx, runtimeID, leaseHash, now)
 	if err != nil {
 		return AuthenticatedRuntime{}, "", time.Time{}, err
 	}
-	return AuthenticatedRuntime{
-		KeyID:           rt.CredentialKeyID,
-		UserID:          rt.UserID,
-		RuntimeID:       rt.RuntimeID,
-		Name:            rt.Name,
-		Source:          rt.Source,
-		Role:            rt.Role,
-		EndpointHost:    rt.EndpointHost,
-		GRPCPort:        rt.GRPCPort,
-		DebugPort:       rt.DebugPort,
-		Capabilities:    append([]string(nil), rt.Capabilities...),
-		ResourceProfile: rt.ResourceProfile,
-		Version:         rt.Version,
-		AuthenticatedAt: now,
-	}, nextToken, expiresAt, nil
+	return authenticated, nextToken, expiresAt, nil
 }
 
 func (s *Service) rotateRuntimeFingerprint(ctx context.Context, runtimeID, previousFingerprint string) (string, time.Time, error) {
@@ -609,6 +627,8 @@ func (s *Service) recordResumeFailure(ctx context.Context, resume *cpv1.RuntimeR
 
 func admissionFailureCode(err error) string {
 	switch {
+	case errors.Is(err, ErrDependencyProfileMismatch):
+		return "RUNTIME_DEPENDENCY_PROFILE_MISMATCH"
 	case errors.Is(err, ErrInvalidHello):
 		return "invalid_hello"
 	case errors.Is(err, ErrPermissionDenied):

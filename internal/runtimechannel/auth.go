@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/repository"
+	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 )
 
 const (
@@ -62,35 +64,45 @@ type AuthConfig struct {
 }
 
 type AuthenticatedRuntime struct {
-	KeyID           string
-	UserID          int64
-	RuntimeID       string
-	Name            string
-	Source          string
-	Role            domain.CredentialRole
-	EndpointHost    string
-	GRPCPort        int32
-	DebugPort       int32
-	Capabilities    []string
-	ResourceProfile string
-	Version         string
-	AuthenticatedAt time.Time
+	KeyID             string
+	UserID            int64
+	RuntimeID         string
+	Name              string
+	Source            string
+	Role              domain.CredentialRole
+	EndpointHost      string
+	GRPCPort          int32
+	DebugPort         int32
+	Capabilities      []string
+	ResourceProfile   string
+	Version           string
+	DependencyProfile *strategyv1.RuntimeDependencyProfile
+	AuthenticatedAt   time.Time
 }
 
 type helloPayload struct {
-	Capabilities    []string `json:"capabilities"`
-	DebugPort       int32    `json:"debug_port"`
-	EndpointHost    string   `json:"endpoint_host"`
-	GRPCPort        int32    `json:"grpc_port"`
-	IssuedAtUnixMS  int64    `json:"issued_at_unix_ms"`
-	KeyID           string   `json:"key_id"`
-	Nonce           string   `json:"nonce"`
-	ResourceProfile string   `json:"resource_profile"`
-	RuntimeID       string   `json:"runtime_id"`
-	Name            string   `json:"name"`
-	Source          string   `json:"source"`
-	UserID          int64    `json:"user_id"`
-	Version         string   `json:"version"`
+	Capabilities                    []string `json:"capabilities"`
+	DependencyContractSHA256        string   `json:"dependency_contract_sha256"`
+	DependencyHostedPython          string   `json:"dependency_hosted_python"`
+	DependencyImageBuildID          string   `json:"dependency_image_build_id"`
+	DependencyProfileName           string   `json:"dependency_profile_name"`
+	DependencyProfileVersion        string   `json:"dependency_profile_version"`
+	DependencyPublicImportRoots     []string `json:"dependency_public_import_roots"`
+	DependencySchemaVersion         uint32   `json:"dependency_schema_version"`
+	DependencyStrategyLibraryCommit string   `json:"dependency_strategy_library_commit"`
+	DependencyStrategyServiceCommit string   `json:"dependency_strategy_service_commit"`
+	DebugPort                       int32    `json:"debug_port"`
+	EndpointHost                    string   `json:"endpoint_host"`
+	GRPCPort                        int32    `json:"grpc_port"`
+	IssuedAtUnixMS                  int64    `json:"issued_at_unix_ms"`
+	KeyID                           string   `json:"key_id"`
+	Nonce                           string   `json:"nonce"`
+	ResourceProfile                 string   `json:"resource_profile"`
+	RuntimeID                       string   `json:"runtime_id"`
+	Name                            string   `json:"name"`
+	Source                          string   `json:"source"`
+	UserID                          int64    `json:"user_id"`
+	Version                         string   `json:"version"`
 }
 
 var runtimeChannelNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$`)
@@ -102,20 +114,32 @@ func CanonicalHelloPayload(h *cpv1.RuntimeHello) ([]byte, error) {
 	if h == nil {
 		return nil, fmt.Errorf("%w: hello is required", ErrInvalidHello)
 	}
+	profile := h.GetDependencyProfile()
+	roots := append([]string(nil), profile.GetPublicImportRoots()...)
+	sort.Strings(roots)
 	p := helloPayload{
-		Capabilities:    append([]string(nil), h.GetCapabilities()...),
-		DebugPort:       h.GetDebugPort(),
-		EndpointHost:    h.GetEndpointHost(),
-		GRPCPort:        h.GetGrpcPort(),
-		IssuedAtUnixMS:  h.GetIssuedAtUnixMs(),
-		KeyID:           h.GetKeyId(),
-		Name:            h.GetName(),
-		Nonce:           h.GetNonce(),
-		ResourceProfile: h.GetResourceProfile(),
-		RuntimeID:       h.GetRuntimeId(),
-		Version:         h.GetVersion(),
-		Source:          h.GetSource(),
-		UserID:          h.GetUserId(),
+		Capabilities:                    append([]string(nil), h.GetCapabilities()...),
+		DependencyContractSHA256:        profile.GetContractSha256(),
+		DependencyHostedPython:          profile.GetHostedPython(),
+		DependencyImageBuildID:          profile.GetImageBuildId(),
+		DependencyProfileName:           profile.GetProfileName(),
+		DependencyProfileVersion:        profile.GetProfileVersion(),
+		DependencyPublicImportRoots:     roots,
+		DependencySchemaVersion:         profile.GetSchemaVersion(),
+		DependencyStrategyLibraryCommit: profile.GetStrategyLibraryCommit(),
+		DependencyStrategyServiceCommit: profile.GetStrategyServiceCommit(),
+		DebugPort:                       h.GetDebugPort(),
+		EndpointHost:                    h.GetEndpointHost(),
+		GRPCPort:                        h.GetGrpcPort(),
+		IssuedAtUnixMS:                  h.GetIssuedAtUnixMs(),
+		KeyID:                           h.GetKeyId(),
+		Name:                            h.GetName(),
+		Nonce:                           h.GetNonce(),
+		ResourceProfile:                 h.GetResourceProfile(),
+		RuntimeID:                       h.GetRuntimeId(),
+		Version:                         h.GetVersion(),
+		Source:                          h.GetSource(),
+		UserID:                          h.GetUserId(),
 	}
 	return json.Marshal(p)
 }
@@ -211,19 +235,20 @@ func verifyHello(ctx context.Context, repo Repository, cache *ReplayCache, now f
 		return AuthenticatedRuntime{}, fmt.Errorf("%w: source %q does not match credential source %q", ErrPermissionDenied, h.GetSource(), source)
 	}
 	return AuthenticatedRuntime{
-		KeyID:           h.GetKeyId(),
-		UserID:          cred.UserID,
-		RuntimeID:       runtimeID,
-		Name:            name,
-		Source:          source,
-		Role:            role,
-		EndpointHost:    h.GetEndpointHost(),
-		GRPCPort:        h.GetGrpcPort(),
-		DebugPort:       h.GetDebugPort(),
-		Capabilities:    append([]string(nil), h.GetCapabilities()...),
-		ResourceProfile: h.GetResourceProfile(),
-		Version:         h.GetVersion(),
-		AuthenticatedAt: at,
+		KeyID:             h.GetKeyId(),
+		UserID:            cred.UserID,
+		RuntimeID:         runtimeID,
+		Name:              name,
+		Source:            source,
+		Role:              role,
+		EndpointHost:      h.GetEndpointHost(),
+		GRPCPort:          h.GetGrpcPort(),
+		DebugPort:         h.GetDebugPort(),
+		Capabilities:      append([]string(nil), h.GetCapabilities()...),
+		ResourceProfile:   h.GetResourceProfile(),
+		Version:           h.GetVersion(),
+		DependencyProfile: cloneDependencyProfile(h.GetDependencyProfile()),
+		AuthenticatedAt:   at,
 	}, nil
 }
 
@@ -253,18 +278,19 @@ func verifyBareHello(now func() time.Time, cfg AuthConfig, h *cpv1.RuntimeHello)
 		}
 	}
 	return AuthenticatedRuntime{
-		UserID:          h.GetUserId(),
-		RuntimeID:       runtimeID,
-		Name:            name,
-		Source:          domain.RuntimeSourceBare,
-		Role:            domain.CredentialRoleExecutor,
-		EndpointHost:    h.GetEndpointHost(),
-		GRPCPort:        h.GetGrpcPort(),
-		DebugPort:       h.GetDebugPort(),
-		Capabilities:    append([]string(nil), h.GetCapabilities()...),
-		ResourceProfile: h.GetResourceProfile(),
-		Version:         h.GetVersion(),
-		AuthenticatedAt: at,
+		UserID:            h.GetUserId(),
+		RuntimeID:         runtimeID,
+		Name:              name,
+		Source:            domain.RuntimeSourceBare,
+		Role:              domain.CredentialRoleExecutor,
+		EndpointHost:      h.GetEndpointHost(),
+		GRPCPort:          h.GetGrpcPort(),
+		DebugPort:         h.GetDebugPort(),
+		Capabilities:      append([]string(nil), h.GetCapabilities()...),
+		ResourceProfile:   h.GetResourceProfile(),
+		Version:           h.GetVersion(),
+		DependencyProfile: cloneDependencyProfile(h.GetDependencyProfile()),
+		AuthenticatedAt:   at,
 	}, nil
 }
 

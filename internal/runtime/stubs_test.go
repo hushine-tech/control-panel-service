@@ -45,6 +45,10 @@ type fakeProvisioner struct {
 	diagnostics            string
 	diagnosticsErr         error
 	diagnosticsCalls       int
+	startupFailure         provision.StartupFailure
+	startupFailureFound    bool
+	startupFailureErr      error
+	startupFailureCalls    int
 }
 
 type fakeHostedCredentialIssuer struct {
@@ -185,15 +189,22 @@ func (f *fakeProvisioner) Diagnostics(_ context.Context, _ string) (string, erro
 	return f.diagnostics, f.diagnosticsErr
 }
 
+func (f *fakeProvisioner) StartupFailure(_ context.Context, _ string) (provision.StartupFailure, bool, error) {
+	f.startupFailureCalls++
+	return f.startupFailure, f.startupFailureFound, f.startupFailureErr
+}
+
 // stubRepo is the in-memory repository.Repository used by service tests.
 // It is intentionally permissive: every method is straightforward and only
 // implements the invariants the service code depends on (NotFound on miss,
 // Conflict on duplicate hosted slot / credential binding).
 type stubRepo struct {
-	mu             sync.Mutex
-	runtimes       map[string]domain.Runtime
-	credentials    map[string]domain.RuntimeCredential
-	credsByRuntime map[string]domain.RuntimeCredential
+	mu                         sync.Mutex
+	runtimes                   map[string]domain.Runtime
+	credentials                map[string]domain.RuntimeCredential
+	credsByRuntime             map[string]domain.RuntimeCredential
+	admissionFailures          []domain.RuntimeAdmissionFailure
+	admissionRecordHasDeadline bool
 }
 
 func newStubRepo() *stubRepo {
@@ -764,12 +775,27 @@ func (s *stubRepo) RotateRuntimeChannelLease(_ context.Context, _, _, _ string, 
 	return nil
 }
 
-func (s *stubRepo) RecordRuntimeAdmissionFailure(_ context.Context, _ domain.RuntimeAdmissionFailure) error {
+func (s *stubRepo) RecordRuntimeAdmissionFailure(ctx context.Context, failure domain.RuntimeAdmissionFailure) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, s.admissionRecordHasDeadline = ctx.Deadline()
+	s.admissionFailures = append(s.admissionFailures, failure)
 	return nil
 }
 
-func (s *stubRepo) ListRuntimeAdmissionFailuresByUser(_ context.Context, _ int64, _ int) ([]domain.RuntimeAdmissionFailure, error) {
-	return nil, nil
+func (s *stubRepo) ListRuntimeAdmissionFailuresByUser(_ context.Context, userID int64, limit int) ([]domain.RuntimeAdmissionFailure, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.RuntimeAdmissionFailure, 0, len(s.admissionFailures))
+	for _, failure := range s.admissionFailures {
+		if failure.UserID == userID {
+			out = append(out, failure)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (s *stubRepo) ClaimNextRuntimeCommand(_ context.Context, _, _ string, _ time.Time, _ int) (domain.RuntimeCommand, bool, error) {

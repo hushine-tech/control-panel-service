@@ -969,6 +969,61 @@ func TestDockerProvisioner_DiagnosticsRedactsUnquotedAndYAMLMultilineClientKeyPE
 	}
 }
 
+func TestDockerProvisioner_StartupFailureParsesExactRuntimeAgentRecord(t *testing.T) {
+	runner := &fakeRunner{output: []byte(`{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"hosted","reason":"runtime dependency profile verification failed"}` + "\n")}
+	provisioner := NewDockerProvisioner(runner, defaultCfg(), "127.0.0.1:50055")
+
+	failure, found, err := provisioner.StartupFailure(context.Background(), "container_xyz")
+	if err != nil {
+		t.Fatalf("StartupFailure: %v", err)
+	}
+	if !found {
+		t.Fatal("StartupFailure found = false, want true")
+	}
+	if failure.Code != "RUNTIME_DEPENDENCY_PROFILE_INVALID" || failure.Module != "dateutil" ||
+		failure.ProfileName != "platform-python-3.13" || failure.ProfileVersion != "1.0.0" ||
+		failure.ImageBuildID != "build-1" || failure.Source != "hosted" ||
+		failure.Reason != "runtime dependency profile verification failed" {
+		t.Fatalf("startup failure = %+v", failure)
+	}
+	if len(runner.calls) != 1 || !equalStringSlice(runner.calls[0].args, []string{"logs", "--tail", "80", "container_xyz"}) {
+		t.Fatalf("docker calls = %+v", runner.calls)
+	}
+}
+
+func TestDockerProvisioner_StartupFailureRejectsAnythingExceptExactSafeRecord(t *testing.T) {
+	tests := map[string]string{
+		"plain":          "runtime-agent failed to start",
+		"malformed":      `{"code":`,
+		"extra field":    `{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"hosted","reason":"runtime dependency profile verification failed","api_secret":"do-not-promote"}`,
+		"unknown code":   `{"code":"OTHER","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"hosted","reason":"runtime dependency profile verification failed"}`,
+		"wrong source":   `{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"self_hosted","reason":"runtime dependency profile verification failed"}`,
+		"unknown reason": `{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"hosted","reason":"secret details"}`,
+		"missing field":  `{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","source":"hosted","reason":"runtime dependency profile verification failed"}`,
+		"multiple lines": `{"code":"RUNTIME_DEPENDENCY_PROFILE_INVALID","module":"dateutil","profile_name":"platform-python-3.13","profile_version":"1.0.0","image_build_id":"build-1","source":"hosted","reason":"runtime dependency profile verification failed"}` + "\nother log",
+	}
+	for name, output := range tests {
+		t.Run(name, func(t *testing.T) {
+			provisioner := NewDockerProvisioner(&fakeRunner{output: []byte(output)}, defaultCfg(), "127.0.0.1:50055")
+			failure, found, err := provisioner.StartupFailure(context.Background(), "container_xyz")
+			if err != nil {
+				t.Fatalf("StartupFailure: %v", err)
+			}
+			if found || failure != (StartupFailure{}) {
+				t.Fatalf("StartupFailure = (%+v, %v), want zero,false", failure, found)
+			}
+		})
+	}
+}
+
+func TestDockerProvisioner_StartupFailureReturnsDockerLogsError(t *testing.T) {
+	wantErr := errors.New("docker unavailable")
+	provisioner := NewDockerProvisioner(&fakeRunner{err: wantErr}, defaultCfg(), "127.0.0.1:50055")
+	if _, found, err := provisioner.StartupFailure(context.Background(), "container_xyz"); !errors.Is(err, wantErr) || found {
+		t.Fatalf("StartupFailure error/found = %v/%v, want docker error/false", err, found)
+	}
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 func contains(args []string, want string) bool {

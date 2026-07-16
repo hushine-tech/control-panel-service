@@ -110,6 +110,15 @@ func runtimeServerCAPEMFromConfig(tlsCfg config.RuntimeChannelServerTLSConfig) (
 	return serverCAPEM, nil
 }
 
+func expectedRuntimeDependencyProfile(profile config.RuntimeDependencyProfileConfig) runtimechannel.ExpectedDependencyProfile {
+	return runtimechannel.ExpectedDependencyProfile{
+		SchemaVersion:  profile.SchemaVersion,
+		Name:           profile.Name,
+		Version:        profile.Version,
+		ContractSHA256: profile.ContractSHA256,
+	}
+}
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config.yaml")
 	flag.Parse()
@@ -123,9 +132,8 @@ func main() {
 			log.Fatalf("load config: %v", err)
 		}
 	}
-	cfg.ApplyEnvOverrides()
-	if err := cfg.Provisioning.ValidateRuntimeIsolation(); err != nil {
-		log.Fatalf("validate runtime isolation config: %v", err)
+	if err := cfg.ApplyEnvOverrides(); err != nil {
+		log.Fatalf("validate config after environment overrides: %v", err)
 	}
 
 	// ── Logger ────────────────────────────────────────────────────────────────
@@ -235,6 +243,7 @@ func main() {
 		Auth: runtimechannel.AuthConfig{
 			AllowBareRuntime: cfg.RuntimePlatform.DebugBareRuntimeEnabled,
 		},
+		ExpectedDependencyProfile: expectedRuntimeDependencyProfile(cfg.RuntimeChannelServer.DependencyProfile),
 	})
 	credentialSvc := credential.New(repo, runtimeChannelSvc)
 	runtimeCertSigner, err := runtimeClientCertSignerFromConfig(cfg.RuntimeChannelServer.TLS)

@@ -119,6 +119,24 @@ type CleanupTimeoutProvider interface {
 	DeprovisionTimeout() time.Duration
 }
 
+// StartupFailure is the allowlisted, non-secret startup failure record emitted
+// by a hosted runtime before RuntimeChannel readiness.
+type StartupFailure struct {
+	Code           string
+	Module         string
+	ProfileName    string
+	ProfileVersion string
+	ImageBuildID   string
+	Source         string
+	Reason         string
+}
+
+// StartupFailureProvider is implemented by provisioners that can inspect a
+// started workload for a structured failure without promoting arbitrary logs.
+type StartupFailureProvider interface {
+	StartupFailure(ctx context.Context, handle string) (StartupFailure, bool, error)
+}
+
 // NoOpProvisioner refuses every call with ErrNotConfigured. This is the
 // safe default when the operator has not wired a backend; it produces a
 // clean, machine-readable failure rather than crashing.

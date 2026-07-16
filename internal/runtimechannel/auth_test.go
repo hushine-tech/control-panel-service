@@ -630,7 +630,7 @@ func TestRuntimeChannelResumeUsesLeaseWithoutTouchingCredential(t *testing.T) {
 	stream.recv <- &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_RESUME,
 		Payload: &cpv1.RuntimeFrame_Resume{
-			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", ResumeToken: token},
+			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", ResumeToken: token, DependencyProfile: completeDependencyProfile("normal-build")},
 		},
 	}
 	ack := waitForHelloAck(t, stream)
@@ -685,7 +685,7 @@ func TestRuntimeChannelResumeFromUnhealthyRotatesFingerprint(t *testing.T) {
 	stream.recv <- &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_RESUME,
 		Payload: &cpv1.RuntimeFrame_Resume{
-			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", Fingerprint: fingerprint},
+			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", Fingerprint: fingerprint, DependencyProfile: completeDependencyProfile("normal-build")},
 		},
 	}
 	ack := waitForHelloAck(t, stream)
@@ -737,7 +737,7 @@ func TestRuntimeChannelTerminalRuntimeRejectsFingerprintResume(t *testing.T) {
 	stream.recv <- &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_RESUME,
 		Payload: &cpv1.RuntimeFrame_Resume{
-			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", Fingerprint: fingerprint},
+			Resume: &cpv1.RuntimeResume{RuntimeId: "runtime-1", Fingerprint: fingerprint, DependencyProfile: completeDependencyProfile("normal-build")},
 		},
 	}
 
@@ -1752,14 +1752,15 @@ func waitForFrameType(t *testing.T, stream *fakeRuntimeChannelStream, typ cpv1.F
 func signedHello(t *testing.T, priv ed25519.PrivateKey, at time.Time) *cpv1.RuntimeHello {
 	t.Helper()
 	hello := &cpv1.RuntimeHello{
-		KeyId:           "key-1",
-		RuntimeId:       "runtime-1",
-		Name:            "default",
-		Capabilities:    []string{"strategy", "spot", "futures"},
-		ResourceProfile: "small",
-		Version:         "0.1.0",
-		IssuedAtUnixMs:  at.UnixMilli(),
-		Nonce:           base64.RawURLEncoding.EncodeToString([]byte("1234567890abcdef")),
+		KeyId:             "key-1",
+		RuntimeId:         "runtime-1",
+		Name:              "default",
+		Capabilities:      []string{"strategy", "spot", "futures"},
+		ResourceProfile:   "small",
+		Version:           "0.1.0",
+		IssuedAtUnixMs:    at.UnixMilli(),
+		Nonce:             base64.RawURLEncoding.EncodeToString([]byte("1234567890abcdef")),
+		DependencyProfile: completeDependencyProfile("normal-build"),
 	}
 	payload, err := CanonicalHelloPayload(hello)
 	if err != nil {
@@ -1771,14 +1772,15 @@ func signedHello(t *testing.T, priv ed25519.PrivateKey, at time.Time) *cpv1.Runt
 
 func bareHello(at time.Time) *cpv1.RuntimeHello {
 	return &cpv1.RuntimeHello{
-		RuntimeId:       "bare-runtime-1",
-		Name:            "bare-debug",
-		Source:          domain.RuntimeSourceBare,
-		UserId:          99,
-		Capabilities:    []string{"strategy", "debug"},
-		ResourceProfile: "local",
-		Version:         "0.1.0",
-		IssuedAtUnixMs:  at.UnixMilli(),
+		RuntimeId:         "bare-runtime-1",
+		Name:              "bare-debug",
+		Source:            domain.RuntimeSourceBare,
+		UserId:            99,
+		Capabilities:      []string{"strategy", "debug"},
+		ResourceProfile:   "local",
+		Version:           "0.1.0",
+		IssuedAtUnixMs:    at.UnixMilli(),
+		DependencyProfile: completeDependencyProfile("normal-build"),
 	}
 }
 

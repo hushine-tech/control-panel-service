@@ -21,6 +21,7 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
 	"github.com/hushine-tech/control-panel-service/internal/plan"
+	"github.com/hushine-tech/control-panel-service/internal/provision"
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
@@ -1704,6 +1705,57 @@ func TestEnsureHostedRuntime_RegistrationTimeoutIncludesProvisionerDiagnostics(t
 	}
 	if prov.deprovisions != 1 {
 		t.Fatalf("deprovisions = %d, want 1", prov.deprovisions)
+	}
+}
+
+func TestEnsureHostedRuntime_RegistrationTimeoutRecordsStructuredStartupFailureBeforeCleanup(t *testing.T) {
+	repo := newStubRepo()
+	provisioner := &fakeProvisioner{
+		repo:        repo,
+		onProvision: "ok_no_register",
+		startupFailure: provision.StartupFailure{
+			Code:           "RUNTIME_DEPENDENCY_PROFILE_INVALID",
+			Module:         "dateutil",
+			ProfileName:    "platform-python-3.13",
+			ProfileVersion: "1.0.0",
+			ImageBuildID:   "build-1",
+			Source:         domain.RuntimeSourceHosted,
+			Reason:         "runtime dependency profile verification failed",
+		},
+		startupFailureFound: true,
+		diagnostics:         "must not replace structured startup failure",
+	}
+	svc := makeServiceWithProvisioner(repo, "pro", provisioner, fixedNow, 1)
+	svc.hostedCredentialIssuer = &fakeHostedCredentialIssuer{}
+	svc.SetClock(time.Now)
+
+	_, err := svc.EnsureHostedRuntime(context.Background(), EnsureHostedRuntimeArgs{
+		UserID: 42, Name: "profile-gate", ResourceProfile: "small",
+	})
+	if !errors.Is(err, ErrRegistrationTimeout) || !strings.Contains(err.Error(), "RUNTIME_DEPENDENCY_PROFILE_INVALID") {
+		t.Fatalf("EnsureHostedRuntime error = %v, want structured registration failure", err)
+	}
+	if provisioner.startupFailureCalls != 1 || provisioner.diagnosticsCalls != 0 || provisioner.deprovisions != 1 {
+		t.Fatalf("startup/diagnostics/deprovision calls = %d/%d/%d, want 1/0/1", provisioner.startupFailureCalls, provisioner.diagnosticsCalls, provisioner.deprovisions)
+	}
+	if len(repo.admissionFailures) != 1 {
+		t.Fatalf("admission failures = %+v, want one", repo.admissionFailures)
+	}
+	if !repo.admissionRecordHasDeadline {
+		t.Fatal("structured startup failure record did not use a bounded context")
+	}
+	failure := repo.admissionFailures[0]
+	if failure.UserID != 42 || failure.RequestedRuntimeID == "" || failure.RequestedName != "profile-gate" ||
+		failure.CredentialKeyID == "" || failure.Source != domain.RuntimeSourceHosted ||
+		failure.Role != domain.CredentialRoleExecutor || failure.FailureCode != "RUNTIME_DEPENDENCY_PROFILE_INVALID" {
+		t.Fatalf("admission failure = %+v", failure)
+	}
+	if !strings.Contains(failure.Reason, "dateutil") || !strings.Contains(failure.Reason, "build-1") {
+		t.Fatalf("admission reason = %q, want safe structured facts", failure.Reason)
+	}
+	visible, listErr := svc.ListRuntimeAdmissionFailures(context.Background(), ListAdmissionFailuresArgs{UserID: 42, Limit: 20})
+	if listErr != nil || len(visible) != 1 || visible[0].FailureCode != failure.FailureCode {
+		t.Fatalf("ListRuntimeAdmissionFailures = %+v, %v", visible, listErr)
 	}
 }
 

@@ -9,6 +9,104 @@ import (
 	"time"
 )
 
+const expectedRuntimeDependencyContractSHA256 = "8457b3c35618558fc8bfc74d4135b7eb52e00c33a8c9a49d202830f3fd5b62c5"
+
+func TestDefaultDependencyProfileAdmissionIsPinned(t *testing.T) {
+	profile := Default().RuntimeChannelServer.DependencyProfile
+	if profile.SchemaVersion != 1 ||
+		profile.Name != "platform-python-3.13" ||
+		profile.Version != "1.0.0" ||
+		profile.ContractSHA256 != expectedRuntimeDependencyContractSHA256 {
+		t.Fatalf("dependency admission = %+v", profile)
+	}
+}
+
+func TestDependencyProfileValidationRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*RuntimeDependencyProfileConfig)
+	}{
+		{name: "zero schema", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.SchemaVersion = 0 }},
+		{name: "blank name", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.Name = "" }},
+		{name: "whitespace name", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.Name = " platform-python-3.13" }},
+		{name: "blank version", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.Version = "\t" }},
+		{name: "whitespace version", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.Version = "1.0.0 " }},
+		{name: "short digest", mutate: func(profile *RuntimeDependencyProfileConfig) { profile.ContractSHA256 = "deadbeef" }},
+		{name: "uppercase digest", mutate: func(profile *RuntimeDependencyProfileConfig) {
+			profile.ContractSHA256 = strings.ToUpper(expectedRuntimeDependencyContractSHA256)
+		}},
+		{name: "whitespace digest", mutate: func(profile *RuntimeDependencyProfileConfig) {
+			profile.ContractSHA256 = " " + expectedRuntimeDependencyContractSHA256
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := Default().RuntimeChannelServer.DependencyProfile
+			tt.mutate(&profile)
+			if err := profile.Validate(); err == nil {
+				t.Fatal("Validate() error = nil, want invalid dependency profile")
+			}
+		})
+	}
+}
+
+func TestDependencyProfileEnvOverrides(t *testing.T) {
+	t.Setenv("RUNTIME_DEPENDENCY_SCHEMA_VERSION", "2")
+	t.Setenv("RUNTIME_DEPENDENCY_PROFILE_NAME", "platform-python-3.14")
+	t.Setenv("RUNTIME_DEPENDENCY_PROFILE_VERSION", "2.0.0")
+	t.Setenv("RUNTIME_DEPENDENCY_CONTRACT_SHA256", strings.Repeat("a", 64))
+
+	cfg := Default()
+	if err := cfg.ApplyEnvOverrides(); err != nil {
+		t.Fatalf("ApplyEnvOverrides: %v", err)
+	}
+	profile := cfg.RuntimeChannelServer.DependencyProfile
+	if profile.SchemaVersion != 2 || profile.Name != "platform-python-3.14" ||
+		profile.Version != "2.0.0" || profile.ContractSHA256 != strings.Repeat("a", 64) {
+		t.Fatalf("dependency admission = %+v", profile)
+	}
+}
+
+func TestDependencyProfileEnvOverridesRejectInvalidValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "invalid schema", key: "RUNTIME_DEPENDENCY_SCHEMA_VERSION", value: "not-a-number"},
+		{name: "empty schema", key: "RUNTIME_DEPENDENCY_SCHEMA_VERSION", value: ""},
+		{name: "whitespace name", key: "RUNTIME_DEPENDENCY_PROFILE_NAME", value: " platform-python-3.13"},
+		{name: "empty name", key: "RUNTIME_DEPENDENCY_PROFILE_NAME", value: ""},
+		{name: "whitespace version", key: "RUNTIME_DEPENDENCY_PROFILE_VERSION", value: "1.0.0 "},
+		{name: "empty version", key: "RUNTIME_DEPENDENCY_PROFILE_VERSION", value: ""},
+		{name: "invalid digest", key: "RUNTIME_DEPENDENCY_CONTRACT_SHA256", value: "ABCDEF"},
+		{name: "empty digest", key: "RUNTIME_DEPENDENCY_CONTRACT_SHA256", value: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.key, tt.value)
+			if err := Default().ApplyEnvOverrides(); err == nil {
+				t.Fatal("ApplyEnvOverrides() error = nil, want invalid dependency profile override")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidDependencyProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(`
+runtime_channel_server:
+  dependency_profile:
+    schema_version: 0
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "dependency_profile") {
+		t.Fatalf("Load() error = %v, want dependency profile validation error", err)
+	}
+}
+
 func TestApplyEnvOverridesUsesCoreServiceGRPCAddr(t *testing.T) {
 	t.Setenv("CORE_SERVICE_GRPC_ADDR", "core.internal:50051")
 

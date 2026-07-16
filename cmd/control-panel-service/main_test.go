@@ -16,7 +16,26 @@ import (
 
 	"github.com/hushine-tech/control-panel-service/internal/config"
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
+	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
 )
+
+func TestExpectedRuntimeDependencyProfileMapsValidatedConfig(t *testing.T) {
+	input := config.RuntimeDependencyProfileConfig{
+		SchemaVersion:  1,
+		Name:           "platform-python-3.13",
+		Version:        "1.0.0",
+		ContractSHA256: "8457b3c35618558fc8bfc74d4135b7eb52e00c33a8c9a49d202830f3fd5b62c5",
+	}
+	want := runtimechannel.ExpectedDependencyProfile{
+		SchemaVersion:  input.SchemaVersion,
+		Name:           input.Name,
+		Version:        input.Version,
+		ContractSHA256: input.ContractSHA256,
+	}
+	if got := expectedRuntimeDependencyProfile(input); got != want {
+		t.Fatalf("expectedRuntimeDependencyProfile() = %+v, want %+v", got, want)
+	}
+}
 
 func TestRuntimeClientCertSignerFromConfigLoadsCA(t *testing.T) {
 	certFile, keyFile := writeRuntimeClientCAForTest(t)

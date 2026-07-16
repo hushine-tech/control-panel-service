@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,8 +34,35 @@ type ServerConfig struct {
 }
 
 type RuntimeChannelServerConfig struct {
-	GRPCAddr string                        `yaml:"grpc_addr"`
-	TLS      RuntimeChannelServerTLSConfig `yaml:"tls"`
+	GRPCAddr          string                         `yaml:"grpc_addr"`
+	TLS               RuntimeChannelServerTLSConfig  `yaml:"tls"`
+	DependencyProfile RuntimeDependencyProfileConfig `yaml:"dependency_profile"`
+}
+
+type RuntimeDependencyProfileConfig struct {
+	SchemaVersion  uint32 `yaml:"schema_version"`
+	Name           string `yaml:"name"`
+	Version        string `yaml:"version"`
+	ContractSHA256 string `yaml:"contract_sha256"`
+}
+
+var runtimeDependencyContractSHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var runtimeDependencyProfileFactRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
+
+func (c RuntimeDependencyProfileConfig) Validate() error {
+	if c.SchemaVersion == 0 {
+		return fmt.Errorf("runtime_channel_server.dependency_profile.schema_version must be greater than zero")
+	}
+	if !runtimeDependencyProfileFactRE.MatchString(c.Name) {
+		return fmt.Errorf("runtime_channel_server.dependency_profile.name must be a safe non-empty profile identifier")
+	}
+	if !runtimeDependencyProfileFactRE.MatchString(c.Version) {
+		return fmt.Errorf("runtime_channel_server.dependency_profile.version must be a safe non-empty profile identifier")
+	}
+	if !runtimeDependencyContractSHA256RE.MatchString(c.ContractSHA256) {
+		return fmt.Errorf("runtime_channel_server.dependency_profile.contract_sha256 must be 64 lowercase hexadecimal characters")
+	}
+	return nil
 }
 
 type RuntimeChannelServerTLSConfig struct {
@@ -274,6 +303,12 @@ func Default() *Config {
 			TLS: RuntimeChannelServerTLSConfig{
 				Enabled: true,
 			},
+			DependencyProfile: RuntimeDependencyProfileConfig{
+				SchemaVersion:  1,
+				Name:           "platform-python-3.13",
+				Version:        "1.0.0",
+				ContractSHA256: "8457b3c35618558fc8bfc74d4135b7eb52e00c33a8c9a49d202830f3fd5b62c5",
+			},
 		},
 		Database: DatabaseConfig{
 			Host:     "192.168.88.10",
@@ -394,13 +429,23 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	if err := cfg.Provisioning.ValidateRuntimeIsolation(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config %s: %w", path, err)
 	}
 	return cfg, nil
 }
 
-func (c *Config) ApplyEnvOverrides() {
+func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config is required")
+	}
+	if err := c.RuntimeChannelServer.DependencyProfile.Validate(); err != nil {
+		return err
+	}
+	return c.Provisioning.ValidateRuntimeIsolation()
+}
+
+func (c *Config) ApplyEnvOverrides() error {
 	if v := os.Getenv("SERVER_HTTP_ADDR"); v != "" {
 		c.Server.HTTPAddr = v
 	} else if v := os.Getenv("HTTP_ADDR"); v != "" {
@@ -431,6 +476,22 @@ func (c *Config) ApplyEnvOverrides() {
 	}
 	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_TLS_CLIENT_CA_KEY_FILE"); v != "" {
 		c.RuntimeChannelServer.TLS.ClientCAKeyFile = v
+	}
+	if v, ok := os.LookupEnv("RUNTIME_DEPENDENCY_SCHEMA_VERSION"); ok {
+		n, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			return fmt.Errorf("RUNTIME_DEPENDENCY_SCHEMA_VERSION must be a positive uint32: %w", err)
+		}
+		c.RuntimeChannelServer.DependencyProfile.SchemaVersion = uint32(n)
+	}
+	if v, ok := os.LookupEnv("RUNTIME_DEPENDENCY_PROFILE_NAME"); ok {
+		c.RuntimeChannelServer.DependencyProfile.Name = v
+	}
+	if v, ok := os.LookupEnv("RUNTIME_DEPENDENCY_PROFILE_VERSION"); ok {
+		c.RuntimeChannelServer.DependencyProfile.Version = v
+	}
+	if v, ok := os.LookupEnv("RUNTIME_DEPENDENCY_CONTRACT_SHA256"); ok {
+		c.RuntimeChannelServer.DependencyProfile.ContractSHA256 = v
 	}
 
 	if dsn := os.Getenv("TIMESCALEDB_DSN"); dsn != "" {
@@ -535,6 +596,7 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("RUNTIME_COVERAGE_IMAGE"); v != "" {
 		c.Provisioning.Docker.Coverage.Image = v
 	}
+	return c.Validate()
 }
 
 func splitCSV(v string) []string {

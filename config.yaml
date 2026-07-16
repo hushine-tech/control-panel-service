@@ -4,6 +4,11 @@ server:
 
 runtime_channel_server:
   grpc_addr: ":50055"
+  dependency_profile:
+    schema_version: 1
+    name: "platform-python-3.13"
+    version: "1.0.0"
+    contract_sha256: "8457b3c35618558fc8bfc74d4135b7eb52e00c33a8c9a49d202830f3fd5b62c5"
   tls:
     enabled: true
     cert_file: ""

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +74,13 @@ type dockerCoverageRun struct {
 }
 
 const hostedRuntimePlatformLabelPrefix = "hushine.runtime"
+
+const (
+	hostedRuntimeDependencyFailureCode   = "RUNTIME_DEPENDENCY_PROFILE_INVALID"
+	hostedRuntimeDependencyFailureReason = "runtime dependency profile verification failed"
+)
+
+var hostedRuntimeFailureModuleRE = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*|[A-Za-z0-9][A-Za-z0-9._-]{0,127})$`)
 
 // NewDockerProvisioner constructs a DockerProvisioner. Pass
 // ExecCommandRunner{} in production; tests inject a stub.
@@ -218,6 +226,96 @@ func (d *DockerProvisioner) Diagnostics(ctx context.Context, handle string) (str
 		out = out[:4000] + "...<truncated>"
 	}
 	return out, nil
+}
+
+// StartupFailure promotes only the single exact JSON line emitted by the
+// runtime-agent dependency gate. Arbitrary container logs remain diagnostics.
+func (d *DockerProvisioner) StartupFailure(ctx context.Context, handle string) (StartupFailure, bool, error) {
+	if strings.TrimSpace(handle) == "" {
+		return StartupFailure{}, false, errors.New("startup failure: empty handle")
+	}
+	output, err := d.runner.Run(ctx, "docker", "logs", "--tail", "80", handle)
+	if err != nil {
+		return StartupFailure{}, false, fmt.Errorf("read hosted runtime startup logs: %w", err)
+	}
+	failure, ok := parseHostedRuntimeStartupFailure(output)
+	return failure, ok, nil
+}
+
+func parseHostedRuntimeStartupFailure(output []byte) (StartupFailure, bool) {
+	if len(output) == 0 || len(output) > 4096 {
+		return StartupFailure{}, false
+	}
+	line := string(output)
+	if strings.HasSuffix(line, "\r\n") {
+		line = strings.TrimSuffix(line, "\r\n")
+	} else if strings.HasSuffix(line, "\n") {
+		line = strings.TrimSuffix(line, "\n")
+	}
+	if line == "" || line != strings.TrimSpace(line) || strings.ContainsAny(line, "\r\n") {
+		return StartupFailure{}, false
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(line))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return StartupFailure{}, false
+	}
+	values := make(map[string]string, 7)
+	allowed := map[string]struct{}{
+		"code": {}, "module": {}, "profile_name": {}, "profile_version": {},
+		"image_build_id": {}, "source": {}, "reason": {},
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return StartupFailure{}, false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return StartupFailure{}, false
+		}
+		if _, ok := allowed[key]; !ok {
+			return StartupFailure{}, false
+		}
+		if _, duplicate := values[key]; duplicate {
+			return StartupFailure{}, false
+		}
+		var value string
+		if err := decoder.Decode(&value); err != nil {
+			return StartupFailure{}, false
+		}
+		values[key] = value
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') || len(values) != len(allowed) {
+		return StartupFailure{}, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return StartupFailure{}, false
+	}
+
+	failure := StartupFailure{
+		Code:           values["code"],
+		Module:         values["module"],
+		ProfileName:    values["profile_name"],
+		ProfileVersion: values["profile_version"],
+		ImageBuildID:   values["image_build_id"],
+		Source:         values["source"],
+		Reason:         values["reason"],
+	}
+	if failure.Code != hostedRuntimeDependencyFailureCode || failure.Source != "hosted" || failure.Reason != hostedRuntimeDependencyFailureReason {
+		return StartupFailure{}, false
+	}
+	if failure.Module != "" && (len(failure.Module) > 128 || !hostedRuntimeFailureModuleRE.MatchString(failure.Module)) {
+		return StartupFailure{}, false
+	}
+	for _, value := range []string{failure.ProfileName, failure.ProfileVersion, failure.ImageBuildID} {
+		if value == "" || len(value) > 256 || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00") {
+			return StartupFailure{}, false
+		}
+	}
+	return failure, true
 }
 
 // buildRunArgs assembles the `docker run` argument list. The optional coverage

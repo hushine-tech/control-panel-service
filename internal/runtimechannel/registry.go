@@ -32,7 +32,7 @@ type runtimeStream struct {
 
 func newRuntimeStream(rt AuthenticatedRuntime, now time.Time) *runtimeStream {
 	return &runtimeStream{
-		Runtime:     rt,
+		Runtime:     cloneAuthenticatedRuntime(rt),
 		openedAt:    now,
 		lastFrameAt: now,
 		closed:      make(chan struct{}),
@@ -242,7 +242,7 @@ func (r *Registry) Snapshot() []AuthenticatedRuntime {
 	defer r.mu.Unlock()
 	out := make([]AuthenticatedRuntime, 0, len(r.streamsByRuntime))
 	for _, s := range r.streamsByRuntime {
-		out = append(out, s.Runtime)
+		out = append(out, cloneAuthenticatedRuntime(s.Runtime))
 	}
 	return out
 }

@@ -979,7 +979,11 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 		// Best-effort cleanup. The result is persisted when the runtime row
 		// exists, so hosted deprovision failures are visible in Runtime
 		// Management instead of being reduced to a one-off startup error.
-		err = s.withRuntimeStartupDiagnostics(err, handle)
+		if structuredErr, recorded := s.recordHostedRuntimeStartupFailure(err, handle, plan); recorded {
+			err = structuredErr
+		} else {
+			err = s.withRuntimeStartupDiagnostics(err, handle)
+		}
 		s.deprovisionHostedRuntimeHandle(runtimeID, handle)
 		return EnsureHostedRuntimeResult{}, err
 	}
@@ -1094,6 +1098,69 @@ func (s *Service) withRuntimeStartupDiagnostics(err error, handle string) error 
 		return err
 	}
 	return fmt.Errorf("%w; runtime diagnostics: %s", err, diag)
+}
+
+func (s *Service) recordHostedRuntimeStartupFailure(original error, handle string, plan provision.Plan) (error, bool) {
+	if !errors.Is(original, ErrRegistrationTimeout) || handle == "" || s.provisioner == nil {
+		return original, false
+	}
+	provider, ok := s.provisioner.(provision.StartupFailureProvider)
+	if !ok {
+		return original, false
+	}
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	failure, found, err := provider.StartupFailure(lookupCtx, handle)
+	if err != nil || !found || !validHostedRuntimeStartupFailure(failure) {
+		return original, false
+	}
+
+	reason := fmt.Sprintf(
+		"module=%q profile=%q version=%q image_build_id=%q reason=%q",
+		failure.Module,
+		failure.ProfileName,
+		failure.ProfileVersion,
+		failure.ImageBuildID,
+		failure.Reason,
+	)
+	now := s.now().UTC()
+	recordCtx, cancelRecord := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRecord()
+	recordErr := s.repo.RecordRuntimeAdmissionFailure(recordCtx, domain.RuntimeAdmissionFailure{
+		UserID:             plan.UserID,
+		CredentialKeyID:    plan.RuntimeCredentialKeyID,
+		RequestedRuntimeID: plan.RuntimeID,
+		RequestedName:      plan.Name,
+		Source:             domain.RuntimeSourceHosted,
+		Role:               domain.CredentialRoleExecutor,
+		FailureCode:        failure.Code,
+		Reason:             reason,
+		FirstSeenAt:        now,
+		LastSeenAt:         now,
+		AttemptCount:       1,
+	})
+	if recordErr != nil {
+		return fmt.Errorf("%w: %s; structured startup failure could not be recorded", original, failure.Code), true
+	}
+	return fmt.Errorf("%w: %s: %s", original, failure.Code, reason), true
+}
+
+func validHostedRuntimeStartupFailure(failure provision.StartupFailure) bool {
+	if failure.Code != "RUNTIME_DEPENDENCY_PROFILE_INVALID" ||
+		failure.Source != domain.RuntimeSourceHosted ||
+		failure.Reason != "runtime dependency profile verification failed" {
+		return false
+	}
+	if failure.Module != "" && !safeRuntimeStartupFailureFact(failure.Module, 128) {
+		return false
+	}
+	return safeRuntimeStartupFailureFact(failure.ProfileName, 256) &&
+		safeRuntimeStartupFailureFact(failure.ProfileVersion, 256) &&
+		safeRuntimeStartupFailureFact(failure.ImageBuildID, 256)
+}
+
+func safeRuntimeStartupFailureFact(value string, maxLength int) bool {
+	return value != "" && len(value) <= maxLength && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\r\n\x00")
 }
 
 func (s *Service) findRuntimeByUserNameSource(ctx context.Context, userID int64, name, source string, includeEnded bool) (domain.Runtime, bool, error) {
