@@ -1098,7 +1098,7 @@ func TestInvokeStrategyUnaryByRuntimeIDSupportsValidateStrategySource(t *testing
 	go func() {
 		done <- svc.InvokeStrategyUnaryByRuntimeID(
 			context.Background(), 42, "runtime-validate", "ValidateStrategySource",
-			&strategyv1.ValidateStrategySourceRequest{UserId: 42, RuntimeId: "runtime-validate", Source: "import numpy"},
+			&strategyv1.ValidateStrategySourceRequest{UserId: 42, RuntimeId: "runtime-validate", Source: "import numpy", IncludeDeclarations: true},
 			response,
 		)
 	}()
@@ -1107,7 +1107,23 @@ func TestInvokeStrategyUnaryByRuntimeIDSupportsValidateStrategySource(t *testing
 	if request.GetRequest().GetMethod() != "ValidateStrategySource" {
 		t.Fatalf("method = %q, want ValidateStrategySource", request.GetRequest().GetMethod())
 	}
-	packed, err := anypb.New(&strategyv1.ValidateStrategySourceResponse{Ok: true, RuntimeProfile: completeDependencyProfile("normal-build")})
+	var forwarded strategyv1.ValidateStrategySourceRequest
+	if err := request.GetRequest().GetRequest().UnmarshalTo(&forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if !forwarded.GetIncludeDeclarations() || forwarded.GetSource() != "import numpy" {
+		t.Fatalf("forwarded request = %+v", &forwarded)
+	}
+	packed, err := anypb.New(&strategyv1.ValidateStrategySourceResponse{
+		Ok: true, RuntimeProfile: completeDependencyProfile("normal-build"),
+		DeclaredInputs: []*strategyv1.StrategyInputDeclaration{{
+			StreamId: "spot-btc", Exchange: "binance", Market: "spot",
+			Kind: "kline", Symbol: "BTCUSDT", Interval: "1m",
+		}},
+		DeclaredOrderTargets: []*strategyv1.StrategyOrderTargetBinding{{
+			Exchange: "binance", Market: "spot", Symbol: "BTCUSDT",
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1121,6 +1137,12 @@ func TestInvokeStrategyUnaryByRuntimeIDSupportsValidateStrategySource(t *testing
 	}
 	if !response.GetOk() || response.GetRuntimeProfile().GetImageBuildId() != "normal-build" {
 		t.Fatalf("response = %+v", response)
+	}
+	if len(response.GetDeclaredInputs()) != 1 || response.GetDeclaredInputs()[0].GetStreamId() != "spot-btc" {
+		t.Fatalf("declared inputs = %+v", response.GetDeclaredInputs())
+	}
+	if len(response.GetDeclaredOrderTargets()) != 1 || response.GetDeclaredOrderTargets()[0].GetSymbol() != "BTCUSDT" {
+		t.Fatalf("declared order targets = %+v", response.GetDeclaredOrderTargets())
 	}
 }
 
