@@ -37,6 +37,7 @@ const (
 
 type PortfolioPlatformClient interface {
 	GetPortfolio(ctx context.Context, in *portfoliov1.GetPortfolioRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error)
+	GetVenue(ctx context.Context, in *portfoliov1.GetVenueRequest, opts ...grpc.CallOption) (*portfoliov1.GetVenueResponse, error)
 	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
 	ListSessions(ctx context.Context, in *portfoliov1.ListSessionsRequest, opts ...grpc.CallOption) (*portfoliov1.ListSessionsResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *portfoliov1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error)
@@ -52,6 +53,7 @@ type PortfolioPlatformClient interface {
 type OrderPlatformClient interface {
 	PlaceOrder(ctx context.Context, in *orderv1.PlaceOrderRequest, opts ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error)
 	ResolveOrderAttempt(ctx context.Context, in *orderv1.ResolveOrderAttemptRequest, opts ...grpc.CallOption) (*orderv1.ResolveOrderAttemptResponse, error)
+	CloseSpotTargets(ctx context.Context, in *orderv1.CloseSpotTargetsRequest, opts ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error)
 }
 
 type MarketDataPlatformServer interface {
@@ -315,6 +317,50 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		}
 		return p.requireOrder().ResolveOrderAttempt(ctx, req)
 
+	case "order.CloseSpotTargets":
+		req := &orderv1.CloseSpotTargetsRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		if req.GetPortfolioId() <= 0 || req.GetStrategyId() <= 0 || strings.TrimSpace(req.GetOperationId()) == "" || len(req.GetTargets()) == 0 {
+			return nil, status.Error(codes.InvalidArgument, "portfolio_id, strategy_id, operation_id, and targets are required")
+		}
+		req.UserId = rt.UserID
+		if err := p.ensurePortfolioOwner(ctx, rt, req.GetPortfolioId()); err != nil {
+			return nil, err
+		}
+		session, err := p.ownedSession(ctx, rt, req.GetSessionId(), sessionActiveOnly)
+		if err != nil {
+			return nil, err
+		}
+		if session.GetPortfolioId() != req.GetPortfolioId() || session.GetStrategyId() != req.GetStrategyId() ||
+			(session.GetUserId() != 0 && session.GetUserId() != rt.UserID) {
+			return nil, status.Error(codes.PermissionDenied, "Spot close ownership facts do not match the active Session")
+		}
+		for _, target := range req.GetTargets() {
+			if target == nil || target.GetVenueId() <= 0 || target.GetExchange() != 1 || target.GetMarket() != 1 || strings.TrimSpace(target.GetSymbol()) == "" {
+				return nil, status.Error(codes.InvalidArgument, "every Spot close target must be a Binance Spot route")
+			}
+			target.Symbol = strings.ToUpper(strings.TrimSpace(target.GetSymbol()))
+			venueResp, err := p.requirePortfolio().GetVenue(ctx, &portfoliov1.GetVenueRequest{UserId: rt.UserID, VenueId: target.GetVenueId()})
+			if err != nil {
+				return nil, err
+			}
+			venue := venueResp.GetVenue()
+			if venue == nil {
+				return nil, status.Error(codes.NotFound, "Spot close Venue was not found")
+			}
+			if venue.GetUserId() != rt.UserID || venue.GetPortfolioId() != req.GetPortfolioId() ||
+				venue.GetExchange() != target.GetExchange() || venue.GetMarket() != target.GetMarket() ||
+				venue.GetEnvironment() != session.GetEnvironment() || venue.GetStatus() != 1 {
+				return nil, status.Error(codes.PermissionDenied, "Spot close target route does not belong to the active Session")
+			}
+		}
+		return p.requireOrder().CloseSpotTargets(ctx, req)
+
 	case "marketdata.GetMarketDataStreamStatus":
 		req := &mdv1.GetMarketDataStreamStatusRequest{}
 		if err := unpackRuntimePayload(payload, req); err != nil {
@@ -522,43 +568,48 @@ func (p *PlatformProxy) ensurePortfolioOwner(ctx context.Context, rt Authenticat
 }
 
 func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt AuthenticatedRuntime, sessionID string, statusPolicy sessionStatusPolicy) error {
+	_, err := p.ownedSession(ctx, rt, sessionID, statusPolicy)
+	return err
+}
+
+func (p *PlatformProxy) ownedSession(ctx context.Context, rt AuthenticatedRuntime, sessionID string, statusPolicy sessionStatusPolicy) (*portfoliov1.StrategySessionEntry, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return status.Error(codes.InvalidArgument, "session_id is required")
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 	resp, err := p.requirePortfolio().GetSession(ctx, &portfoliov1.GetSessionRequest{
 		SessionId: sessionID,
 		UserId:    rt.UserID,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	session := resp.GetSession()
 	if session == nil {
-		return status.Error(codes.NotFound, "session not found")
+		return nil, status.Error(codes.NotFound, "session not found")
 	}
 	if session.GetUserId() != 0 && session.GetUserId() != rt.UserID {
-		return status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
+		return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
 	}
 	if session.GetRuntimeId() == "" {
-		return status.Error(codes.FailedPrecondition, "session is not bound to a runtime")
+		return nil, status.Error(codes.FailedPrecondition, "session is not bound to a runtime")
 	}
 	if session.GetRuntimeId() != rt.RuntimeID {
-		return status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime")
+		return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime")
 	}
 	switch strings.ToLower(strings.TrimSpace(session.GetStatus())) {
 	case "running", "stopping":
-		return nil
+		return session, nil
 	case "pending":
 		if statusPolicy == sessionAllowPending || statusPolicy == sessionAllowAnyStatus {
-			return nil
+			return session, nil
 		}
 	default:
 		if statusPolicy == sessionAllowAnyStatus {
-			return nil
+			return session, nil
 		}
 	}
-	return status.Errorf(codes.FailedPrecondition, "session %s is not active: %s", sessionID, session.GetStatus())
+	return nil, status.Errorf(codes.FailedPrecondition, "session %s is not active: %s", sessionID, session.GetStatus())
 }
 
 func unpackRuntimePayload(payload *anypb.Any, out proto.Message) error {
@@ -606,6 +657,8 @@ func canonicalPlatformMethod(method string) string {
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
 		return "order.ResolveOrderAttempt"
+	case "CloseSpotTargets", "order.v1.OrderService/CloseSpotTargets":
+		return "order.CloseSpotTargets"
 	case "GetMarketDataStreamStatus", "marketdata.v1.MarketDataControlPlaneService/GetMarketDataStreamStatus", "controlpanel.marketdata.v1.MarketDataControlPlaneService/GetMarketDataStreamStatus":
 		return "marketdata.GetMarketDataStreamStatus"
 	case "FetchKlines":
@@ -1084,6 +1137,9 @@ type unavailablePortfolioClient struct{}
 func (unavailablePortfolioClient) GetPortfolio(context.Context, *portfoliov1.GetPortfolioRequest, ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
+func (unavailablePortfolioClient) GetVenue(context.Context, *portfoliov1.GetVenueRequest, ...grpc.CallOption) (*portfoliov1.GetVenueResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
 func (unavailablePortfolioClient) GetSession(context.Context, *portfoliov1.GetSessionRequest, ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
@@ -1121,6 +1177,9 @@ func (unavailableOrderClient) PlaceOrder(context.Context, *orderv1.PlaceOrderReq
 	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
 }
 func (unavailableOrderClient) ResolveOrderAttempt(context.Context, *orderv1.ResolveOrderAttemptRequest, ...grpc.CallOption) (*orderv1.ResolveOrderAttemptResponse, error) {
+	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
+}
+func (unavailableOrderClient) CloseSpotTargets(context.Context, *orderv1.CloseSpotTargetsRequest, ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error) {
 	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
 }
 

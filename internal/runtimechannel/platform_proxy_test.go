@@ -438,6 +438,80 @@ func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
 	}
 }
 
+func TestCloseSpotTargetsProxyRequiresActiveSessionOwnershipAndForwardsCanonicalFacts(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "session-1", UserId: 42, RuntimeId: "runtime-1", Status: "running",
+			PortfolioId: 8, StrategyId: 9, Environment: 1,
+		},
+		venue: &portfoliov1.VenueEntry{
+			VenueId: 10, UserId: 42, PortfolioId: 8, Exchange: 1, Market: 1, Environment: 1, Status: 1,
+		},
+	}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, err := anypb.New(&orderv1.CloseSpotTargetsRequest{
+		PortfolioId: 8, StrategyId: 9, SessionId: "session-1", OperationId: "stop-1",
+		Targets: []*orderv1.SpotCloseTarget{{VenueId: 10, Exchange: 1, Market: 1, Symbol: "btcusdt"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.CloseSpotTargets", payload); err != nil {
+		t.Fatal(err)
+	}
+	if order.closeReq == nil || order.closeReq.GetUserId() != 42 || order.closeReq.GetOperationId() != "stop-1" ||
+		order.closeReq.GetTargets()[0].GetSymbol() != "BTCUSDT" {
+		t.Fatalf("forwarded close request=%+v", order.closeReq)
+	}
+}
+
+func TestCloseSpotTargetsProxyRejectsSessionRuntimeMismatchBeforeCoreOrderCall(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "session-1", UserId: 42, RuntimeId: "runtime-other", Status: "running",
+		PortfolioId: 8, StrategyId: 9, Environment: 1,
+	}}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, err := anypb.New(&orderv1.CloseSpotTargetsRequest{
+		PortfolioId: 8, StrategyId: 9, SessionId: "session-1", OperationId: "stop-1",
+		Targets: []*orderv1.SpotCloseTarget{{VenueId: 10, Exchange: 1, Market: 1, Symbol: "BTCUSDT"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, callErr := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.CloseSpotTargets", payload)
+	if status.Code(callErr) != codes.PermissionDenied || order.closeReq != nil {
+		t.Fatalf("err=%v closeReq=%+v", callErr, order.closeReq)
+	}
+}
+
+func TestCloseSpotTargetsProxyRejectsRouteOutsideSessionPortfolio(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "session-1", UserId: 42, RuntimeId: "runtime-1", Status: "running",
+			PortfolioId: 8, StrategyId: 9, Environment: 1,
+		},
+		venue: &portfoliov1.VenueEntry{VenueId: 10, UserId: 42, PortfolioId: 99, Exchange: 1, Market: 1, Environment: 1, Status: 1},
+	}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, _ := anypb.New(&orderv1.CloseSpotTargetsRequest{
+		PortfolioId: 8, StrategyId: 9, SessionId: "session-1", OperationId: "stop-1",
+		Targets: []*orderv1.SpotCloseTarget{{VenueId: 10, Exchange: 1, Market: 1, Symbol: "BTCUSDT"}},
+	})
+	_, callErr := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.CloseSpotTargets", payload)
+	if status.Code(callErr) != codes.PermissionDenied || order.closeReq != nil {
+		t.Fatalf("err=%v closeReq=%+v", callErr, order.closeReq)
+	}
+}
+
 func TestPlatformProxyUpdatePortfolioSnapshotIsRejected(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
@@ -1164,6 +1238,15 @@ type fakePortfolioPlatformClient struct {
 	walletStateUpdateReq *portfoliov1.UpdatePortfolioWalletStateRequest
 	preflightReq         *portfoliov1.PreflightStrategySessionRequest
 	session              *portfoliov1.StrategySessionEntry
+	venue                *portfoliov1.VenueEntry
+}
+
+func (f *fakePortfolioPlatformClient) GetVenue(_ context.Context, req *portfoliov1.GetVenueRequest, _ ...grpc.CallOption) (*portfoliov1.GetVenueResponse, error) {
+	venue := f.venue
+	if venue == nil {
+		venue = &portfoliov1.VenueEntry{VenueId: req.GetVenueId(), UserId: req.GetUserId(), PortfolioId: 8, Exchange: 1, Market: 1, Environment: 1, Status: 1}
+	}
+	return &portfoliov1.GetVenueResponse{Venue: venue}, nil
 }
 
 func (f *fakePortfolioPlatformClient) GetPortfolio(_ context.Context, req *portfoliov1.GetPortfolioRequest, _ ...grpc.CallOption) (*portfoliov1.GetPortfolioResponse, error) {
@@ -1259,6 +1342,12 @@ func (f *fakePortfolioPlatformClient) SaveStrategyIndicators(_ context.Context, 
 
 type fakeOrderPlatformClient struct {
 	placeReq *orderv1.PlaceOrderRequest
+	closeReq *orderv1.CloseSpotTargetsRequest
+}
+
+func (f *fakeOrderPlatformClient) CloseSpotTargets(_ context.Context, req *orderv1.CloseSpotTargetsRequest, _ ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error) {
+	f.closeReq = req
+	return &orderv1.CloseSpotTargetsResponse{Status: "stopped", OperationId: req.GetOperationId()}, nil
 }
 
 func (f *fakeOrderPlatformClient) PlaceOrder(_ context.Context, req *orderv1.PlaceOrderRequest, _ ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error) {
