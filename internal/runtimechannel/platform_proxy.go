@@ -53,6 +53,7 @@ type PortfolioPlatformClient interface {
 type OrderPlatformClient interface {
 	PlaceOrder(ctx context.Context, in *orderv1.PlaceOrderRequest, opts ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error)
 	ResolveOrderAttempt(ctx context.Context, in *orderv1.ResolveOrderAttemptRequest, opts ...grpc.CallOption) (*orderv1.ResolveOrderAttemptResponse, error)
+	ListOrderLifecycleEvents(ctx context.Context, in *orderv1.ListOrderLifecycleEventsRequest, opts ...grpc.CallOption) (*orderv1.ListOrderLifecycleEventsResponse, error)
 	CloseSpotTargets(ctx context.Context, in *orderv1.CloseSpotTargetsRequest, opts ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error)
 }
 
@@ -316,6 +317,16 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		return p.requireOrder().ResolveOrderAttempt(ctx, req)
+
+	case "order.ListOrderLifecycleEvents":
+		req := &orderv1.ListOrderLifecycleEventsRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionActiveOnly); err != nil {
+			return nil, err
+		}
+		return p.requireOrder().ListOrderLifecycleEvents(ctx, req)
 
 	case "order.CloseSpotTargets":
 		req := &orderv1.CloseSpotTargetsRequest{}
@@ -657,6 +668,8 @@ func canonicalPlatformMethod(method string) string {
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
 		return "order.ResolveOrderAttempt"
+	case "ListOrderLifecycleEvents", "order.v1.OrderService/ListOrderLifecycleEvents":
+		return "order.ListOrderLifecycleEvents"
 	case "CloseSpotTargets", "order.v1.OrderService/CloseSpotTargets":
 		return "order.CloseSpotTargets"
 	case "GetMarketDataStreamStatus", "marketdata.v1.MarketDataControlPlaneService/GetMarketDataStreamStatus", "controlpanel.marketdata.v1.MarketDataControlPlaneService/GetMarketDataStreamStatus":
@@ -1177,6 +1190,9 @@ func (unavailableOrderClient) PlaceOrder(context.Context, *orderv1.PlaceOrderReq
 	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
 }
 func (unavailableOrderClient) ResolveOrderAttempt(context.Context, *orderv1.ResolveOrderAttemptRequest, ...grpc.CallOption) (*orderv1.ResolveOrderAttemptResponse, error) {
+	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
+}
+func (unavailableOrderClient) ListOrderLifecycleEvents(context.Context, *orderv1.ListOrderLifecycleEventsRequest, ...grpc.CallOption) (*orderv1.ListOrderLifecycleEventsResponse, error) {
 	return nil, status.Error(codes.Unavailable, "order-service platform client is not configured")
 }
 func (unavailableOrderClient) CloseSpotTargets(context.Context, *orderv1.CloseSpotTargetsRequest, ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error) {

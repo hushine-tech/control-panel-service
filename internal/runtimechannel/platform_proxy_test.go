@@ -512,6 +512,51 @@ func TestCloseSpotTargetsProxyRejectsRouteOutsideSessionPortfolio(t *testing.T) 
 	}
 }
 
+func TestListOrderLifecycleEventsProxyRequiresSessionOwnershipAndForwardsCursor(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "session-1", UserId: 42, RuntimeId: "runtime-1", Status: "stopping",
+		PortfolioId: 8, StrategyId: 9, Environment: 1,
+	}}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, err := anypb.New(&orderv1.ListOrderLifecycleEventsRequest{
+		SessionId: "session-1", AfterEventId: 10, Limit: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.ListOrderLifecycleEvents", payload); err != nil {
+		t.Fatal(err)
+	}
+	if order.lifecycleReq == nil || order.lifecycleReq.GetSessionId() != "session-1" ||
+		order.lifecycleReq.GetAfterEventId() != 10 || order.lifecycleReq.GetLimit() != 50 {
+		t.Fatalf("forwarded lifecycle request=%+v", order.lifecycleReq)
+	}
+}
+
+func TestListOrderLifecycleEventsProxyRejectsRuntimeMismatchBeforeCoreOrderCall(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "session-1", UserId: 42, RuntimeId: "runtime-other", Status: "running",
+		PortfolioId: 8, StrategyId: 9, Environment: 1,
+	}}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, err := anypb.New(&orderv1.ListOrderLifecycleEventsRequest{SessionId: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, callErr := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.ListOrderLifecycleEvents", payload)
+	if status.Code(callErr) != codes.PermissionDenied || order.lifecycleReq != nil {
+		t.Fatalf("err=%v lifecycleReq=%+v", callErr, order.lifecycleReq)
+	}
+}
+
 func TestPlatformProxyUpdatePortfolioSnapshotIsRejected(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
@@ -1341,13 +1386,19 @@ func (f *fakePortfolioPlatformClient) SaveStrategyIndicators(_ context.Context, 
 }
 
 type fakeOrderPlatformClient struct {
-	placeReq *orderv1.PlaceOrderRequest
-	closeReq *orderv1.CloseSpotTargetsRequest
+	placeReq     *orderv1.PlaceOrderRequest
+	closeReq     *orderv1.CloseSpotTargetsRequest
+	lifecycleReq *orderv1.ListOrderLifecycleEventsRequest
 }
 
 func (f *fakeOrderPlatformClient) CloseSpotTargets(_ context.Context, req *orderv1.CloseSpotTargetsRequest, _ ...grpc.CallOption) (*orderv1.CloseSpotTargetsResponse, error) {
 	f.closeReq = req
 	return &orderv1.CloseSpotTargetsResponse{Status: "stopped", OperationId: req.GetOperationId()}, nil
+}
+
+func (f *fakeOrderPlatformClient) ListOrderLifecycleEvents(_ context.Context, req *orderv1.ListOrderLifecycleEventsRequest, _ ...grpc.CallOption) (*orderv1.ListOrderLifecycleEventsResponse, error) {
+	f.lifecycleReq = req
+	return &orderv1.ListOrderLifecycleEventsResponse{}, nil
 }
 
 func (f *fakeOrderPlatformClient) PlaceOrder(_ context.Context, req *orderv1.PlaceOrderRequest, _ ...grpc.CallOption) (*orderv1.PlaceOrderResponse, error) {
