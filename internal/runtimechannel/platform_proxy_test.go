@@ -514,6 +514,76 @@ func TestPlatformProxyUpdatePortfolioWalletStateChecksSessionAndInjectsUser(t *t
 	}
 }
 
+func TestPlatformProxyAllowsStrategyStartWalletUpdateForPendingSession(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-pending",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "pending",
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{
+		PortfolioId:    7,
+		SessionId:      "sess-pending",
+		SnapshotReason: 2,
+		Futures:        &portfoliov1.FuturesWallet{WalletBalance: 1000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"portfolio.UpdatePortfolioWalletState",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("strategy_start wallet update on pending session: %v", err)
+	}
+	if portfolio.walletStateUpdateReq.GetUserId() != 42 ||
+		portfolio.walletStateUpdateReq.GetSessionId() != "sess-pending" ||
+		portfolio.walletStateUpdateReq.GetSnapshotReason() != 2 {
+		t.Fatalf("wallet update req = %+v", portfolio.walletStateUpdateReq)
+	}
+}
+
+func TestPlatformProxyRejectsPeriodicWalletUpdateForPendingSession(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-pending",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "pending",
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{
+		PortfolioId:    7,
+		SessionId:      "sess-pending",
+		SnapshotReason: 6,
+		Futures:        &portfoliov1.FuturesWallet{WalletBalance: 1000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+		"portfolio.UpdatePortfolioWalletState",
+		payload,
+	)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+	if portfolio.walletStateUpdateReq != nil {
+		t.Fatalf("periodic wallet update should not reach core: %+v", portfolio.walletStateUpdateReq)
+	}
+}
+
 func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{
 		session: &portfoliov1.StrategySessionEntry{

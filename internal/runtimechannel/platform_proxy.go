@@ -22,8 +22,17 @@ import (
 )
 
 const (
-	portfolioSnapshotReasonStrategyEnd = 3
-	backtestPageSize                   = 8192
+	portfolioSnapshotReasonStrategyStart = 2
+	portfolioSnapshotReasonStrategyEnd   = 3
+	backtestPageSize                     = 8192
+)
+
+type sessionStatusPolicy uint8
+
+const (
+	sessionActiveOnly sessionStatusPolicy = iota
+	sessionAllowPending
+	sessionAllowAnyStatus
 )
 
 type PortfolioPlatformClient interface {
@@ -201,8 +210,14 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if strings.TrimSpace(req.GetSessionId()) == "" {
 			return nil, status.Error(codes.InvalidArgument, "session_id is required")
 		}
-		allowTerminalSession := req.GetSnapshotReason() == portfolioSnapshotReasonStrategyEnd
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), allowTerminalSession); err != nil {
+		statusPolicy := sessionActiveOnly
+		switch req.GetSnapshotReason() {
+		case portfolioSnapshotReasonStrategyStart:
+			statusPolicy = sessionAllowPending
+		case portfolioSnapshotReasonStrategyEnd:
+			statusPolicy = sessionAllowAnyStatus
+		}
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), statusPolicy); err != nil {
 			return nil, err
 		}
 		return p.requirePortfolio().UpdatePortfolioWalletState(ctx, req)
@@ -255,7 +270,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if req.GetRuntimeId() != "" && req.GetRuntimeId() != rt.RuntimeID {
 			return nil, status.Error(codes.PermissionDenied, "session runtime_id does not match authenticated runtime")
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionAllowAnyStatus); err != nil {
 			return nil, err
 		}
 		req.RuntimeId = rt.RuntimeID
@@ -269,7 +284,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
 			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionAllowAnyStatus); err != nil {
 			return nil, err
 		}
 		req.UserId = rt.UserID
@@ -284,7 +299,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		if req.GetSessionId() != "" {
-			if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+			if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionActiveOnly); err != nil {
 				return nil, err
 			}
 		}
@@ -345,7 +360,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if req.RuntimeID != "" && req.RuntimeID != rt.RuntimeID {
 			return nil, status.Error(codes.PermissionDenied, "dataset runtime_id does not match authenticated runtime")
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.SessionID); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.SessionID, sessionActiveOnly); err != nil {
 			return nil, err
 		}
 		return p.deliverDataset(ctx, rt, req)
@@ -360,7 +375,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 				return nil, err
 			}
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId()); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionActiveOnly); err != nil {
 			return nil, err
 		}
 		return p.requireMarketData().CreateOrRenewMarketDataLease(ctx, req)
@@ -370,7 +385,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionAllowAnyStatus); err != nil {
 			return nil, err
 		}
 		return p.requireMarketData().ReleaseMarketDataLease(ctx, req)
@@ -399,7 +414,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, status.Error(codes.PermissionDenied, "subscription runtime_id does not match authenticated runtime")
 		}
 		req.RuntimeId = rt.RuntimeID
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), true); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionAllowAnyStatus); err != nil {
 			return nil, err
 		}
 		return p.requireMarketData().ReleaseSessionMarketDataSubscriptions(ctx, req)
@@ -506,7 +521,7 @@ func (p *PlatformProxy) ensurePortfolioOwner(ctx context.Context, rt Authenticat
 	return nil
 }
 
-func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt AuthenticatedRuntime, sessionID string, allowTerminal ...bool) error {
+func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt AuthenticatedRuntime, sessionID string, statusPolicy sessionStatusPolicy) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return status.Error(codes.InvalidArgument, "session_id is required")
@@ -534,12 +549,16 @@ func (p *PlatformProxy) ensureSessionOwner(ctx context.Context, rt Authenticated
 	switch strings.ToLower(strings.TrimSpace(session.GetStatus())) {
 	case "running", "stopping":
 		return nil
-	default:
-		if len(allowTerminal) > 0 && allowTerminal[0] {
+	case "pending":
+		if statusPolicy == sessionAllowPending || statusPolicy == sessionAllowAnyStatus {
 			return nil
 		}
-		return status.Errorf(codes.FailedPrecondition, "session %s is not active: %s", sessionID, session.GetStatus())
+	default:
+		if statusPolicy == sessionAllowAnyStatus {
+			return nil
+		}
 	}
+	return status.Errorf(codes.FailedPrecondition, "session %s is not active: %s", sessionID, session.GetStatus())
 }
 
 func unpackRuntimePayload(payload *anypb.Any, out proto.Message) error {
@@ -916,7 +935,7 @@ func (p *PlatformProxy) emitRuntimeLog(ctx context.Context, rt AuthenticatedRunt
 		}
 	}
 	if sessionID := stringField(fields, "session_id"); strings.TrimSpace(sessionID) != "" {
-		if err := p.ensureSessionOwner(ctx, rt, sessionID); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, sessionID, sessionActiveOnly); err != nil {
 			return nil, err
 		}
 	}
@@ -960,7 +979,7 @@ func (p *PlatformProxy) publishRuntimeNotification(ctx context.Context, rt Authe
 	}
 	sessionID := strings.TrimSpace(stringField(fields, "session_id"))
 	if sessionID != "" {
-		if err := p.ensureSessionOwner(ctx, rt, sessionID); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, sessionID, sessionActiveOnly); err != nil {
 			return nil, err
 		}
 	}
