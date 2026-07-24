@@ -122,6 +122,17 @@ func (s *Service) MetricsSnapshot() []StreamMetric {
 	return s.registry.MetricsSnapshot(s.now().UTC())
 }
 
+// CloseAllStreams makes RuntimeChannel shutdown finite. RuntimeChannel is a
+// deliberately long-lived bidi stream, so grpc.GracefulStop alone would wait
+// for connected agents indefinitely instead of letting them reconnect to the
+// replacement control-panel instance.
+func (s *Service) CloseAllStreams() int {
+	if s == nil || s.registry == nil {
+		return 0
+	}
+	return s.registry.CloseAll()
+}
+
 type recvResult struct {
 	frame *cpv1.RuntimeFrame
 	err   error
@@ -152,6 +163,12 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 	}
 	rs, err := s.registry.Register(rt, s.now().UTC())
 	if err != nil {
+		if clearErr := s.repo.ClearRuntimeConnectionOwner(context.Background(), rt.RuntimeID, s.instanceID); clearErr != nil {
+			return status.Errorf(codes.Unavailable, "rollback runtime connection owner: %v", clearErr)
+		}
+		if errors.Is(err, ErrRegistryClosed) {
+			return status.Error(codes.Unavailable, "runtime channel service is shutting down")
+		}
 		if errors.Is(err, ErrRuntimeCredentialConnected) {
 			return status.Error(codes.PermissionDenied, "runtime credential is already connected by another runtime")
 		}

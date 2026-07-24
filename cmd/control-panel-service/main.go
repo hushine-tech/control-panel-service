@@ -485,10 +485,36 @@ func main() {
 	defer shutdownCancel()
 
 	_ = httpSrv.Shutdown(shutdownCtx)
-	grpcSrv.GracefulStop()
-	runtimeChannelGRPCSrv.GracefulStop()
+	runtimeChannelSvc.CloseAllStreams()
+	stopGRPCServer(shutdownCtx, runtimeChannelGRPCSrv)
+	stopGRPCServer(shutdownCtx, grpcSrv)
 
 	logger.Info(context.Background(), "system", "control-panel-service stopped")
+}
+
+type grpcStopper interface {
+	GracefulStop()
+	Stop()
+}
+
+func stopGRPCServer(ctx context.Context, server grpcStopper) {
+	done := make(chan struct{})
+	go func() {
+		server.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return
+	case <-ctx.Done():
+		select {
+		case <-done:
+			return
+		default:
+		}
+		server.Stop()
+		<-done
+	}
 }
 
 func runtimeCoverageStartupLog(coverage config.DockerCoverageConfig) string {

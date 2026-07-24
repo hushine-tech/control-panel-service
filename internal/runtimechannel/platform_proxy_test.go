@@ -438,6 +438,83 @@ func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
 	}
 }
 
+// TestFuturesRuntimeChannelOrderAndStopProxyUnchanged is the named release
+// guard for Futures requests crossing the RuntimeChannel platform proxy after
+// shared Spot routing and stop changes.
+func TestFuturesRuntimeChannelOrderAndStopProxyUnchanged(t *testing.T) {
+	t.Run("ordinary limit order preserves Futures route and exact fields", func(t *testing.T) {
+		portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+			SessionId: "futures-running", UserId: 42, RuntimeId: "runtime-1", Status: "running",
+			PortfolioId: 7, StrategyId: 9, Environment: 1,
+		}}
+		order := &fakeOrderPlatformClient{}
+		proxy := NewPlatformProxy(portfolio, order, nil)
+		price := "2499.50000000"
+		payload, err := anypb.New(&orderv1.PlaceOrderRequest{
+			PortfolioId: 7, StrategyId: 9, SessionId: "futures-running",
+			Exchange: 1, Market: 2, PositionSide: 0, Symbol: "ETHUSDT", Side: "BUY",
+			OrderType: "LIMIT", TimeInForce: "GTC", QtyDecimal: "0.25000000",
+			PriceDecimal: &price, MarkPriceDecimal: "2500.00000000",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+			UserID: 42, RuntimeID: "runtime-1", Name: "hosted",
+		}, "order.v1.OrderService/PlaceOrder", payload); err != nil {
+			t.Fatalf("DispatchRuntimeRequest: %v", err)
+		}
+		got := order.placeReq
+		if got == nil || got.GetExchange() != 1 || got.GetMarket() != 2 || got.GetSymbol() != "ETHUSDT" || got.GetOrderType() != "LIMIT" || got.GetTimeInForce() != "GTC" {
+			t.Fatalf("forwarded Futures route/order = %#v", got)
+		}
+		if got.GetQtyDecimal() != "0.25000000" || got.GetPriceDecimal() != price || got.GetMarkPriceDecimal() != "2500.00000000" || got.GetReduceOnly() {
+			t.Fatalf("forwarded exact/control fields = %#v", got)
+		}
+		if portfolio.getPortfolioReq.GetUserId() != 42 || portfolio.getSessionReq.GetUserId() != 42 {
+			t.Fatalf("ownership requests portfolio=%#v session=%#v", portfolio.getPortfolioReq, portfolio.getSessionReq)
+		}
+	})
+
+	t.Run("stopping session may issue only its owned Futures reduce-only close", func(t *testing.T) {
+		portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+			SessionId: "futures-stopping", UserId: 42, RuntimeId: "runtime-1", Status: "stopping",
+			PortfolioId: 7, StrategyId: 9, Environment: 1,
+		}}
+		order := &fakeOrderPlatformClient{}
+		proxy := NewPlatformProxy(portfolio, order, nil)
+		payload, err := anypb.New(&orderv1.PlaceOrderRequest{
+			PortfolioId: 7, StrategyId: 9, SessionId: "futures-stopping",
+			Exchange: 1, Market: 2, PositionSide: 0, Symbol: "BTCUSDT", Side: "SELL",
+			OrderType: "MARKET", ReduceOnly: true, QtyDecimal: "0.01000000",
+			MarkPriceDecimal: "50000.00000000",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+			UserID: 42, RuntimeID: "runtime-1", Name: "hosted",
+		}, "order.PlaceOrder", payload); err != nil {
+			t.Fatalf("DispatchRuntimeRequest: %v", err)
+		}
+		got := order.placeReq
+		if got == nil || got.GetMarket() != 2 || got.GetSide() != "SELL" || got.GetOrderType() != "MARKET" || !got.GetReduceOnly() || got.GetSessionId() != "futures-stopping" {
+			t.Fatalf("forwarded Futures stop order = %#v", got)
+		}
+
+		order.placeReq = nil
+		portfolio.session.RuntimeId = "runtime-other"
+		_, callErr := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+			UserID: 42, RuntimeID: "runtime-1", Name: "hosted",
+		}, "order.PlaceOrder", payload)
+		if status.Code(callErr) != codes.PermissionDenied || order.placeReq != nil {
+			t.Fatalf("foreign stop route err=%v forwarded=%#v", callErr, order.placeReq)
+		}
+	})
+}
+
 func TestCloseSpotTargetsProxyRequiresActiveSessionOwnershipAndForwardsCanonicalFacts(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{
 		session: &portfoliov1.StrategySessionEntry{
@@ -533,6 +610,30 @@ func TestListOrderLifecycleEventsProxyRequiresSessionOwnershipAndForwardsCursor(
 	}
 	if order.lifecycleReq == nil || order.lifecycleReq.GetSessionId() != "session-1" ||
 		order.lifecycleReq.GetAfterEventId() != 10 || order.lifecycleReq.GetLimit() != 50 {
+		t.Fatalf("forwarded lifecycle request=%+v", order.lifecycleReq)
+	}
+}
+
+func TestListOrderLifecycleEventsProxyAllowsOwnedPendingSessionDuringActivation(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "session-pending", UserId: 42, RuntimeId: "runtime-1", Status: "pending",
+		PortfolioId: 8, StrategyId: 9, Environment: 0,
+	}}
+	order := &fakeOrderPlatformClient{}
+	proxy := NewPlatformProxy(portfolio, order, nil)
+	payload, err := anypb.New(&orderv1.ListOrderLifecycleEventsRequest{
+		SessionId: "session-pending", AfterEventId: 0, Limit: 500,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{
+		RuntimeID: "runtime-1", UserID: 42,
+	}, "order.ListOrderLifecycleEvents", payload); err != nil {
+		t.Fatal(err)
+	}
+	if order.lifecycleReq == nil || order.lifecycleReq.GetSessionId() != "session-pending" {
 		t.Fatalf("forwarded lifecycle request=%+v", order.lifecycleReq)
 	}
 }

@@ -835,6 +835,69 @@ func TestRuntimeChannelRecordsAndClearsConnectionOwner(t *testing.T) {
 	}
 }
 
+func TestRuntimeChannelShutdownClosesAllActiveStreams(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
+	svc := NewWithInstanceID(repo, "cp-shutdown")
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+	_ = waitForHelloAck(t, stream)
+
+	if closed := svc.CloseAllStreams(); closed != 1 {
+		t.Fatalf("CloseAllStreams closed = %d, want 1", closed)
+	}
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.PermissionDenied {
+			t.Fatalf("Handle error = %v, want PermissionDenied closed stream", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Handle did not exit after CloseAllStreams")
+	}
+	if !repo.ownerCleared || repo.ownerInstance != "" {
+		t.Fatalf("owner clear = %v owner=%q, want cleared", repo.ownerCleared, repo.ownerInstance)
+	}
+	if snap := svc.RegistrySnapshot(); len(snap) != 0 {
+		t.Fatalf("registry after shutdown = %+v, want empty", snap)
+	}
+}
+
+func TestRuntimeChannelShutdownRejectsLateReconnectWithoutLeakingOwner(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
+	svc := NewWithInstanceID(repo, "cp-shutdown")
+	svc.SetClock(func() time.Time { return now })
+
+	if closed := svc.CloseAllStreams(); closed != 0 {
+		t.Fatalf("CloseAllStreams closed = %d, want 0", closed)
+	}
+
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("Handle error = %v, want Unavailable shutdown rejection", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late reconnect was not rejected after shutdown")
+	}
+	if !repo.ownerCleared || repo.ownerInstance != "" {
+		t.Fatalf("owner clear = %v owner=%q, want no leaked shutdown owner", repo.ownerCleared, repo.ownerInstance)
+	}
+}
+
 func TestRegistryRejectsSameCredentialForDifferentRuntime(t *testing.T) {
 	registry := NewRegistry()
 	now := time.Unix(1_700_000_000, 0)

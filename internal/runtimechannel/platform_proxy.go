@@ -323,7 +323,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err := unpackRuntimePayload(payload, req); err != nil {
 			return nil, err
 		}
-		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionActiveOnly); err != nil {
+		if err := p.ensureSessionOwner(ctx, rt, req.GetSessionId(), sessionAllowPending); err != nil {
 			return nil, err
 		}
 		return p.requireOrder().ListOrderLifecycleEvents(ctx, req)

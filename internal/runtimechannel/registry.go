@@ -15,6 +15,7 @@ import (
 )
 
 var ErrRuntimeCredentialConnected = errors.New("runtime credential already connected")
+var ErrRegistryClosed = errors.New("runtime channel registry is closed")
 
 type runtimeStream struct {
 	Runtime  AuthenticatedRuntime
@@ -156,6 +157,7 @@ type Registry struct {
 	mu               sync.Mutex
 	streamsByRuntime map[string]*runtimeStream
 	runtimesByKeyID  map[string]map[string]struct{}
+	closed           bool
 }
 
 func NewRegistry() *Registry {
@@ -168,6 +170,9 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStream, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return nil, ErrRegistryClosed
+	}
 
 	if rt.KeyID != "" {
 		if set := r.runtimesByKeyID[rt.KeyID]; len(set) > 0 {
@@ -194,6 +199,22 @@ func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStr
 	}
 	set[rt.RuntimeID] = struct{}{}
 	return stream, nil
+}
+
+// CloseAll permanently closes the registry and every active RuntimeChannel.
+// A service shutdown must reject late reconnects while the gRPC server drains;
+// otherwise GracefulStop can wait forever on a newly admitted long-lived stream.
+func (r *Registry) CloseAll() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closed = true
+	closed := 0
+	for _, stream := range r.streamsByRuntime {
+		stream.close()
+		r.removeLocked(stream)
+		closed++
+	}
+	return closed
 }
 
 func (r *Registry) Unregister(runtimeID string) {

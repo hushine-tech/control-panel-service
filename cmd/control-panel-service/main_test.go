@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,50 @@ import (
 	"github.com/hushine-tech/control-panel-service/internal/runtimecert"
 	"github.com/hushine-tech/control-panel-service/internal/runtimechannel"
 )
+
+type blockingGRPCStopper struct {
+	gracefulStarted chan struct{}
+	stopped         chan struct{}
+	stopOnce        sync.Once
+}
+
+func (s *blockingGRPCStopper) GracefulStop() {
+	close(s.gracefulStarted)
+	<-s.stopped
+}
+
+func (s *blockingGRPCStopper) Stop() {
+	s.stopOnce.Do(func() { close(s.stopped) })
+}
+
+func TestStopGRPCServerForcesPreAuthStreamClosedAtDeadline(t *testing.T) {
+	server := &blockingGRPCStopper{
+		gracefulStarted: make(chan struct{}),
+		stopped:         make(chan struct{}),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		stopGRPCServer(ctx, server)
+		close(done)
+	}()
+	select {
+	case <-server.gracefulStarted:
+	case <-time.After(time.Second):
+		t.Fatal("GracefulStop was not started")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown deadline did not force Stop")
+	}
+	select {
+	case <-server.stopped:
+	default:
+		t.Fatal("Stop was not called after GracefulStop exceeded the deadline")
+	}
+}
 
 func TestExpectedRuntimeDependencyProfileMapsValidatedConfig(t *testing.T) {
 	input := config.RuntimeDependencyProfileConfig{
