@@ -217,13 +217,24 @@ func (r *Registry) CloseAll() int {
 	return closed
 }
 
-func (r *Registry) Unregister(runtimeID string) {
+// Unregister closes and removes expected only when it is still the active
+// stream for runtimeID. A nil current stream is safe for the caller to treat as
+// released because shutdown and explicit close paths remove the stream before
+// the owning handler's deferred cleanup runs. A different current stream means
+// the runtime reconnected and stale cleanup must not disturb its replacement.
+func (r *Registry) Unregister(runtimeID string, expected *runtimeStream) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s := r.streamsByRuntime[runtimeID]; s != nil {
-		s.close()
-		r.removeLocked(s)
+	current := r.streamsByRuntime[runtimeID]
+	if current == nil {
+		return true
 	}
+	if expected == nil || current != expected {
+		return false
+	}
+	current.close()
+	r.removeLocked(current)
+	return true
 }
 
 func (r *Registry) CloseByKeyID(keyID string) []*runtimeStream {

@@ -133,6 +133,13 @@ func (s *Service) CloseAllStreams() int {
 	return s.registry.CloseAll()
 }
 
+func (s *Service) releaseRuntimeStream(runtimeID string, stream *runtimeStream) {
+	if s == nil || s.registry == nil || !s.registry.Unregister(runtimeID, stream) {
+		return
+	}
+	_ = s.repo.ClearRuntimeConnectionOwner(context.Background(), runtimeID, s.instanceID)
+}
+
 type recvResult struct {
 	frame *cpv1.RuntimeFrame
 	err   error
@@ -174,6 +181,7 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 		}
 		return status.Errorf(codes.Unavailable, "register runtime channel: %v", err)
 	}
+	defer s.releaseRuntimeStream(rt.RuntimeID, rs)
 	rs.setSender(stream.Send)
 	if err := rs.sendFrame(&cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO_ACK,
@@ -189,11 +197,6 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 	}); err != nil {
 		return status.Errorf(codes.Unavailable, "send runtime hello ack: %v", err)
 	}
-	defer func() {
-		s.registry.Unregister(rt.RuntimeID)
-		_ = s.repo.ClearRuntimeConnectionOwner(context.Background(), rt.RuntimeID, s.instanceID)
-	}()
-
 	recvCh := make(chan recvResult, 1)
 	go func() {
 		for {

@@ -135,7 +135,7 @@ func TestInvokeRuntimeCommandUnblocksWhenStreamUnregisters(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not receive command")
 	}
-	svc.registry.Unregister("runtime-1")
+	svc.registry.Unregister("runtime-1", stream)
 
 	select {
 	case err := <-done:

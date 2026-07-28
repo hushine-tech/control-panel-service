@@ -835,6 +835,36 @@ func TestRuntimeChannelRecordsAndClearsConnectionOwner(t *testing.T) {
 	}
 }
 
+func TestRuntimeChannelHelloAckFailureReleasesStreamAndOwner(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
+	svc := NewWithInstanceID(repo, "cp-test-a")
+	svc.SetClock(func() time.Time { return now })
+
+	stream := newFakeRuntimeChannelStream()
+	stream.sendErr = errors.New("peer closed before hello ack")
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("Handle error = %v, want Unavailable hello-ack failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Handle did not return after hello-ack failure")
+	}
+	if !repo.ownerCleared || repo.ownerInstance != "" {
+		t.Fatalf("owner clear=%v owner=%q, want cleared after hello-ack failure", repo.ownerCleared, repo.ownerInstance)
+	}
+	if got := svc.registry.FindByRuntimeID(42, "runtime-1"); got != nil {
+		t.Fatalf("registry stream after hello-ack failure = %p, want nil", got)
+	}
+}
+
 func TestRuntimeChannelShutdownClosesAllActiveStreams(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
 	svc := NewWithInstanceID(repo, "cp-shutdown")
@@ -921,6 +951,69 @@ func TestRegistryAllowsMultipleBareRuntimesWithoutCredentialKey(t *testing.T) {
 	snap := registry.Snapshot()
 	if len(snap) != 2 {
 		t.Fatalf("snapshot len = %d, want 2: %+v", len(snap), snap)
+	}
+}
+
+func TestRegistryUnregisterDoesNotRemoveReplacementStream(t *testing.T) {
+	registry := NewRegistry()
+	now := time.Unix(1_700_000_000, 0)
+	old := mustRegister(t, registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-1",
+	}, now)
+	replacement := mustRegister(t, registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-1",
+	}, now.Add(time.Second))
+
+	if removed := registry.Unregister("runtime-1", old); removed {
+		t.Fatal("stale stream cleanup removed the replacement")
+	}
+	if got := registry.FindByRuntimeID(42, "runtime-1"); got != replacement {
+		t.Fatalf("current stream = %p, want replacement %p", got, replacement)
+	}
+	select {
+	case <-replacement.closed:
+		t.Fatal("replacement stream was closed by stale cleanup")
+	default:
+	}
+
+	if removed := registry.Unregister("runtime-1", replacement); !removed {
+		t.Fatal("current stream cleanup did not unregister the replacement")
+	}
+	if got := registry.FindByRuntimeID(42, "runtime-1"); got != nil {
+		t.Fatalf("current stream after cleanup = %p, want nil", got)
+	}
+}
+
+func TestReleaseRuntimeStreamKeepsReplacementOwner(t *testing.T) {
+	repo := &stubRepo{ownerInstance: "cp-owner"}
+	svc := NewWithInstanceID(repo, "cp-owner")
+	now := time.Unix(1_700_000_000, 0)
+	old := mustRegister(t, svc.registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-1",
+	}, now)
+	replacement := mustRegister(t, svc.registry, AuthenticatedRuntime{
+		KeyID:     "key-1",
+		UserID:    42,
+		RuntimeID: "runtime-1",
+	}, now.Add(time.Second))
+
+	svc.releaseRuntimeStream("runtime-1", old)
+	if repo.ownerCleared || repo.ownerInstance != "cp-owner" {
+		t.Fatalf("stale cleanup owner clear=%v owner=%q, want replacement owner retained", repo.ownerCleared, repo.ownerInstance)
+	}
+	if got := svc.registry.FindByRuntimeID(42, "runtime-1"); got != replacement {
+		t.Fatalf("current stream = %p, want replacement %p", got, replacement)
+	}
+
+	svc.releaseRuntimeStream("runtime-1", replacement)
+	if !repo.ownerCleared || repo.ownerInstance != "" {
+		t.Fatalf("current cleanup owner clear=%v owner=%q, want cleared", repo.ownerCleared, repo.ownerInstance)
 	}
 }
 
@@ -1307,7 +1400,7 @@ func TestInvokeStrategyUnaryByRuntimeIDUnblocksWhenStreamUnregisters(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("runtime did not receive request")
 	}
-	svc.registry.Unregister("runtime-disconnect")
+	svc.registry.Unregister("runtime-disconnect", stream)
 
 	select {
 	case err := <-done:
@@ -1726,10 +1819,11 @@ func newAuthFixture(t *testing.T, status domain.CredentialStatus) (*stubRepo, ed
 
 type fakeRuntimeChannelStream struct {
 	cpv1.ControlPanelService_RuntimeChannelServer
-	ctx    context.Context
-	cancel context.CancelFunc
-	recv   chan *cpv1.RuntimeFrame
-	sent   chan *cpv1.RuntimeFrame
+	ctx     context.Context
+	cancel  context.CancelFunc
+	recv    chan *cpv1.RuntimeFrame
+	sent    chan *cpv1.RuntimeFrame
+	sendErr error
 }
 
 func newFakeRuntimeChannelStream() *fakeRuntimeChannelStream {
@@ -1757,6 +1851,9 @@ func (s *fakeRuntimeChannelStream) Recv() (*cpv1.RuntimeFrame, error) {
 }
 
 func (s *fakeRuntimeChannelStream) Send(frame *cpv1.RuntimeFrame) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
 	select {
 	case <-s.ctx.Done():
 		return s.ctx.Err()
