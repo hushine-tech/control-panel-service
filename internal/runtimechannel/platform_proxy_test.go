@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -239,6 +241,280 @@ func TestPlatformProxySaveStrategyIndicatorsInjectsAuthenticatedUser(t *testing.
 		len(portfolio.saveIndicatorsReq.GetChunks()) != 1 {
 		t.Fatalf("SaveStrategyIndicators req = %+v", portfolio.saveIndicatorsReq)
 	}
+}
+
+func TestIndicatorProtoV1CoexistsWithV2(t *testing.T) {
+	service := portfoliov1.File_portfolio_service_proto.Services().
+		ByName("PortfolioService")
+	if service == nil {
+		t.Fatal("PortfolioService descriptor is missing")
+	}
+	for _, method := range []string{
+		"SaveStrategyIndicators",
+		"SaveStrategyIndicatorsV2",
+		"FinalizeStrategyIndicatorChunksV2",
+	} {
+		if service.Methods().ByName(protoreflect.Name(method)) == nil {
+			t.Fatalf("indicator coexistence method is missing: %s", method)
+		}
+	}
+
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-coexist",
+			UserId:    42,
+			RuntimeId: "runtime-coexist",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	runtime := AuthenticatedRuntime{
+		UserID:    42,
+		RuntimeID: "runtime-coexist",
+	}
+	requests := []struct {
+		method  string
+		payload proto.Message
+	}{
+		{
+			method: "portfolio.SaveStrategyIndicators",
+			payload: &portfoliov1.SaveStrategyIndicatorsRequest{
+				SessionId: "sess-coexist",
+			},
+		},
+		{
+			method: "portfolio.SaveStrategyIndicatorsV2",
+			payload: &portfoliov1.SaveStrategyIndicatorsV2Request{
+				SessionId: "sess-coexist",
+			},
+		},
+		{
+			method: "portfolio.FinalizeStrategyIndicatorChunksV2",
+			payload: &portfoliov1.FinalizeStrategyIndicatorChunksV2Request{
+				SessionId: "sess-coexist",
+			},
+		},
+	}
+	for _, request := range requests {
+		payload, err := anypb.New(request.payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := proxy.DispatchRuntimeRequest(
+			context.Background(),
+			runtime,
+			request.method,
+			payload,
+		); err != nil {
+			t.Fatalf("%s: %v", request.method, err)
+		}
+	}
+	if portfolio.saveIndicatorsReq == nil ||
+		portfolio.saveIndicatorsV2Req == nil ||
+		portfolio.finalizeIndicatorsV2Req == nil {
+		t.Fatalf(
+			"coexistence dispatch did not preserve distinct clients: v1=%v save_v2=%v finalize_v2=%v",
+			portfolio.saveIndicatorsReq != nil,
+			portfolio.saveIndicatorsV2Req != nil,
+			portfolio.finalizeIndicatorsV2Req != nil,
+		)
+	}
+}
+
+func TestPlatformProxyIndicatorV2WritesInjectIdentityAndPreserveRevision(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-v2",
+			UserId:    42,
+			RuntimeId: "runtime-1",
+			Status:    "running",
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	savePayload, err := anypb.New(
+		&portfoliov1.SaveStrategyIndicatorsV2Request{
+			SessionId: "sess-v2",
+			Chunks: []*portfoliov1.StrategyIndicatorChunkV2{{
+				StreamKey:       "binance:spot:BTCUSDT:1m",
+				IndicatorKey:    "alpha",
+				Count:           1,
+				Revision:        1,
+				ProtocolVersion: 2,
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{
+			UserID:    42,
+			RuntimeID: "runtime-1",
+			Name:      "desk",
+		},
+		"portfolio.SaveStrategyIndicatorsV2",
+		savePayload,
+	); err != nil {
+		t.Fatalf("SaveStrategyIndicatorsV2: %v", err)
+	}
+	if portfolio.saveIndicatorsV2Req.GetUserId() != 42 ||
+		portfolio.saveIndicatorsV2Req.GetChunks()[0].GetRevision() != 1 {
+		t.Fatalf("save V2 request = %+v", portfolio.saveIndicatorsV2Req)
+	}
+
+	finalizePayload, err := anypb.New(
+		&portfoliov1.FinalizeStrategyIndicatorChunksV2Request{
+			SessionId: "sess-v2",
+			Chunks: []*portfoliov1.StrategyIndicatorChunkFinalizationV2{{
+				StreamKey:        "binance:spot:BTCUSDT:1m",
+				IndicatorKey:     "alpha",
+				ExpectedRevision: 1,
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{
+			UserID:    42,
+			RuntimeID: "runtime-1",
+			Name:      "desk",
+		},
+		"portfolio.FinalizeStrategyIndicatorChunksV2",
+		finalizePayload,
+	); err != nil {
+		t.Fatalf("FinalizeStrategyIndicatorChunksV2: %v", err)
+	}
+	if portfolio.finalizeIndicatorsV2Req.GetUserId() != 42 ||
+		portfolio.finalizeIndicatorsV2Req.GetChunks()[0].
+			GetExpectedRevision() != 1 {
+		t.Fatalf(
+			"finalize V2 request = %+v",
+			portfolio.finalizeIndicatorsV2Req,
+		)
+	}
+}
+
+func TestPlatformProxyIndicatorV2WritesRejectSpoofedUserAndForeignRuntime(
+	t *testing.T,
+) {
+	for _, method := range []string{
+		"portfolio.SaveStrategyIndicatorsV2",
+		"portfolio.FinalizeStrategyIndicatorChunksV2",
+	} {
+		t.Run(method+"/spoofed-user", func(t *testing.T) {
+			portfolio := &fakePortfolioPlatformClient{
+				session: &portfoliov1.StrategySessionEntry{
+					SessionId: "sess-v2",
+					UserId:    42,
+					RuntimeId: "runtime-1",
+					Status:    "running",
+				},
+			}
+			proxy := NewPlatformProxy(portfolio, nil, nil)
+			payload := indicatorV2ProxyPayload(
+				t,
+				method,
+				"sess-v2",
+				99,
+			)
+			_, err := proxy.DispatchRuntimeRequest(
+				context.Background(),
+				AuthenticatedRuntime{
+					UserID:    42,
+					RuntimeID: "runtime-1",
+				},
+				method,
+				payload,
+			)
+			if status.Code(err) != codes.PermissionDenied {
+				t.Fatalf(
+					"code = %v, want PermissionDenied (err=%v)",
+					status.Code(err),
+					err,
+				)
+			}
+			if portfolio.saveIndicatorsV2Req != nil ||
+				portfolio.finalizeIndicatorsV2Req != nil {
+				t.Fatal("spoofed V2 write reached core-service")
+			}
+		})
+		t.Run(method+"/foreign-runtime", func(t *testing.T) {
+			portfolio := &fakePortfolioPlatformClient{
+				session: &portfoliov1.StrategySessionEntry{
+					SessionId: "sess-v2",
+					UserId:    42,
+					RuntimeId: "runtime-other",
+					Status:    "running",
+				},
+			}
+			proxy := NewPlatformProxy(portfolio, nil, nil)
+			payload := indicatorV2ProxyPayload(
+				t,
+				method,
+				"sess-v2",
+				0,
+			)
+			_, err := proxy.DispatchRuntimeRequest(
+				context.Background(),
+				AuthenticatedRuntime{
+					UserID:    42,
+					RuntimeID: "runtime-1",
+				},
+				method,
+				payload,
+			)
+			if status.Code(err) != codes.PermissionDenied {
+				t.Fatalf(
+					"code = %v, want PermissionDenied (err=%v)",
+					status.Code(err),
+					err,
+				)
+			}
+			if portfolio.saveIndicatorsV2Req != nil ||
+				portfolio.finalizeIndicatorsV2Req != nil {
+				t.Fatal("foreign-runtime V2 write reached core-service")
+			}
+		})
+	}
+}
+
+func indicatorV2ProxyPayload(
+	t *testing.T,
+	method string,
+	sessionID string,
+	userID int64,
+) *anypb.Any {
+	t.Helper()
+	var (
+		payload *anypb.Any
+		err     error
+	)
+	switch method {
+	case "portfolio.SaveStrategyIndicatorsV2":
+		payload, err = anypb.New(
+			&portfoliov1.SaveStrategyIndicatorsV2Request{
+				SessionId: sessionID,
+				UserId:    userID,
+			},
+		)
+	case "portfolio.FinalizeStrategyIndicatorChunksV2":
+		payload, err = anypb.New(
+			&portfoliov1.FinalizeStrategyIndicatorChunksV2Request{
+				SessionId: sessionID,
+				UserId:    userID,
+			},
+		)
+	default:
+		t.Fatalf("unsupported V2 proxy method: %s", method)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func TestPlatformProxyRejectsSessionMutationFromDifferentRuntime(t *testing.T) {
@@ -1372,19 +1648,21 @@ func mustStruct(t *testing.T, fields map[string]any) *structpb.Struct {
 }
 
 type fakePortfolioPlatformClient struct {
-	getPortfolioReq      *portfoliov1.GetPortfolioRequest
-	getSessionReq        *portfoliov1.GetSessionRequest
-	listSessionsReq      *portfoliov1.ListSessionsRequest
-	listSessionsResp     []*portfoliov1.StrategySessionEntry
-	saveReq              *portfoliov1.SaveSessionRequest
-	updateReq            *portfoliov1.UpdateSessionRequest
-	saveIndicatorsReq    *portfoliov1.SaveStrategyIndicatorsRequest
-	portfolioGetReq      *portfoliov1.GetPortfolioSnapshotRequest
-	portfolioUpdateReq   *portfoliov1.UpdatePortfolioSnapshotRequest
-	walletStateUpdateReq *portfoliov1.UpdatePortfolioWalletStateRequest
-	preflightReq         *portfoliov1.PreflightStrategySessionRequest
-	session              *portfoliov1.StrategySessionEntry
-	venue                *portfoliov1.VenueEntry
+	getPortfolioReq         *portfoliov1.GetPortfolioRequest
+	getSessionReq           *portfoliov1.GetSessionRequest
+	listSessionsReq         *portfoliov1.ListSessionsRequest
+	listSessionsResp        []*portfoliov1.StrategySessionEntry
+	saveReq                 *portfoliov1.SaveSessionRequest
+	updateReq               *portfoliov1.UpdateSessionRequest
+	saveIndicatorsReq       *portfoliov1.SaveStrategyIndicatorsRequest
+	saveIndicatorsV2Req     *portfoliov1.SaveStrategyIndicatorsV2Request
+	finalizeIndicatorsV2Req *portfoliov1.FinalizeStrategyIndicatorChunksV2Request
+	portfolioGetReq         *portfoliov1.GetPortfolioSnapshotRequest
+	portfolioUpdateReq      *portfoliov1.UpdatePortfolioSnapshotRequest
+	walletStateUpdateReq    *portfoliov1.UpdatePortfolioWalletStateRequest
+	preflightReq            *portfoliov1.PreflightStrategySessionRequest
+	session                 *portfoliov1.StrategySessionEntry
+	venue                   *portfoliov1.VenueEntry
 }
 
 func (f *fakePortfolioPlatformClient) GetVenue(_ context.Context, req *portfoliov1.GetVenueRequest, _ ...grpc.CallOption) (*portfoliov1.GetVenueResponse, error) {
@@ -1483,6 +1761,21 @@ func (f *fakePortfolioPlatformClient) SaveStrategyIndicators(_ context.Context, 
 	return &portfoliov1.SaveStrategyIndicatorsResponse{
 		DefinitionsSaved: int32(len(req.GetDefinitions())),
 		ChunksSaved:      int32(len(req.GetChunks())),
+	}, nil
+}
+
+func (f *fakePortfolioPlatformClient) SaveStrategyIndicatorsV2(_ context.Context, req *portfoliov1.SaveStrategyIndicatorsV2Request, _ ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsV2Response, error) {
+	f.saveIndicatorsV2Req = req
+	return &portfoliov1.SaveStrategyIndicatorsV2Response{
+		DefinitionsSaved: int32(len(req.GetDefinitions())),
+		ChunksSaved:      int32(len(req.GetChunks())),
+	}, nil
+}
+
+func (f *fakePortfolioPlatformClient) FinalizeStrategyIndicatorChunksV2(_ context.Context, req *portfoliov1.FinalizeStrategyIndicatorChunksV2Request, _ ...grpc.CallOption) (*portfoliov1.FinalizeStrategyIndicatorChunksV2Response, error) {
+	f.finalizeIndicatorsV2Req = req
+	return &portfoliov1.FinalizeStrategyIndicatorChunksV2Response{
+		ChunksFinalized: int32(len(req.GetChunks())),
 	}, nil
 }
 

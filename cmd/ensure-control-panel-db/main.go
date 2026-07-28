@@ -1,10 +1,10 @@
-// ensure-control-panel-db connects to PostgreSQL, creates database
-// "control_panel" if missing, and applies SQL migrations.
+// ensure-control-panel-db connects to PostgreSQL, creates the configured
+// control-panel database if missing, and applies SQL migrations.
 //
 // Usage:
 //
 //	go run ./cmd/ensure-control-panel-db
-//	PGHOST=192.168.88.10 PGUSER=postgres PGPASSWORD=postgres go run ./cmd/ensure-control-panel-db
+//	PGHOST=127.0.0.1 PGUSER=postgres PGPASSWORD=postgres PGDATABASE_CONTROL_PANEL=control_panel go run ./cmd/ensure-control-panel-db
 package main
 
 import (
@@ -12,20 +12,55 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
-const dbName = "control_panel"
+const defaultControlPanelDatabase = "control_panel"
+
+var controlPanelDatabaseNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+type migrationTransaction interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Commit() error
+	Rollback() error
+}
 
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ensure-control-panel-db: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("ensure-control-panel-db: OK (database %s + migrations)\n", dbName)
+	database, err := configuredControlPanelDatabaseName()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ensure-control-panel-db: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(ensureControlPanelDBSuccessMessage(database))
+}
+
+func configuredControlPanelDatabaseName() (string, error) {
+	database := strings.TrimSpace(os.Getenv("PGDATABASE_CONTROL_PANEL"))
+	if database == "" {
+		database = defaultControlPanelDatabase
+	}
+	if !controlPanelDatabaseNamePattern.MatchString(database) {
+		return "", fmt.Errorf(
+			"PGDATABASE_CONTROL_PANEL must match %s",
+			controlPanelDatabaseNamePattern.String(),
+		)
+	}
+	return database, nil
+}
+
+func ensureControlPanelDBSuccessMessage(database string) string {
+	return fmt.Sprintf(
+		"ensure-control-panel-db: OK (database %s + migrations)",
+		database,
+	)
 }
 
 func run() error {
@@ -34,6 +69,10 @@ func run() error {
 	user := getenv("PGUSER", "postgres")
 	pass := getenv("PGPASSWORD", "postgres")
 	dbnameAdmin := getenv("PGDATABASE_ADMIN", "postgres")
+	database, err := configuredControlPanelDatabaseName()
+	if err != nil {
+		return err
+	}
 
 	adminDSN := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, pass, dbnameAdmin)
@@ -49,16 +88,16 @@ func run() error {
 		}
 
 		var exists bool
-		if err := admin.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`, dbName).Scan(&exists); err != nil {
+		if err := admin.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`, database).Scan(&exists); err != nil {
 			return fmt.Errorf("check database: %w", err)
 		}
 		if !exists {
-			if _, err := admin.Exec(fmt.Sprintf(`CREATE DATABASE %s`, dbName)); err != nil {
-				return fmt.Errorf("CREATE DATABASE %s: %w", dbName, err)
+			if _, err := admin.Exec(`CREATE DATABASE ` + pq.QuoteIdentifier(database)); err != nil {
+				return fmt.Errorf("CREATE DATABASE %s: %w", database, err)
 			}
-			fmt.Printf("created database: %s\n", dbName)
+			fmt.Printf("created database: %s\n", database)
 		} else {
-			fmt.Printf("database %s already exists\n", dbName)
+			fmt.Printf("database %s already exists\n", database)
 		}
 		return nil
 	}(); err != nil {
@@ -66,14 +105,14 @@ func run() error {
 	}
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, pass, dbName)
+		host, port, user, pass, database)
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		return fmt.Errorf("open %s db: %w", dbName, err)
+		return fmt.Errorf("open %s db: %w", database, err)
 	}
 	defer db.Close()
 	if err := db.Ping(); err != nil {
-		return fmt.Errorf("ping %s: %w", dbName, err)
+		return fmt.Errorf("ping %s: %w", database, err)
 	}
 
 	root, err := findModuleRoot()
@@ -113,17 +152,44 @@ func run() error {
 		if sqlText == "" {
 			continue
 		}
-		if _, err := db.Exec(sqlText); err != nil {
-			return fmt.Errorf("exec %s: %w", filepath.Base(f), err)
-		}
-		if _, err := db.Exec(
-			`INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING`,
-			base,
-		); err != nil {
-			return fmt.Errorf("record migration %s: %w", base, err)
+		if err := applyMigrationAtomically(func() (migrationTransaction, error) {
+			return db.Begin()
+		}, base, sqlText); err != nil {
+			return err
 		}
 		fmt.Println("applied:", base)
 	}
+	return nil
+}
+
+func applyMigrationAtomically(
+	begin func() (migrationTransaction, error),
+	filename string,
+	sqlText string,
+) (err error) {
+	tx, err := begin()
+	if err != nil {
+		return fmt.Errorf("begin migration %s: %w", filename, err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.Exec(sqlText); err != nil {
+		return fmt.Errorf("exec %s: %w", filename, err)
+	}
+	if _, err = tx.Exec(
+		`INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING`,
+		filename,
+	); err != nil {
+		return fmt.Errorf("record migration %s: %w", filename, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration %s: %w", filename, err)
+	}
+	committed = true
 	return nil
 }
 

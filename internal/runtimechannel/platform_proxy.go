@@ -48,6 +48,8 @@ type PortfolioPlatformClient interface {
 	SaveSession(ctx context.Context, in *portfoliov1.SaveSessionRequest, opts ...grpc.CallOption) (*portfoliov1.SaveSessionResponse, error)
 	UpdateSession(ctx context.Context, in *portfoliov1.UpdateSessionRequest, opts ...grpc.CallOption) (*portfoliov1.UpdateSessionResponse, error)
 	SaveStrategyIndicators(ctx context.Context, in *portfoliov1.SaveStrategyIndicatorsRequest, opts ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsResponse, error)
+	SaveStrategyIndicatorsV2(ctx context.Context, in *portfoliov1.SaveStrategyIndicatorsV2Request, opts ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsV2Response, error)
+	FinalizeStrategyIndicatorChunksV2(ctx context.Context, in *portfoliov1.FinalizeStrategyIndicatorChunksV2Request, opts ...grpc.CallOption) (*portfoliov1.FinalizeStrategyIndicatorChunksV2Response, error)
 }
 
 type OrderPlatformClient interface {
@@ -292,6 +294,51 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		}
 		req.UserId = rt.UserID
 		return p.requirePortfolio().SaveStrategyIndicators(ctx, req)
+
+	case "portfolio.SaveStrategyIndicatorsV2":
+		req := &portfoliov1.SaveStrategyIndicatorsV2Request{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(
+				codes.PermissionDenied,
+				"user_id does not match authenticated runtime",
+			)
+		}
+		if err := p.ensureSessionOwner(
+			ctx,
+			rt,
+			req.GetSessionId(),
+			sessionAllowAnyStatus,
+		); err != nil {
+			return nil, err
+		}
+		req.UserId = rt.UserID
+		return p.requirePortfolio().SaveStrategyIndicatorsV2(ctx, req)
+
+	case "portfolio.FinalizeStrategyIndicatorChunksV2":
+		req := &portfoliov1.FinalizeStrategyIndicatorChunksV2Request{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(
+				codes.PermissionDenied,
+				"user_id does not match authenticated runtime",
+			)
+		}
+		if err := p.ensureSessionOwner(
+			ctx,
+			rt,
+			req.GetSessionId(),
+			sessionAllowAnyStatus,
+		); err != nil {
+			return nil, err
+		}
+		req.UserId = rt.UserID
+		return p.requirePortfolio().
+			FinalizeStrategyIndicatorChunksV2(ctx, req)
 
 	case "order.PlaceOrder":
 		req := &orderv1.PlaceOrderRequest{}
@@ -664,6 +711,10 @@ func canonicalPlatformMethod(method string) string {
 		return "portfolio.UpdateSession"
 	case "SaveStrategyIndicators", "portfolio.v1.PortfolioService/SaveStrategyIndicators":
 		return "portfolio.SaveStrategyIndicators"
+	case "SaveStrategyIndicatorsV2", "portfolio.v1.PortfolioService/SaveStrategyIndicatorsV2":
+		return "portfolio.SaveStrategyIndicatorsV2"
+	case "FinalizeStrategyIndicatorChunksV2", "portfolio.v1.PortfolioService/FinalizeStrategyIndicatorChunksV2":
+		return "portfolio.FinalizeStrategyIndicatorChunksV2"
 	case "PlaceOrder", "order.v1.OrderService/PlaceOrder":
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
@@ -1181,6 +1232,12 @@ func (unavailablePortfolioClient) UpdateSession(context.Context, *portfoliov1.Up
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) SaveStrategyIndicators(context.Context, *portfoliov1.SaveStrategyIndicatorsRequest, ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) SaveStrategyIndicatorsV2(context.Context, *portfoliov1.SaveStrategyIndicatorsV2Request, ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsV2Response, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) FinalizeStrategyIndicatorChunksV2(context.Context, *portfoliov1.FinalizeStrategyIndicatorChunksV2Request, ...grpc.CallOption) (*portfoliov1.FinalizeStrategyIndicatorChunksV2Response, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 
