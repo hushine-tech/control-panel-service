@@ -261,6 +261,7 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		session.RuntimeId = rt.RuntimeID
 		session.RuntimeSource = runtimeSourceFromAuthenticated(rt)
 		session.RuntimeName = rt.Name
+		session.Leverage = 0
 		if err := p.ensurePortfolioOwner(ctx, rt, session.GetPortfolioId()); err != nil {
 			return nil, err
 		}
