@@ -673,6 +673,232 @@ func TestPlatformProxyPreflightStrategySessionInjectsAuthenticatedUser(t *testin
 	}
 }
 
+func TestPlatformProxyCommitStrategySessionStartInjectsAuthenticatedRuntimeAndPreservesStructuredResponse(t *testing.T) {
+	expected := &portfoliov1.CommitStrategySessionStartResponse{
+		Issues: []*portfoliov1.PreflightIssue{
+			{
+				Code:      "LEVERAGE_CONFIRMATION_FAILED",
+				Message:   "readback mismatch",
+				Exchange:  1,
+				Market:    2,
+				Symbol:    "BTCUSDT",
+				VenueId:   41,
+				Retryable: true,
+				Source:    "exchange",
+			},
+		},
+		ConfirmedTargetFacts: []*portfoliov1.SessionTargetLeverageFact{
+			{
+				SessionId:         "sess-commit-1",
+				VenueId:           41,
+				Exchange:          1,
+				Environment:       1,
+				Market:            2,
+				Symbol:            "ETHUSDT",
+				EffectiveLeverage: 3,
+				LeverageSource:    "order_target",
+				PreviousLeverage:  proto.Uint32(2),
+				ConfirmedLeverage: 3,
+			},
+		},
+		TargetResults: []*portfoliov1.FuturesLeverageTargetResult{
+			{
+				VenueId:           41,
+				Exchange:          1,
+				Market:            2,
+				Symbol:            "BTCUSDT",
+				EffectiveLeverage: 5,
+				LeverageSource:    "strategy_default",
+				PreviousLeverage:  proto.Uint32(2),
+				CurrentLeverage:   proto.Uint32(2),
+				ConfirmedLeverage: proto.Uint32(5),
+				ChangeRequired:    true,
+				Status:            "rolled_back",
+				ErrorCode:         "LEVERAGE_CONFIRMATION_FAILED",
+				ErrorMessage:      "readback mismatch",
+				Retryable:         true,
+			},
+		},
+		RollbackFailed: true,
+		Code:           "LEVERAGE_ROLLBACK_FAILED",
+	}
+	portfolio := &fakePortfolioPlatformClient{commitResp: expected}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.CommitStrategySessionStartRequest{
+		LaunchOperationId: "launch-commit-1",
+		Session: &portfoliov1.SaveSessionRequest{
+			SessionId:      "sess-commit-1",
+			PortfolioId:    7,
+			StrategyId:     9,
+			Environment:    1,
+			Interval:       "5m",
+			StartTimeMs:    1000,
+			EndTimeMs:      2000,
+			RuntimeId:      "runtime-1",
+			RuntimeSource:  "hosted",
+			RuntimeName:    "spoofed-name",
+			SessionType:    "live",
+			RuntimeVersion: "v2",
+			SessionName:    "momentum",
+			InitialStatus:  "pending",
+		},
+		RequiredRoutes: []*portfoliov1.RequiredRoute{{Exchange: 1, Market: 2}},
+		RequiredSymbols: []*portfoliov1.RequiredSymbol{
+			{
+				Exchange:           1,
+				Market:             2,
+				Symbol:             "BTCUSDT",
+				OrderTarget:        true,
+				RequiredOrderTypes: []string{"MARKET", "LIMIT"},
+				EffectiveLeverage:  5,
+				LeverageSource:     "strategy_default",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk", Source: "self_hosted"},
+		"portfolio.CommitStrategySessionStart",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+
+	if !proto.Equal(resp, expected) {
+		t.Fatalf("response = %+v, want %+v", resp, expected)
+	}
+	request := portfolio.commitReq
+	if request.GetLaunchOperationId() != "launch-commit-1" ||
+		request.GetSession().GetUserId() != 42 ||
+		request.GetSession().GetSessionId() != "sess-commit-1" ||
+		request.GetSession().GetPortfolioId() != 7 ||
+		request.GetSession().GetStrategyId() != 9 ||
+		request.GetSession().GetEnvironment() != 1 ||
+		request.GetSession().GetInterval() != "5m" ||
+		request.GetSession().GetStartTimeMs() != 1000 ||
+		request.GetSession().GetEndTimeMs() != 2000 ||
+		request.GetSession().GetRuntimeId() != "runtime-1" ||
+		request.GetSession().GetRuntimeSource() != "self_hosted" ||
+		request.GetSession().GetRuntimeName() != "desk" ||
+		request.GetSession().GetSessionType() != "live" ||
+		request.GetSession().GetRuntimeVersion() != "v2" ||
+		request.GetSession().GetSessionName() != "momentum" ||
+		request.GetSession().GetInitialStatus() != "pending" ||
+		request.GetSession().GetLeverage() != 0 ||
+		len(request.GetRequiredRoutes()) != 1 ||
+		len(request.GetRequiredSymbols()) != 1 ||
+		request.GetRequiredSymbols()[0].GetEffectiveLeverage() != 5 ||
+		request.GetRequiredSymbols()[0].GetLeverageSource() != "strategy_default" {
+		t.Fatalf("CommitStrategySessionStart req = %+v", request)
+	}
+}
+
+func TestPlatformProxyCommitStrategySessionStartRejectsSpoofedIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		userID  int64
+		runtime string
+	}{
+		{name: "user", userID: 99, runtime: "runtime-1"},
+		{name: "runtime", runtime: "runtime-other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			portfolio := &fakePortfolioPlatformClient{}
+			proxy := NewPlatformProxy(portfolio, nil, nil)
+			payload, err := anypb.New(&portfoliov1.CommitStrategySessionStartRequest{
+				LaunchOperationId: "launch-spoof-1",
+				Session: &portfoliov1.SaveSessionRequest{
+					SessionId:   "sess-spoof-1",
+					PortfolioId: 7,
+					UserId:      tt.userID,
+					RuntimeId:   tt.runtime,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = proxy.DispatchRuntimeRequest(
+				context.Background(),
+				AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+				"portfolio.CommitStrategySessionStart",
+				payload,
+			)
+			if status.Code(err) != codes.PermissionDenied {
+				t.Fatalf("code = %v, want PermissionDenied (err=%v)", status.Code(err), err)
+			}
+			if portfolio.commitReq != nil {
+				t.Fatalf("CommitStrategySessionStart should not be called: %+v", portfolio.commitReq)
+			}
+			if portfolio.getPortfolioReq != nil {
+				t.Fatalf("spoofed identity should be rejected before core lookup: %+v", portfolio.getPortfolioReq)
+			}
+		})
+	}
+}
+
+func TestPlatformProxyCommitStrategySessionStartPropagatesDeadlineAndCancellation(t *testing.T) {
+	t.Run("deadline", func(t *testing.T) {
+		portfolio := &fakePortfolioPlatformClient{}
+		proxy := NewPlatformProxy(portfolio, nil, nil)
+		payload, err := anypb.New(&portfoliov1.CommitStrategySessionStartRequest{
+			Session: &portfoliov1.SaveSessionRequest{PortfolioId: 7},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(time.Minute).Round(0)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		defer cancel()
+
+		_, err = proxy.DispatchRuntimeRequest(
+			ctx,
+			AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+			"portfolio.v1.PortfolioService/CommitStrategySessionStart",
+			payload,
+		)
+		if err != nil {
+			t.Fatalf("DispatchRuntimeRequest: %v", err)
+		}
+		forwardedDeadline, ok := portfolio.commitCtx.Deadline()
+		if !ok || !forwardedDeadline.Equal(deadline) {
+			t.Fatalf("forwarded deadline = %v, %v; want %v, true", forwardedDeadline, ok, deadline)
+		}
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		portfolio := &fakePortfolioPlatformClient{}
+		proxy := NewPlatformProxy(portfolio, nil, nil)
+		payload, err := anypb.New(&portfoliov1.CommitStrategySessionStartRequest{
+			Session: &portfoliov1.SaveSessionRequest{PortfolioId: 7},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err = proxy.DispatchRuntimeRequest(
+			ctx,
+			AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
+			"portfolio.CommitStrategySessionStart",
+			payload,
+		)
+		if err != context.Canceled {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+		if portfolio.commitCtx != ctx {
+			t.Fatal("CommitStrategySessionStart did not receive the dispatch context")
+		}
+	})
+}
+
 func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}
 	order := &fakeOrderPlatformClient{}
@@ -1661,6 +1887,9 @@ type fakePortfolioPlatformClient struct {
 	portfolioUpdateReq      *portfoliov1.UpdatePortfolioSnapshotRequest
 	walletStateUpdateReq    *portfoliov1.UpdatePortfolioWalletStateRequest
 	preflightReq            *portfoliov1.PreflightStrategySessionRequest
+	commitReq               *portfoliov1.CommitStrategySessionStartRequest
+	commitResp              *portfoliov1.CommitStrategySessionStartResponse
+	commitCtx               context.Context
 	session                 *portfoliov1.StrategySessionEntry
 	venue                   *portfoliov1.VenueEntry
 }
@@ -1740,6 +1969,18 @@ func (f *fakePortfolioPlatformClient) PreflightStrategySession(_ context.Context
 			},
 		},
 	}, nil
+}
+
+func (f *fakePortfolioPlatformClient) CommitStrategySessionStart(ctx context.Context, req *portfoliov1.CommitStrategySessionStartRequest, _ ...grpc.CallOption) (*portfoliov1.CommitStrategySessionStartResponse, error) {
+	f.commitCtx = ctx
+	f.commitReq = req
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.commitResp != nil {
+		return f.commitResp, nil
+	}
+	return &portfoliov1.CommitStrategySessionStartResponse{Ok: true}, nil
 }
 
 func (f *fakePortfolioPlatformClient) GetActiveStrategy(context.Context, *portfoliov1.GetActiveStrategyRequest, ...grpc.CallOption) (*portfoliov1.GetActiveStrategyResponse, error) {

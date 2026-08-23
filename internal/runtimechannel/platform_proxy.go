@@ -44,6 +44,7 @@ type PortfolioPlatformClient interface {
 	UpdatePortfolioSnapshot(ctx context.Context, in *portfoliov1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error)
 	UpdatePortfolioWalletState(ctx context.Context, in *portfoliov1.UpdatePortfolioWalletStateRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error)
 	PreflightStrategySession(ctx context.Context, in *portfoliov1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*portfoliov1.PreflightStrategySessionResponse, error)
+	CommitStrategySessionStart(ctx context.Context, in *portfoliov1.CommitStrategySessionStartRequest, opts ...grpc.CallOption) (*portfoliov1.CommitStrategySessionStartResponse, error)
 	GetActiveStrategy(ctx context.Context, in *portfoliov1.GetActiveStrategyRequest, opts ...grpc.CallOption) (*portfoliov1.GetActiveStrategyResponse, error)
 	SaveSession(ctx context.Context, in *portfoliov1.SaveSessionRequest, opts ...grpc.CallOption) (*portfoliov1.SaveSessionResponse, error)
 	UpdateSession(ctx context.Context, in *portfoliov1.UpdateSessionRequest, opts ...grpc.CallOption) (*portfoliov1.UpdateSessionResponse, error)
@@ -240,6 +241,30 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		return p.requirePortfolio().PreflightStrategySession(ctx, req)
+
+	case "portfolio.CommitStrategySessionStart":
+		req := &portfoliov1.CommitStrategySessionStartRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		session := req.GetSession()
+		if session == nil {
+			return nil, status.Error(codes.InvalidArgument, "session is required")
+		}
+		if session.GetUserId() != 0 && session.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		if session.GetRuntimeId() != "" && session.GetRuntimeId() != rt.RuntimeID {
+			return nil, status.Error(codes.PermissionDenied, "session runtime_id does not match authenticated runtime")
+		}
+		session.UserId = rt.UserID
+		session.RuntimeId = rt.RuntimeID
+		session.RuntimeSource = runtimeSourceFromAuthenticated(rt)
+		session.RuntimeName = rt.Name
+		if err := p.ensurePortfolioOwner(ctx, rt, session.GetPortfolioId()); err != nil {
+			return nil, err
+		}
+		return p.requirePortfolio().CommitStrategySessionStart(ctx, req)
 
 	case "portfolio.GetActiveStrategy":
 		req := &portfoliov1.GetActiveStrategyRequest{}
@@ -703,6 +728,8 @@ func canonicalPlatformMethod(method string) string {
 		return "portfolio.ListSessions"
 	case "PreflightStrategySession", "portfolio.v1.PortfolioService/PreflightStrategySession":
 		return "portfolio.PreflightStrategySession"
+	case "CommitStrategySessionStart", "portfolio.v1.PortfolioService/CommitStrategySessionStart":
+		return "portfolio.CommitStrategySessionStart"
 	case "GetActiveStrategy", "portfolio.v1.PortfolioService/GetActiveStrategy":
 		return "portfolio.GetActiveStrategy"
 	case "SaveSession", "portfolio.v1.PortfolioService/SaveSession":
@@ -1220,6 +1247,9 @@ func (unavailablePortfolioClient) UpdatePortfolioWalletState(context.Context, *p
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) PreflightStrategySession(context.Context, *portfoliov1.PreflightStrategySessionRequest, ...grpc.CallOption) (*portfoliov1.PreflightStrategySessionResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) CommitStrategySessionStart(context.Context, *portfoliov1.CommitStrategySessionStartRequest, ...grpc.CallOption) (*portfoliov1.CommitStrategySessionStartResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) GetActiveStrategy(context.Context, *portfoliov1.GetActiveStrategyRequest, ...grpc.CallOption) (*portfoliov1.GetActiveStrategyResponse, error) {
