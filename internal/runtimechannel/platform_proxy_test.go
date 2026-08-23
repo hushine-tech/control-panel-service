@@ -124,6 +124,41 @@ func TestPlatformProxySaveSessionPreservesHostedRuntimeSource(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyUpdateSessionPreservesExpectedStatusCAS(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-pending", UserId: 42, RuntimeId: "runtime-1", Status: "pending",
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.UpdateSessionRequest{
+		SessionId:      "sess-pending",
+		Status:         "running",
+		ExpectedStatus: "pending",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk", Source: "self_hosted"},
+		"portfolio.UpdateSession",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+	if portfolio.updateReq == nil ||
+		portfolio.updateReq.GetRuntimeId() != "runtime-1" ||
+		portfolio.updateReq.GetStatus() != "running" ||
+		portfolio.updateReq.GetExpectedStatus() != "pending" {
+		t.Fatalf("UpdateSession CAS request = %+v", portfolio.updateReq)
+	}
+	field := (&portfoliov1.UpdateSessionRequest{}).ProtoReflect().Descriptor().Fields().ByName("expected_status")
+	if field == nil || field.Number() != 7 {
+		t.Fatalf("UpdateSessionRequest.expected_status descriptor = %v, want tag 7", field)
+	}
+}
+
 func TestPlatformProxyGetSessionAllowsOwningRuntime(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{
 		session: &portfoliov1.StrategySessionEntry{
