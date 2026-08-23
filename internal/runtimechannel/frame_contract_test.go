@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
+	strategyv1 "github.com/hushine-tech/strategy-service/gen/strategyv1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -45,14 +46,18 @@ func assertDependencyFrameMessageField(t *testing.T, message protoreflect.Messag
 }
 
 func assertDependencyFrameMethod(t *testing.T, file protoreflect.FileDescriptor, name protoreflect.Name, input, output protoreflect.FullName) {
+	assertDependencyFrameServiceMethod(t, file, "ControlPanelService", name, input, output)
+}
+
+func assertDependencyFrameServiceMethod(t *testing.T, file protoreflect.FileDescriptor, serviceName, name protoreflect.Name, input, output protoreflect.FullName) {
 	t.Helper()
-	service := file.Services().ByName("ControlPanelService")
+	service := file.Services().ByName(serviceName)
 	if service == nil {
-		t.Fatal("ControlPanelService is missing")
+		t.Fatalf("%s is missing", serviceName)
 	}
 	method := service.Methods().ByName(name)
 	if method == nil {
-		t.Fatalf("ControlPanelService.%s is missing", name)
+		t.Fatalf("%s.%s is missing", serviceName, name)
 	}
 	if method.Input().FullName() != input || method.Output().FullName() != output {
 		t.Fatalf("%s input/output = %s/%s, want %s/%s", method.FullName(), method.Input().FullName(), method.Output().FullName(), input, output)
@@ -125,4 +130,23 @@ func TestRuntimeDependencyFrameContract(t *testing.T) {
 	if got := dynamicRequest.Get(runtimeID).String(); got != "runtime-1" {
 		t.Fatalf("dynamic runtime_id = %q", got)
 	}
+}
+
+func TestStrategyLaunchFrameDependencyContract(t *testing.T) {
+	file := strategyv1.File_strategy_service_proto
+	bootstrap := requireDependencyFrameMessage(t, file, "StrategySessionBootstrap")
+	assertDependencyFrameFields(t, bootstrap, map[protoreflect.Name]protoreflect.FieldNumber{
+		"session_id": 1, "launch_operation_id": 2, "strategy_source_sha256": 3,
+		"confirmed_target_facts": 4,
+	})
+	assertDependencyFrameMessageField(t, bootstrap, "confirmed_target_facts", 4, "strategy.v1.StrategySessionTargetLeverageFact")
+
+	prepared := requireDependencyFrameMessage(t, file, "PreparedRunStrategyStart")
+	assertDependencyFrameFields(t, prepared, map[protoreflect.Name]protoreflect.FieldNumber{
+		"ok": 1, "session": 2, "launch_operation_id": 3, "strategy_source_sha256": 4,
+		"declared_inputs": 5, "declared_order_targets": 6, "required_routes": 7,
+		"required_symbols": 8, "preflight": 9, "risk_controls": 10, "failures": 11,
+	})
+
+	assertDependencyFrameServiceMethod(t, file, "StrategyService", "PrepareRunStrategyStart", "strategy.v1.PrepareRunStrategyStartRequest", "strategy.v1.PreparedRunStrategyStart")
 }
