@@ -1073,7 +1073,10 @@ func TestInvokeStrategyUnaryByRuntimeIDTargetsSelectedStream(t *testing.T) {
 			42,
 			"runtime-b",
 			"RunStrategy",
-			&strategyv1.RunStrategyRequest{PortfolioId: 7, UserId: 42, RuntimeId: "runtime-b"},
+			&strategyv1.RunStrategyRequest{
+				PortfolioId: 7, UserId: 42, RuntimeId: "runtime-b",
+				ResumeSessionId: "session-recoverable-source",
+			},
 			resp,
 		)
 		if err == nil && resp.GetSessionId() != "sess-b" {
@@ -1092,6 +1095,13 @@ func TestInvokeStrategyUnaryByRuntimeIDTargetsSelectedStream(t *testing.T) {
 	case frame := <-sentA:
 		t.Fatalf("runtime-a received unexpected frame: %+v", frame)
 	default:
+	}
+	var forwarded strategyv1.RunStrategyRequest
+	if err := req.GetRequest().GetRequest().UnmarshalTo(&forwarded); err != nil {
+		t.Fatalf("unpack forwarded RunStrategy: %v", err)
+	}
+	if forwarded.GetResumeSessionId() != "session-recoverable-source" {
+		t.Fatalf("forwarded resume_session_id = %q", forwarded.GetResumeSessionId())
 	}
 	if streamA.deliver(&cpv1.RuntimeFrame{
 		CorrelationId: req.GetCorrelationId(),
