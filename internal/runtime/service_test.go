@@ -725,6 +725,54 @@ func TestReapStaleRuntimes_EndsDeadRuntimeAndMarksSessionsRecoverable(t *testing
 	}
 }
 
+func TestReapStaleRuntimes_RetriesSessionCleanupAfterCoreFailure(t *testing.T) {
+	repo := newStubRepo()
+	now := fixedNow
+	svc := makeService(
+		repo,
+		"pro",
+		nil,
+		config.RuntimePlatformConfig{HeartbeatGraceSeconds: 30, DeathGraceSeconds: 300},
+		now,
+	)
+	sessions := &fakeSessionClient{markErrors: []error{errors.New("core unavailable"), nil}}
+	svc.sessionClient = sessions
+	deadHeartbeat := now.Add(-10 * time.Minute)
+	if err := repo.CreateRuntime(context.Background(), domain.Runtime{
+		RuntimeID: "rt_cleanup_retry", UserID: 42,
+		Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusUnhealthy,
+		HeartbeatAt: &deadHeartbeat, CreatedAt: now.Add(-time.Hour), UpdatedAt: deadHeartbeat,
+	}); err != nil {
+		t.Fatalf("CreateRuntime dead: %v", err)
+	}
+
+	if _, err := svc.ReapStaleRuntimes(context.Background()); err != nil {
+		t.Fatalf("first ReapStaleRuntimes: %v", err)
+	}
+	if len(sessions.markCalls) != 1 || len(repo.sessionCleanups) != 1 {
+		t.Fatalf(
+			"first cleanup handoff = calls:%d pending:%d, want 1/1",
+			len(sessions.markCalls), len(repo.sessionCleanups),
+		)
+	}
+
+	now = now.Add(time.Minute)
+	svc.SetClock(func() time.Time { return now })
+	ended, err := svc.ReapStaleRuntimes(context.Background())
+	if err != nil {
+		t.Fatalf("second ReapStaleRuntimes: %v", err)
+	}
+	if len(ended) != 0 {
+		t.Fatalf("second ended runtimes = %+v, want none", ended)
+	}
+	if len(sessions.markCalls) != 2 || len(repo.sessionCleanups) != 0 {
+		t.Fatalf(
+			"retried cleanup handoff = calls:%d pending:%d, want 2/0",
+			len(sessions.markCalls), len(repo.sessionCleanups),
+		)
+	}
+}
+
 func TestReapStaleRuntimes_UsesLongerDeathGraceForBareRuntime(t *testing.T) {
 	repo := newStubRepo()
 	platform := config.RuntimePlatformConfig{
@@ -874,6 +922,13 @@ func TestResolveRuntimeRouteByID_EndedMarksSessionsRecoverable(t *testing.T) {
 		UpdatedAt: fixedNow,
 	}); err != nil {
 		t.Fatalf("CreateRuntime: %v", err)
+	}
+	repo.sessionCleanups["rt_ended"] = domain.RuntimeSessionCleanup{
+		RuntimeID:     "rt_ended",
+		ErrorMessage:  "runtime rt_ended ended; session cleanup pending",
+		NextAttemptAt: fixedNow,
+		CreatedAt:     fixedNow,
+		UpdatedAt:     fixedNow,
 	}
 
 	_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt_ended"})

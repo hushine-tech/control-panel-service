@@ -58,3 +58,27 @@ func TestCurrentControlPanelBaselineContainsFinalContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeSessionCleanupMigrationIsDurableAndCredentialFree(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0002_runtime_session_cleanup_outbox.sql")
+	if err != nil {
+		t.Fatalf("read runtime Session cleanup migration: %v", err)
+	}
+	sql := strings.ToLower(string(raw))
+	for _, required := range []string{
+		"create table if not exists runtime_session_cleanup_outbox",
+		"references runtime_registry(runtime_id) on delete cascade",
+		"next_attempt_at",
+		"attempt_count",
+		"on conflict (runtime_id) do nothing",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("runtime Session cleanup migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"api_key", "api_secret", "credential_json", "token_hash"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("runtime Session cleanup migration contains secret-bearing field %q", forbidden)
+		}
+	}
+}

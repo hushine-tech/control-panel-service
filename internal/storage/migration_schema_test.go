@@ -97,6 +97,19 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 			t.Fatalf("runtime_registry.%s is missing after migrations", column)
 		}
 	}
+	for _, column := range []string{
+		"runtime_id",
+		"error_message",
+		"attempt_count",
+		"next_attempt_at",
+		"last_error",
+		"created_at",
+		"updated_at",
+	} {
+		if !columnExists(ctx, t, db, schema, "runtime_session_cleanup_outbox", column) {
+			t.Fatalf("runtime_session_cleanup_outbox.%s is missing after migrations", column)
+		}
+	}
 
 	indexDef := indexDefinition(ctx, t, db, schema, "uq_runtime_registry_user_name")
 	if !strings.Contains(indexDef, "UNIQUE INDEX") ||

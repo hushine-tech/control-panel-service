@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCurrentControlPanelMigrationSetIsBaselineOnly(t *testing.T) {
+func TestCurrentControlPanelMigrationSetIsExplicit(t *testing.T) {
 	entries, err := os.ReadDir("migrations")
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +20,11 @@ func TestCurrentControlPanelMigrationSetIsBaselineOnly(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"0000_create_schema_migrations.sql", "0001_current_schema_baseline.sql"}
+	want := []string{
+		"0000_create_schema_migrations.sql",
+		"0001_current_schema_baseline.sql",
+		"0002_runtime_session_cleanup_outbox.sql",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("control-panel migration set = %v, want %v", got, want)
 	}

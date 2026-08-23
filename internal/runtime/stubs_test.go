@@ -58,11 +58,12 @@ type fakeHostedCredentialIssuer struct {
 }
 
 type fakeSessionClient struct {
-	listCalls []*portfoliov1.ListRunningSessionsRequest
-	listResp  []*portfoliov1.StrategySessionEntry
-	listErr   error
-	markCalls []*portfoliov1.MarkRuntimeSessionsRecoverableRequest
-	markErr   error
+	listCalls  []*portfoliov1.ListRunningSessionsRequest
+	listResp   []*portfoliov1.StrategySessionEntry
+	listErr    error
+	markCalls  []*portfoliov1.MarkRuntimeSessionsRecoverableRequest
+	markErr    error
+	markErrors []error
 }
 
 type fakeRuntimeStreamCloser struct {
@@ -72,6 +73,13 @@ type fakeRuntimeStreamCloser struct {
 
 func (f *fakeSessionClient) MarkRuntimeSessionsRecoverable(_ context.Context, req *portfoliov1.MarkRuntimeSessionsRecoverableRequest, _ ...grpc.CallOption) (*portfoliov1.MarkRuntimeSessionsRecoverableResponse, error) {
 	f.markCalls = append(f.markCalls, req)
+	if len(f.markErrors) > 0 {
+		err := f.markErrors[0]
+		f.markErrors = f.markErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if f.markErr != nil {
 		return nil, f.markErr
 	}
@@ -205,13 +213,15 @@ type stubRepo struct {
 	credsByRuntime             map[string]domain.RuntimeCredential
 	admissionFailures          []domain.RuntimeAdmissionFailure
 	admissionRecordHasDeadline bool
+	sessionCleanups            map[string]domain.RuntimeSessionCleanup
 }
 
 func newStubRepo() *stubRepo {
 	return &stubRepo{
-		runtimes:       map[string]domain.Runtime{},
-		credentials:    map[string]domain.RuntimeCredential{},
-		credsByRuntime: map[string]domain.RuntimeCredential{},
+		runtimes:        map[string]domain.Runtime{},
+		credentials:     map[string]domain.RuntimeCredential{},
+		credsByRuntime:  map[string]domain.RuntimeCredential{},
+		sessionCleanups: map[string]domain.RuntimeSessionCleanup{},
 	}
 }
 
@@ -488,6 +498,13 @@ func (s *stubRepo) EndRuntime(_ context.Context, runtimeID, reason string, ended
 	rt.EndedAt = &t
 	rt.UpdatedAt = endedAt
 	s.runtimes[runtimeID] = rt
+	s.sessionCleanups[runtimeID] = domain.RuntimeSessionCleanup{
+		RuntimeID:     runtimeID,
+		ErrorMessage:  "runtime " + runtimeID + " ended: " + reason + "; session cleanup pending",
+		NextAttemptAt: endedAt,
+		CreatedAt:     endedAt,
+		UpdatedAt:     endedAt,
+	}
 	return rt, nil
 }
 
@@ -569,6 +586,13 @@ func (s *stubRepo) EndRuntimesByCredentialKey(_ context.Context, keyID, reason s
 		rt.EndedAt = &t
 		rt.UpdatedAt = endedAt
 		s.runtimes[id] = rt
+		s.sessionCleanups[id] = domain.RuntimeSessionCleanup{
+			RuntimeID:     id,
+			ErrorMessage:  "runtime " + id + " ended: " + reason + "; session cleanup pending",
+			NextAttemptAt: endedAt,
+			CreatedAt:     endedAt,
+			UpdatedAt:     endedAt,
+		}
 		ended++
 	}
 	return ended, nil
@@ -603,9 +627,57 @@ func (s *stubRepo) EndDeadRuntimesBySourceCutoffs(_ context.Context, defaultCuto
 		rt.EndedAt = &t
 		rt.UpdatedAt = endedAt
 		s.runtimes[id] = rt
+		s.sessionCleanups[id] = domain.RuntimeSessionCleanup{
+			RuntimeID:     id,
+			ErrorMessage:  "runtime " + id + " ended: " + reason + "; session cleanup pending",
+			NextAttemptAt: endedAt,
+			CreatedAt:     endedAt,
+			UpdatedAt:     endedAt,
+		}
 		result = append(result, rt)
 	}
 	return result, nil
+}
+
+func (s *stubRepo) ListRuntimeSessionCleanupsDue(_ context.Context, now time.Time, limit int) ([]domain.RuntimeSessionCleanup, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	result := make([]domain.RuntimeSessionCleanup, 0, limit)
+	for _, cleanup := range s.sessionCleanups {
+		if cleanup.NextAttemptAt.After(now) {
+			continue
+		}
+		result = append(result, cleanup)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (s *stubRepo) RetryRuntimeSessionCleanup(_ context.Context, runtimeID, lastError string, nextAttemptAt, updatedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cleanup, ok := s.sessionCleanups[runtimeID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	cleanup.AttemptCount++
+	cleanup.LastError = lastError
+	cleanup.NextAttemptAt = nextAttemptAt
+	cleanup.UpdatedAt = updatedAt
+	s.sessionCleanups[runtimeID] = cleanup
+	return nil
+}
+
+func (s *stubRepo) CompleteRuntimeSessionCleanup(_ context.Context, runtimeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessionCleanups, runtimeID)
+	return nil
 }
 
 // makeService builds a Service backed by the stubRepo and a deterministic

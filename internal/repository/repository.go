@@ -106,6 +106,12 @@ type Repository interface {
 	// debug bare runtimes.
 	EndDeadRuntimesBySourceCutoffs(ctx context.Context, defaultCutoff, bareCutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error)
 
+	// Runtime Session cleanup is a durable at-least-once handoff to
+	// core-service after a Runtime becomes terminal.
+	ListRuntimeSessionCleanupsDue(ctx context.Context, now time.Time, limit int) ([]domain.RuntimeSessionCleanup, error)
+	RetryRuntimeSessionCleanup(ctx context.Context, runtimeID, lastError string, nextAttemptAt, updatedAt time.Time) error
+	CompleteRuntimeSessionCleanup(ctx context.Context, runtimeID string) error
+
 	// UpdateRuntimeCleanupState persists hosted deprovision/self-hosted
 	// cleanup ownership state on the runtime row. reason must be non-secret
 	// operator/user guidance.

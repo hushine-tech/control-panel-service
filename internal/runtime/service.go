@@ -559,7 +559,7 @@ func (s *Service) EndRuntime(ctx context.Context, args EndRuntimeArgs) (domain.R
 		rt.CleanupAt = &cleanup.At
 	}
 
-	s.markRuntimeSessionsRecoverable(ctx, rt.RuntimeID, fmt.Sprintf("runtime %s was ended by control-panel", rt.RuntimeID))
+	_ = s.drainRuntimeSessionCleanups(ctx, s.now().UTC())
 	s.publishRuntimeEvent(ctx, rt, cpnotify.EventRuntimeEnded, cpnotify.SeverityInfo, fmt.Sprintf("Runtime %s ended: %s.", rt.Name, rt.EndedReason))
 	return rt, nil
 }
@@ -680,20 +680,52 @@ func (s *Service) ReapStaleRuntimes(ctx context.Context) ([]domain.Runtime, erro
 		} else if rt.Source == domain.RuntimeSourceSelfHosted {
 			s.recordSelfHostedCleanupGuidance(rt.RuntimeID)
 		}
-		s.markRuntimeSessionsRecoverable(ctx, rt.RuntimeID, fmt.Sprintf("runtime %s heartbeat stale; session marked recoverable by control-panel watchdog", rt.RuntimeID))
 		s.publishRuntimeEvent(ctx, rt, cpnotify.EventRuntimeEnded, cpnotify.SeverityError, fmt.Sprintf("Runtime %s ended: %s.", rt.Name, rt.EndedReason))
+	}
+	if err := s.drainRuntimeSessionCleanups(ctx, now); err != nil {
+		return append(stale, ended...), err
 	}
 	return append(stale, ended...), nil
 }
 
-func (s *Service) markRuntimeSessionsRecoverable(ctx context.Context, runtimeID, errMsg string) {
+func (s *Service) markRuntimeSessionsRecoverable(ctx context.Context, runtimeID, errMsg string) error {
 	if s.sessionClient == nil || runtimeID == "" {
-		return
+		return errors.New("core-service Session cleanup client is unavailable")
 	}
-	_, _ = s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &portfoliov1.MarkRuntimeSessionsRecoverableRequest{
+	_, err := s.sessionClient.MarkRuntimeSessionsRecoverable(ctx, &portfoliov1.MarkRuntimeSessionsRecoverableRequest{
 		RuntimeId: runtimeID,
 		Error:     errMsg,
 	})
+	return err
+}
+
+func (s *Service) drainRuntimeSessionCleanups(ctx context.Context, now time.Time) error {
+	cleanups, err := s.repo.ListRuntimeSessionCleanupsDue(ctx, now, 50)
+	if err != nil {
+		return err
+	}
+	for _, cleanup := range cleanups {
+		if err := s.markRuntimeSessionsRecoverable(
+			ctx,
+			cleanup.RuntimeID,
+			cleanup.ErrorMessage,
+		); err != nil {
+			if retryErr := s.repo.RetryRuntimeSessionCleanup(
+				ctx,
+				cleanup.RuntimeID,
+				"core-service Session cleanup failed",
+				now.Add(15*time.Second),
+				now,
+			); retryErr != nil {
+				return retryErr
+			}
+			continue
+		}
+		if err := s.repo.CompleteRuntimeSessionCleanup(ctx, cleanup.RuntimeID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ── Resolve ─────────────────────────────────────────────────────────────────
@@ -728,7 +760,7 @@ func (s *Service) resolveRuntimeRouteForRuntime(ctx context.Context, userID int6
 func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, userID int64, rt domain.Runtime, role string, environment int) (ResolveResult, error) {
 	switch rt.Status {
 	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed:
-		s.markRuntimeSessionsRecoverable(ctx, rt.RuntimeID, fmt.Sprintf("runtime %s is terminal (%s); session marked recoverable during route resolution", rt.RuntimeID, rt.Status))
+		_ = s.drainRuntimeSessionCleanups(ctx, s.now().UTC())
 		return ResolveResult{}, ErrEnded
 	case "unpaired":
 		return ResolveResult{}, ErrUnpaired

@@ -750,6 +750,16 @@ func (r *TimescaleRepository) EndRuntime(ctx context.Context, runtimeID, reason 
 			WHERE runtime_id = $1
 			  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')
 			RETURNING runtime_id
+		), queued_session_cleanup AS (
+			INSERT INTO runtime_session_cleanup_outbox (
+				runtime_id, error_message, next_attempt_at, created_at, updated_at
+			)
+			SELECT runtime_id,
+			       format('runtime %s ended: %s; session cleanup pending', runtime_id, $3),
+			       $2, $2, $2
+			FROM updated
+			ON CONFLICT (runtime_id) DO NOTHING
+			RETURNING runtime_id
 		)
 		`+runtimeSelectColumns+`
 		FROM runtime_registry
@@ -775,20 +785,34 @@ func (r *TimescaleRepository) EndRuntime(ctx context.Context, runtimeID, reason 
 
 func (r *TimescaleRepository) EndRuntimesByCredentialKey(ctx context.Context, keyID, reason string, endedAt time.Time) (int64, error) {
 	terminalStatus := domain.RuntimeTerminalStatusForReason(reason)
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE runtime_registry
-		SET status = $4,
-		    ended_at = $2,
-		    ended_reason = $3,
-		    updated_at = NOW()
-		WHERE credential_key_id = $1
-		  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')`,
+	var ended int64
+	if err := r.db.QueryRowContext(ctx, `
+		WITH updated AS (
+			UPDATE runtime_registry
+			SET status = $4,
+			    ended_at = $2,
+			    ended_reason = $3,
+			    updated_at = NOW()
+			WHERE credential_key_id = $1
+			  AND status NOT IN ('ended', 'cancelled', 'failed', 'heartbeat_stale')
+			RETURNING runtime_id
+		), queued_session_cleanup AS (
+			INSERT INTO runtime_session_cleanup_outbox (
+				runtime_id, error_message, next_attempt_at, created_at, updated_at
+			)
+			SELECT runtime_id,
+			       format('runtime %s ended: %s; session cleanup pending', runtime_id, $3),
+			       $2, $2, $2
+			FROM updated
+			ON CONFLICT (runtime_id) DO NOTHING
+			RETURNING runtime_id
+		)
+		SELECT COUNT(*) FROM updated`,
 		keyID, endedAt.UTC(), reason, terminalStatus,
-	)
-	if err != nil {
+	).Scan(&ended); err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	return ended, nil
 }
 
 func (r *TimescaleRepository) EndDeadRuntimes(ctx context.Context, cutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error) {
@@ -810,6 +834,16 @@ func (r *TimescaleRepository) EndDeadRuntimesBySourceCutoffs(ctx context.Context
 			    OR (source <> 'bare' AND COALESCE(heartbeat_at, updated_at, created_at) < $1)
 			  )
 			RETURNING runtime_id
+		), queued_session_cleanup AS (
+			INSERT INTO runtime_session_cleanup_outbox (
+				runtime_id, error_message, next_attempt_at, created_at, updated_at
+			)
+			SELECT runtime_id,
+			       format('runtime %s ended: %s; session cleanup pending', runtime_id, $3),
+			       $2, $2, $2
+			FROM updated
+			ON CONFLICT (runtime_id) DO NOTHING
+			RETURNING runtime_id
 		)
 		`+runtimeSelectColumns+`
 		FROM runtime_registry
@@ -828,6 +862,79 @@ func (r *TimescaleRepository) EndDeadRuntimesBySourceCutoffs(ctx context.Context
 		result = append(result, rt)
 	}
 	return result, rows.Err()
+}
+
+func (r *TimescaleRepository) ListRuntimeSessionCleanupsDue(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) ([]domain.RuntimeSessionCleanup, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT runtime_id, error_message, attempt_count, next_attempt_at,
+		       last_error, created_at, updated_at
+		FROM runtime_session_cleanup_outbox
+		WHERE next_attempt_at <= $1
+		ORDER BY next_attempt_at, created_at, runtime_id
+		LIMIT $2`, now.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cleanups := make([]domain.RuntimeSessionCleanup, 0, limit)
+	for rows.Next() {
+		var cleanup domain.RuntimeSessionCleanup
+		if err := rows.Scan(
+			&cleanup.RuntimeID,
+			&cleanup.ErrorMessage,
+			&cleanup.AttemptCount,
+			&cleanup.NextAttemptAt,
+			&cleanup.LastError,
+			&cleanup.CreatedAt,
+			&cleanup.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		cleanups = append(cleanups, cleanup)
+	}
+	return cleanups, rows.Err()
+}
+
+func (r *TimescaleRepository) RetryRuntimeSessionCleanup(
+	ctx context.Context,
+	runtimeID string,
+	lastError string,
+	nextAttemptAt time.Time,
+	updatedAt time.Time,
+) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE runtime_session_cleanup_outbox
+		SET attempt_count = attempt_count + 1,
+		    last_error = $2,
+		    next_attempt_at = $3,
+		    updated_at = $4
+		WHERE runtime_id = $1`,
+		strings.TrimSpace(runtimeID), strings.TrimSpace(lastError),
+		nextAttemptAt.UTC(), updatedAt.UTC())
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *TimescaleRepository) CompleteRuntimeSessionCleanup(
+	ctx context.Context,
+	runtimeID string,
+) error {
+	_, err := r.db.ExecContext(ctx, `
+		DELETE FROM runtime_session_cleanup_outbox
+		WHERE runtime_id = $1`, strings.TrimSpace(runtimeID))
+	return err
 }
 
 func (r *TimescaleRepository) UpdateRuntimeCleanupState(ctx context.Context, runtimeID, status, reason string, at time.Time) error {

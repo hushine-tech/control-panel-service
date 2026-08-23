@@ -99,6 +99,90 @@ func TestTimescaleRepositoryEndDeadRuntimesBySourceCutoffsKeepsBareUntilBareCuto
 	}
 }
 
+func TestTimescaleRepositoryRuntimeSessionCleanupOutboxRetriesUntilAcknowledged(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db := openRepositoryTestDB(t, ctx)
+	defer db.Close()
+	if err := createTempRuntimeRegistry(ctx, db); err != nil {
+		t.Fatalf("create temp runtime_registry: %v", err)
+	}
+
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	stale := now.Add(-10 * time.Minute)
+	repo := &TimescaleRepository{db: db}
+	if err := repo.CreateRuntime(ctx, domain.Runtime{
+		RuntimeID: "rt_cleanup_retry", UserID: 42, Name: "cleanup-retry",
+		Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusUnhealthy,
+		HeartbeatAt: &stale, CreatedAt: stale, UpdatedAt: stale,
+	}); err != nil {
+		t.Fatalf("CreateRuntime: %v", err)
+	}
+	if _, err := repo.EndDeadRuntimesBySourceCutoffs(
+		ctx,
+		now.Add(-5*time.Minute),
+		now.Add(-30*time.Minute),
+		domain.RuntimeEndedReasonHeartbeatStale,
+		now,
+	); err != nil {
+		t.Fatalf("EndDeadRuntimesBySourceCutoffs: %v", err)
+	}
+
+	due, err := repo.ListRuntimeSessionCleanupsDue(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("list newly queued cleanup: %v", err)
+	}
+	if len(due) != 1 || due[0].RuntimeID != "rt_cleanup_retry" || due[0].ErrorMessage == "" {
+		t.Fatalf("newly queued cleanup = %+v", due)
+	}
+
+	retryAt := now.Add(time.Minute)
+	if err := repo.RetryRuntimeSessionCleanup(
+		ctx,
+		"rt_cleanup_retry",
+		"core unavailable",
+		retryAt,
+		now,
+	); err != nil {
+		t.Fatalf("record cleanup retry: %v", err)
+	}
+	if due, err := repo.ListRuntimeSessionCleanupsDue(ctx, now, 10); err != nil || len(due) != 0 {
+		t.Fatalf("cleanup before retry deadline = %+v/%v, want none", due, err)
+	}
+	due, err = repo.ListRuntimeSessionCleanupsDue(ctx, retryAt, 10)
+	if err != nil || len(due) != 1 || due[0].AttemptCount != 1 || due[0].LastError != "core unavailable" {
+		t.Fatalf("cleanup at retry deadline = %+v/%v", due, err)
+	}
+
+	if err := repo.CompleteRuntimeSessionCleanup(ctx, "rt_cleanup_retry"); err != nil {
+		t.Fatalf("complete cleanup: %v", err)
+	}
+	if due, err := repo.ListRuntimeSessionCleanupsDue(ctx, retryAt, 10); err != nil || len(due) != 0 {
+		t.Fatalf("completed cleanup = %+v/%v, want none", due, err)
+	}
+
+	if err := repo.CreateRuntime(ctx, domain.Runtime{
+		RuntimeID: "rt_revoked_cleanup", CredentialKeyID: "key-revoked-cleanup",
+		UserID: 42, Name: "revoked-cleanup", Source: domain.RuntimeSourceSelfHosted,
+		Status: domain.RuntimeStatusActive, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateRuntime revoked credential target: %v", err)
+	}
+	ended, err := repo.EndRuntimesByCredentialKey(
+		ctx,
+		"key-revoked-cleanup",
+		domain.RuntimeEndedReasonAuthFailed,
+		retryAt,
+	)
+	if err != nil || ended != 1 {
+		t.Fatalf("end revoked credential runtimes = %d/%v, want 1/nil", ended, err)
+	}
+	due, err = repo.ListRuntimeSessionCleanupsDue(ctx, retryAt, 10)
+	if err != nil || len(due) != 1 || due[0].RuntimeID != "rt_revoked_cleanup" {
+		t.Fatalf("revoked credential cleanup = %+v/%v", due, err)
+	}
+}
+
 func TestTimescaleRepositoryCreateSelfHostedRuntimeConsumesDownloadedCredential(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -743,6 +827,15 @@ func createTempRuntimeRegistry(ctx context.Context, db *sql.DB) error {
 			debug_pycharm_doc_preserved BOOLEAN NOT NULL DEFAULT FALSE,
 			debug_workspace_prepared_at TIMESTAMPTZ,
 			debug_workspace_last_error TEXT NOT NULL DEFAULT ''
+		) ON COMMIT PRESERVE ROWS;
+		CREATE TEMP TABLE runtime_session_cleanup_outbox (
+			runtime_id TEXT PRIMARY KEY REFERENCES runtime_registry(runtime_id) ON DELETE CASCADE,
+			error_message TEXT NOT NULL,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at TIMESTAMPTZ NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
 		) ON COMMIT PRESERVE ROWS`)
 	if err != nil {
 		return fmt.Errorf("create table: %w", err)

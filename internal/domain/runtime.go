@@ -96,6 +96,18 @@ type Runtime struct {
 	UpdatedAt                  time.Time
 }
 
+// RuntimeSessionCleanup is the durable retry record for handing terminal
+// Runtime ownership changes to core-service Session recovery.
+type RuntimeSessionCleanup struct {
+	RuntimeID     string
+	ErrorMessage  string
+	AttemptCount  int
+	NextAttemptAt time.Time
+	LastError     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 type DebugWorkspaceState struct {
 	HostPath              string
 	ContainerPath         string
@@ -112,7 +124,7 @@ type DebugWorkspaceState struct {
 type DebugDatasetState struct {
 	DatasetID      string
 	UserID         int64
-	PortfolioID      int64
+	PortfolioID    int64
 	RuntimeID      string
 	Market         string
 	Symbol         string
