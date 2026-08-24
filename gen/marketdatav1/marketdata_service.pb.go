@@ -234,7 +234,7 @@ type MarketDataRequest struct {
 	CreatedAt         *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt         *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	CancelledAt       *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"`                  // optional
-	Scope             string                 `protobuf:"bytes,11,opt,name=scope,proto3" json:"scope,omitempty"`                                                 // "live" | "historical" ; empty legacy values are treated as "live"
+	Scope             string                 `protobuf:"bytes,11,opt,name=scope,proto3" json:"scope,omitempty"`                                                 // required: "live" | "historical"
 	RequestedStartAt  *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=requested_start_at,json=requestedStartAt,proto3" json:"requested_start_at,omitempty"` // historical only
 	RequestedEndAt    *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=requested_end_at,json=requestedEndAt,proto3" json:"requested_end_at,omitempty"`       // historical only
 	CoveredStartAt    *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=covered_start_at,json=coveredStartAt,proto3" json:"covered_start_at,omitempty"`       // historical only

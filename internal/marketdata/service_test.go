@@ -32,6 +32,7 @@ func TestCreateMarketDataRequest_LiveHappyPath(t *testing.T) {
 		UserId:            42,
 		Key:               liveKey(),
 		NeedsLiveDelivery: true,
+		Scope:             "live",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -47,6 +48,18 @@ func TestCreateMarketDataRequest_LiveHappyPath(t *testing.T) {
 	}
 	if resp.GetRequest().GetScope() != "live" {
 		t.Errorf("scope = %q, want live", resp.GetRequest().GetScope())
+	}
+}
+
+func TestCreateMarketDataRequest_RejectsEmptyScope(t *testing.T) {
+	svc := newSvc()
+	_, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
+		UserId:            42,
+		Key:               liveKey(),
+		NeedsLiveDelivery: true,
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
 	}
 }
 
@@ -185,7 +198,7 @@ func TestCreateMarketDataRequest_HistoricalEndBeforeStart(t *testing.T) {
 func TestCancelMarketDataRequest_Live(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	_, err := svc.CancelMarketDataRequest(context.Background(), &mdv1.CancelMarketDataRequestRequest{
 		UserId: 42, RequestId: created.GetRequest().GetRequestId(),
@@ -208,7 +221,7 @@ func TestCancelMarketDataRequest_NotFound(t *testing.T) {
 func TestCancelMarketDataRequest_PermissionDeniedAcrossUsers(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	_, err := svc.CancelMarketDataRequest(context.Background(), &mdv1.CancelMarketDataRequestRequest{
 		UserId:    99,
@@ -224,7 +237,7 @@ func TestCancelMarketDataRequest_PermissionDeniedAcrossUsers(t *testing.T) {
 func TestListMarketDataRequests_MergesLiveAndHistorical(t *testing.T) {
 	svc := newSvc()
 	_, _ = svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -247,6 +260,7 @@ func TestListMarketDataRequests_ExcludesCancelledLiveRequestAfterRestart(t *test
 		UserId:            42,
 		Key:               liveKey(),
 		NeedsLiveDelivery: true,
+		Scope:             "live",
 	})
 	if err != nil {
 		t.Fatalf("first Create: %v", err)
@@ -262,6 +276,7 @@ func TestListMarketDataRequests_ExcludesCancelledLiveRequestAfterRestart(t *test
 		UserId:            42,
 		Key:               liveKey(),
 		NeedsLiveDelivery: true,
+		Scope:             "live",
 	})
 	if err != nil {
 		t.Fatalf("second Create: %v", err)
@@ -288,7 +303,7 @@ func TestListMarketDataRequests_ExcludesCancelledLiveRequestAfterRestart(t *test
 func TestGetMarketDataStreamStatus_ByID(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	resp, err := svc.GetMarketDataStreamStatus(context.Background(), &mdv1.GetMarketDataStreamStatusRequest{
 		StreamId: created.GetStream().GetStreamId(),
@@ -304,7 +319,7 @@ func TestGetMarketDataStreamStatus_ByID(t *testing.T) {
 func TestGetMarketDataStreamStatus_ByKey(t *testing.T) {
 	svc := newSvc()
 	_, _ = svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	resp, err := svc.GetMarketDataStreamStatus(context.Background(), &mdv1.GetMarketDataStreamStatusRequest{
 		Key: liveKey(),
@@ -332,7 +347,7 @@ func TestGetMarketDataStreamStatus_NotFound(t *testing.T) {
 func TestListMarketDataStreams(t *testing.T) {
 	svc := newSvc()
 	_, _ = svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	resp, err := svc.ListMarketDataStreams(context.Background(), &mdv1.ListMarketDataStreamsRequest{})
 	if err != nil {
@@ -348,7 +363,7 @@ func TestListMarketDataStreams(t *testing.T) {
 func TestReportMarketDataStreamState_HappyPath(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	now := time.Now()
 	resp, err := svc.ReportMarketDataStreamState(context.Background(), &mdv1.ReportMarketDataStreamStateRequest{
@@ -367,7 +382,7 @@ func TestReportMarketDataStreamState_HappyPath(t *testing.T) {
 func TestReportMarketDataStreamState_RejectsBadState(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	_, err := svc.ReportMarketDataStreamState(context.Background(), &mdv1.ReportMarketDataStreamStateRequest{
 		StreamId:    created.GetStream().GetStreamId(),
@@ -394,7 +409,7 @@ func TestReportMarketDataStreamState_NotFound(t *testing.T) {
 func TestCreateOrRenewLease_HappyPath(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	resp, err := svc.CreateOrRenewMarketDataLease(context.Background(), &mdv1.CreateOrRenewMarketDataLeaseRequest{
 		SessionId:  "sess-1",
@@ -412,7 +427,7 @@ func TestCreateOrRenewLease_HappyPath(t *testing.T) {
 func TestCreateOrRenewLease_TTLClampedToMin(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	resp, err := svc.CreateOrRenewMarketDataLease(context.Background(), &mdv1.CreateOrRenewMarketDataLeaseRequest{
 		SessionId:  "sess-1",
@@ -446,7 +461,7 @@ func TestCreateOrRenewLease_RequiresSessionAndStream(t *testing.T) {
 func TestReleaseLease(t *testing.T) {
 	svc := newSvc()
 	created, _ := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-		UserId: 42, Key: liveKey(),
+		UserId: 42, Key: liveKey(), Scope: "live",
 	})
 	_, err := svc.CreateOrRenewMarketDataLease(context.Background(), &mdv1.CreateOrRenewMarketDataLeaseRequest{
 		SessionId: "sess-1", StreamId: created.GetStream().GetStreamId(), TtlSeconds: 60,

@@ -136,7 +136,7 @@ message MarketDataRequest {
   google.protobuf.Timestamp created_at   = 8;
   google.protobuf.Timestamp updated_at   = 9;
   google.protobuf.Timestamp cancelled_at = 10; // optional
-  string    scope              = 11; // "live" | "historical" ; empty legacy values are treated as "live"
+  string    scope              = 11; // required: "live" | "historical"
   google.protobuf.Timestamp requested_start_at = 12; // historical only
   google.protobuf.Timestamp requested_end_at   = 13; // historical only
   google.protobuf.Timestamp covered_start_at   = 14; // historical only

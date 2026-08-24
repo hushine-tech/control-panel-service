@@ -175,7 +175,7 @@ func validateWriterKey(k *mdv1.StreamKey) (domain.StreamKey, error) {
 func normalizeRequestScope(raw string) (domain.MarketDataRequestScope, error) {
 	scope := strings.TrimSpace(strings.ToLower(raw))
 	if scope == "" {
-		return domain.RequestScopeLive, nil
+		return "", status.Error(codes.InvalidArgument, "scope is required and must be 'live' or 'historical'")
 	}
 	switch scope {
 	case string(domain.RequestScopeLive):
@@ -293,7 +293,7 @@ func toProtoHistoryRequest(r domain.MarketDataHistoryRequest) *mdv1.MarketDataRe
 	out := &mdv1.MarketDataRequest{
 		RequestId:         r.RequestID,
 		UserId:            r.UserID,
-		PortfolioId:         0,
+		PortfolioId:       0,
 		StreamId:          0,
 		Key:               toProtoStreamKey(r.Key),
 		NeedsLiveDelivery: false,
