@@ -83,7 +83,7 @@ func (s *Service) handleRuntimeStatusPatch(rt AuthenticatedRuntime, frame *cpv1.
 
 func statusPatchSessionStatus(raw string) bool {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "running", "stopping", "recoverable", "finished", "completed", "stopped", "failed", "stop_failed", "preflight_failed":
+	case "running", "stopping", "recoverable", "finished", "stopped", "failed", "stop_failed", "preflight_failed":
 		return true
 	default:
 		return false
