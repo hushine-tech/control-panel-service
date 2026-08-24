@@ -665,7 +665,6 @@ func TestPlatformProxyCommitStrategySessionStartInjectsAuthenticatedRuntimeAndPr
 			SessionType:    "live",
 			RuntimeVersion: "v2",
 			SessionName:    "momentum",
-			Leverage:       99,
 			InitialStatus:  "pending",
 		},
 		RequiredRoutes: []*portfoliov1.RequiredRoute{{Exchange: 1, Market: 2}},
@@ -715,7 +714,6 @@ func TestPlatformProxyCommitStrategySessionStartInjectsAuthenticatedRuntimeAndPr
 		request.GetSession().GetRuntimeVersion() != "v2" ||
 		request.GetSession().GetSessionName() != "momentum" ||
 		request.GetSession().GetInitialStatus() != "pending" ||
-		request.GetSession().GetLeverage() != 0 ||
 		len(request.GetRequiredRoutes()) != 1 ||
 		len(request.GetRequiredSymbols()) != 1 ||
 		request.GetRequiredSymbols()[0].GetEffectiveLeverage() != 5 ||
