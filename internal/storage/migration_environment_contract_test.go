@@ -62,7 +62,7 @@ func TestCurrentControlPanelBaselineContainsFinalContracts(t *testing.T) {
 	}
 }
 
-func TestCurrentBaselineCleanupOutboxIsDurableAndCredentialFree(t *testing.T) {
+func TestCurrentBaselineCleanupOutboxIsDurableCredentialFreeAndHasNoBackfill(t *testing.T) {
 	raw, err := os.ReadFile("migrations/0001_current_schema_baseline.sql")
 	if err != nil {
 		t.Fatalf("read current schema baseline: %v", err)
@@ -92,10 +92,12 @@ func TestCurrentBaselineCleanupOutboxIsDurableAndCredentialFree(t *testing.T) {
 		"api_secret",
 		"credential_json",
 		"token_hash",
-		"insert into runtime_session_cleanup_outbox",
 	} {
 		if strings.Contains(outboxSQL, forbidden) {
 			t.Fatalf("current baseline cleanup outbox contains obsolete or secret-bearing SQL %q", forbidden)
 		}
+	}
+	if strings.Contains(sql, "insert into runtime_session_cleanup_outbox") {
+		t.Fatal("current baseline must not backfill the cleanup outbox")
 	}
 }
