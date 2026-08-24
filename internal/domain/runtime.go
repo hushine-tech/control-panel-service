@@ -6,7 +6,6 @@ import "time"
 // lifecycle is starting -> active <-> unhealthy -> terminal.
 const (
 	RuntimeStatusStarting       = "starting"
-	RuntimeStatusPaired         = "paired" // legacy pre-unification status; treated like starting.
 	RuntimeStatusActive         = "active"
 	RuntimeStatusUnhealthy      = "unhealthy"
 	RuntimeStatusHeartbeatStale = "heartbeat_stale"
@@ -67,7 +66,7 @@ const (
 type Runtime struct {
 	RuntimeID                  string
 	CredentialKeyID            string // self_hosted only; binds registry rows to RuntimeChannel credentials
-	UserID                     int64  // 0 = unpaired
+	UserID                     int64  // 0 until authentication assigns an owner
 	Name                       string
 	Source                     string // RuntimeSource*
 	Role                       CredentialRole

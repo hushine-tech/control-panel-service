@@ -63,14 +63,14 @@ type Repository interface {
 	// UpdateRuntimeStatus changes status only; updated_at is bumped.
 	UpdateRuntimeStatus(ctx context.Context, runtimeID, status string) error
 
-	// MarkStaleRuntimesUnhealthy flips active/paired runtimes whose last
+	// MarkStaleRuntimesUnhealthy flips active/starting runtimes whose last
 	// heartbeat/update is older than cutoff to unhealthy and returns the
 	// affected rows. The service layer uses the returned runtime_id values
 	// to stop sessions bound to dead runtimes.
 	MarkStaleRuntimesUnhealthy(ctx context.Context, cutoff time.Time) ([]domain.Runtime, error)
 
 	// UpdateRuntimeHeartbeat sets heartbeat_at to ``at``; if status is
-	// 'paired' or 'unhealthy' it also flips status to 'active'. updated_at
+	// 'starting' or 'unhealthy' it also flips status to 'active'. updated_at
 	// is bumped.
 	UpdateRuntimeHeartbeat(ctx context.Context, runtimeID string, at time.Time) error
 
@@ -97,7 +97,7 @@ type Repository interface {
 	// is revoked.
 	EndRuntimesByCredentialKey(ctx context.Context, keyID, reason string, endedAt time.Time) (int64, error)
 
-	// EndDeadRuntimes terminally ends active/paired/unhealthy runtimes older
+	// EndDeadRuntimes terminally ends unhealthy runtimes older
 	// than cutoff and returns the affected rows.
 	EndDeadRuntimes(ctx context.Context, cutoff time.Time, reason string, endedAt time.Time) ([]domain.Runtime, error)
 

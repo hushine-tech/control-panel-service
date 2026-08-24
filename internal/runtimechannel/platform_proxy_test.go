@@ -61,6 +61,19 @@ func TestStreamErrorToStatusPreservesDependencyDetails(t *testing.T) {
 	}
 }
 
+func TestControlPanelDescriptorOmitsRemovedCredentialFlag(t *testing.T) {
+	message := cpv1.File_control_panel_service_proto.Messages().ByName("ListRuntimeCredentialsRequest")
+	if message == nil {
+		t.Fatal("ListRuntimeCredentialsRequest is missing")
+	}
+	if field := message.Fields().ByName("include_revoked"); field != nil {
+		t.Fatalf("removed include_revoked field still exists at tag %d", field.Number())
+	}
+	if field := message.Fields().ByName("include_inactive"); field == nil {
+		t.Fatal("current include_inactive field is missing")
+	}
+}
+
 func TestPlatformProxySaveSessionBindsAuthenticatedRuntime(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{}
 	proxy := NewPlatformProxy(portfolio, nil, nil)
@@ -481,7 +494,7 @@ func TestPlatformProxyRejectsUnknownPortfolioWalletMethods(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updatePayload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{PortfolioId: 7})
+	updatePayload, err := anypb.New(&portfoliov1.UpdatePortfolioWalletStateRequest{PortfolioId: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,8 +518,8 @@ func TestPlatformProxyRejectsUnknownPortfolioWalletMethods(t *testing.T) {
 			if status.Code(err) != codes.Unimplemented {
 				t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
 			}
-			if portfolio.getPortfolioReq != nil || portfolio.portfolioGetReq != nil || portfolio.portfolioUpdateReq != nil {
-				t.Fatalf("removed method touched portfolio client: get=%+v portfolio_get=%+v portfolio_update=%+v", portfolio.getPortfolioReq, portfolio.portfolioGetReq, portfolio.portfolioUpdateReq)
+			if portfolio.getPortfolioReq != nil || portfolio.portfolioGetReq != nil || portfolio.walletStateUpdateReq != nil {
+				t.Fatalf("unknown method touched portfolio client: get=%+v portfolio_get=%+v wallet_update=%+v", portfolio.getPortfolioReq, portfolio.portfolioGetReq, portfolio.walletStateUpdateReq)
 			}
 		})
 	}
@@ -1084,33 +1097,6 @@ func TestListOrderLifecycleEventsProxyRejectsRuntimeMismatchBeforeCoreOrderCall(
 	}
 }
 
-func TestPlatformProxyUpdatePortfolioSnapshotIsRejected(t *testing.T) {
-	portfolio := &fakePortfolioPlatformClient{}
-	proxy := NewPlatformProxy(portfolio, nil, nil)
-	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
-		PortfolioId:    7,
-		SnapshotReason: 2,
-		StrategyId:     9,
-		SessionId:      "sess-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = proxy.DispatchRuntimeRequest(
-		context.Background(),
-		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
-		"portfolio.UpdatePortfolioSnapshot",
-		payload,
-	)
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
-	}
-	if portfolio.portfolioUpdateReq != nil {
-		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", portfolio.portfolioUpdateReq)
-	}
-}
-
 func TestPlatformProxyUpdatePortfolioWalletStateChecksSessionAndInjectsUser(t *testing.T) {
 	portfolio := &fakePortfolioPlatformClient{
 		session: &portfoliov1.StrategySessionEntry{
@@ -1227,63 +1213,6 @@ func TestPlatformProxyRejectsPeriodicWalletUpdateForPendingSession(t *testing.T)
 	}
 	if portfolio.walletStateUpdateReq != nil {
 		t.Fatalf("periodic wallet update should not reach core: %+v", portfolio.walletStateUpdateReq)
-	}
-}
-
-func TestPlatformProxyUpdatePortfolioSnapshotRejectsDifferentRuntimeSession(t *testing.T) {
-	portfolio := &fakePortfolioPlatformClient{
-		session: &portfoliov1.StrategySessionEntry{
-			SessionId: "sess-1",
-			UserId:    42,
-			RuntimeId: "runtime-other",
-			Status:    "running",
-		},
-	}
-	proxy := NewPlatformProxy(portfolio, nil, nil)
-	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
-		PortfolioId: 7,
-		SessionId:   "sess-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = proxy.DispatchRuntimeRequest(
-		context.Background(),
-		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
-		"portfolio.v1.PortfolioService/UpdatePortfolioSnapshot",
-		payload,
-	)
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
-	}
-	if portfolio.portfolioUpdateReq != nil {
-		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", portfolio.portfolioUpdateReq)
-	}
-}
-
-func TestPlatformProxyUpdatePortfolioSnapshotRejectsEmptySessionID(t *testing.T) {
-	portfolio := &fakePortfolioPlatformClient{}
-	proxy := NewPlatformProxy(portfolio, nil, nil)
-	payload, err := anypb.New(&portfoliov1.UpdatePortfolioSnapshotRequest{
-		PortfolioId: 7,
-		UserId:      42,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = proxy.DispatchRuntimeRequest(
-		context.Background(),
-		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", Name: "desk"},
-		"portfolio.UpdatePortfolioSnapshot",
-		payload,
-	)
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("code = %v, want Unimplemented (err=%v)", status.Code(err), err)
-	}
-	if portfolio.portfolioUpdateReq != nil {
-		t.Fatalf("UpdatePortfolioSnapshot should not be called: %+v", portfolio.portfolioUpdateReq)
 	}
 }
 
@@ -1807,7 +1736,6 @@ type fakePortfolioPlatformClient struct {
 	saveIndicatorsV2Req     *portfoliov1.SaveStrategyIndicatorsV2Request
 	finalizeIndicatorsV2Req *portfoliov1.FinalizeStrategyIndicatorChunksV2Request
 	portfolioGetReq         *portfoliov1.GetPortfolioSnapshotRequest
-	portfolioUpdateReq      *portfoliov1.UpdatePortfolioSnapshotRequest
 	walletStateUpdateReq    *portfoliov1.UpdatePortfolioWalletStateRequest
 	preflightReq            *portfoliov1.PreflightStrategySessionRequest
 	commitReq               *portfoliov1.CommitStrategySessionStartRequest
@@ -1857,13 +1785,6 @@ func (f *fakePortfolioPlatformClient) ListSessions(_ context.Context, req *portf
 func (f *fakePortfolioPlatformClient) GetPortfolioSnapshot(_ context.Context, req *portfoliov1.GetPortfolioSnapshotRequest, _ ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error) {
 	f.portfolioGetReq = req
 	return &portfoliov1.GetPortfolioSnapshotResponse{
-		Snapshot: &portfoliov1.PortfolioSnapshot{PortfolioId: req.GetPortfolioId(), UserId: req.GetUserId()},
-	}, nil
-}
-
-func (f *fakePortfolioPlatformClient) UpdatePortfolioSnapshot(_ context.Context, req *portfoliov1.UpdatePortfolioSnapshotRequest, _ ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error) {
-	f.portfolioUpdateReq = req
-	return &portfoliov1.UpdatePortfolioSnapshotResponse{
 		Snapshot: &portfoliov1.PortfolioSnapshot{PortfolioId: req.GetPortfolioId(), UserId: req.GetUserId()},
 	}, nil
 }

@@ -28,7 +28,7 @@ func TestTimescaleRepositoryEndDeadRuntimesOnlyEndsUnhealthyCandidates(t *testin
 	repo := &TimescaleRepository{db: db}
 	for _, rt := range []domain.Runtime{
 		{RuntimeID: "rt_active", UserID: 42, Name: "active", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusActive, UpdatedAt: stale, CreatedAt: stale},
-		{RuntimeID: "rt_paired", UserID: 42, Name: "paired", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusPaired, UpdatedAt: stale, CreatedAt: stale},
+		{RuntimeID: "rt_starting", UserID: 42, Name: "starting", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusStarting, UpdatedAt: stale, CreatedAt: stale},
 		{RuntimeID: "rt_unhealthy", UserID: 42, Name: "unhealthy", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusUnhealthy, UpdatedAt: stale, CreatedAt: stale},
 		{RuntimeID: "rt_unhealthy_fresh", UserID: 42, Name: "unhealthy-fresh", Source: domain.RuntimeSourceHosted, Status: domain.RuntimeStatusUnhealthy, UpdatedAt: fresh, CreatedAt: fresh},
 	} {
@@ -44,7 +44,7 @@ func TestTimescaleRepositoryEndDeadRuntimesOnlyEndsUnhealthyCandidates(t *testin
 	if len(ended) != 1 || ended[0].RuntimeID != "rt_unhealthy" {
 		t.Fatalf("ended = %+v, want only rt_unhealthy", ended)
 	}
-	for _, id := range []string{"rt_active", "rt_paired", "rt_unhealthy_fresh"} {
+	for _, id := range []string{"rt_active", "rt_starting", "rt_unhealthy_fresh"} {
 		got, err := repo.GetRuntime(ctx, id)
 		if err != nil {
 			t.Fatalf("GetRuntime(%s): %v", id, err)

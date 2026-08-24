@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -166,9 +165,7 @@ type ResourceProfile struct {
 }
 
 // ProvisioningConfig aggregates the inputs the hosted-runtime provisioner
-// needs at runtime time: per-profile resource limits, the strategy-runtime
-// container image to start, and the legacy host:port pool kept only for
-// historical registry fields. Runtime session traffic is RuntimeChannel-only.
+// needs at runtime time. Runtime session traffic is RuntimeChannel-only.
 type ProvisioningConfig struct {
 	// Backend selects the provisioner implementation:
 	//   ""      → NoOpProvisioner (default; EnsureHostedRuntime fails closed)
@@ -179,15 +176,6 @@ type ProvisioningConfig struct {
 	// Image is the container image strategy-runtime is launched from.
 	// Defaults to "hushine/strategy-runtime:executor-dev".
 	Image string `yaml:"image"`
-
-	// AdvertiseHost is retained for older registry rows and operator display.
-	// Runtime session traffic uses RuntimeChannel.
-	AdvertiseHost string `yaml:"advertise_host"`
-
-	// PortRangeBase / PortRangeSize are retained for historical registry
-	// compatibility. Hosted runtime traffic no longer publishes these ports.
-	PortRangeBase int `yaml:"port_range_base"`
-	PortRangeSize int `yaml:"port_range_size"`
 
 	// RegistrationTimeoutSeconds is how long EnsureHostedRuntime waits
 	// for a freshly-provisioned runtime to connect through RuntimeChannel.
@@ -222,13 +210,8 @@ type DockerProvisioningConfig struct {
 	// "host.docker.internal:50055" or a service DNS name).
 	RuntimeChannelDialAddr string `yaml:"runtime_channel_dial_addr"`
 
-	// RuntimeEnv is retained only to parse legacy configuration and return
-	// a useful isolation error. Every non-empty map is rejected and no item
-	// is forwarded to hosted runtime containers.
-	RuntimeEnv map[string]string `yaml:"runtime_env"`
-
 	// Coverage holds the explicitly modeled settings for opt-in hosted
-	// runtime coverage. Coverage settings are never sourced from RuntimeEnv.
+	// runtime coverage.
 	Coverage DockerCoverageConfig `yaml:"coverage"`
 
 	// LabelPrefix is the docker label namespace used for traceability:
@@ -246,22 +229,9 @@ type DockerCoverageConfig struct {
 	StopTimeoutSeconds int    `yaml:"stop_timeout_seconds"`
 }
 
-// ValidateRuntimeIsolation rejects legacy operator-provided environment
-// variables and invalid typed coverage settings that would cross the hosted
-// Runtime isolation boundary.
+// ValidateRuntimeIsolation rejects invalid typed coverage settings that would
+// cross the hosted Runtime isolation boundary.
 func (c ProvisioningConfig) ValidateRuntimeIsolation() error {
-	if len(c.Docker.RuntimeEnv) > 0 {
-		keys := make([]string, 0, len(c.Docker.RuntimeEnv))
-		for key := range c.Docker.RuntimeEnv {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		return fmt.Errorf(
-			"provisioning.docker.runtime_env is not supported for Runtime isolation; configure explicit Runtime fields instead: %s",
-			strings.Join(keys, ", "),
-		)
-	}
-
 	coverage := c.Docker.Coverage
 	if !coverage.Enabled {
 		return nil
@@ -346,9 +316,6 @@ func Default() *Config {
 		RuntimePlans: defaultPlans(),
 		Provisioning: ProvisioningConfig{
 			Image:                      "hushine/strategy-runtime:executor-dev",
-			AdvertiseHost:              "127.0.0.1",
-			PortRangeBase:              50100,
-			PortRangeSize:              200,
 			RegistrationTimeoutSeconds: 30,
 			Profiles:                   defaultResourceProfiles(),
 			Docker: DockerProvisioningConfig{
@@ -448,12 +415,8 @@ func (c *Config) Validate() error {
 func (c *Config) ApplyEnvOverrides() error {
 	if v := os.Getenv("SERVER_HTTP_ADDR"); v != "" {
 		c.Server.HTTPAddr = v
-	} else if v := os.Getenv("HTTP_ADDR"); v != "" {
-		c.Server.HTTPAddr = v
 	}
 	if v := os.Getenv("SERVER_GRPC_ADDR"); v != "" {
-		c.Server.GRPCAddr = v
-	} else if v := os.Getenv("GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
 	}
 	if v := os.Getenv("RUNTIME_CHANNEL_SERVER_GRPC_ADDR"); v != "" {
@@ -494,9 +457,6 @@ func (c *Config) ApplyEnvOverrides() error {
 		c.RuntimeChannelServer.DependencyProfile.ContractSHA256 = v
 	}
 
-	if dsn := os.Getenv("TIMESCALEDB_DSN"); dsn != "" {
-		c.Database.parseDSN(dsn)
-	}
 	if v := os.Getenv("DATABASE_HOST"); v != "" {
 		c.Database.Host = v
 	}
@@ -558,12 +518,8 @@ func (c *Config) ApplyEnvOverrides() error {
 
 	if v := os.Getenv("DEPENDENCIES_CORE_SERVICE_GRPC"); v != "" {
 		c.Dependencies.PortfolioServiceGRPC = v
-	} else if v := os.Getenv("CORE_SERVICE_GRPC_ADDR"); v != "" {
-		c.Dependencies.PortfolioServiceGRPC = v
 	}
 	if v := os.Getenv("DEPENDENCIES_ORDER_SERVICE_GRPC"); v != "" {
-		c.Dependencies.OrderServiceGRPC = v
-	} else if v := os.Getenv("ORDER_SERVICE_GRPC_ADDR"); v != "" {
 		c.Dependencies.OrderServiceGRPC = v
 	}
 
@@ -609,27 +565,4 @@ func splitCSV(v string) []string {
 		}
 	}
 	return out
-}
-
-func (d *DatabaseConfig) parseDSN(dsn string) {
-	for _, kv := range strings.Fields(dsn) {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		switch parts[0] {
-		case "host":
-			d.Host = parts[1]
-		case "port":
-			fmt.Sscanf(parts[1], "%d", &d.Port)
-		case "user":
-			d.User = parts[1]
-		case "password":
-			d.Password = parts[1]
-		case "dbname":
-			d.DBName = parts[1]
-		case "sslmode":
-			d.SSLMode = parts[1]
-		}
-	}
 }

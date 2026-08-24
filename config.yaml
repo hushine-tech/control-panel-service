@@ -97,9 +97,6 @@ runtime_plans:
 provisioning:
   backend: "docker"
   image: "hushine/strategy-runtime:executor-dev"
-  advertise_host: "127.0.0.1"
-  port_range_base: 50100
-  port_range_size: 200
   registration_timeout_seconds: 30
   profiles:
     small:

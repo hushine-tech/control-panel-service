@@ -30,7 +30,6 @@ var (
 	ErrInvalidArgument  = errors.New("invalid argument")
 	ErrPermissionDenied = errors.New("permission denied")
 	ErrNotFound         = errors.New("not found")
-	ErrUnpaired         = errors.New("runtime unpaired")
 	ErrUnhealthy        = errors.New("runtime unhealthy")
 	ErrEnded            = errors.New("runtime ended")
 	ErrTokenMismatch    = errors.New("token mismatch")
@@ -654,7 +653,7 @@ func hostedRuntimeHandle(runtimeID string) string {
 	return fmt.Sprintf("hushine-runtime-%s", runtimeID)
 }
 
-// ReapStaleRuntimes marks active/paired runtimes whose heartbeat is older
+// ReapStaleRuntimes marks active/starting runtimes whose heartbeat is older
 // than HeartbeatGrace as unhealthy, then terminally ends runtimes older than
 // DeathGrace. Sessions are marked recoverable only for runtimes that became
 // ended; unhealthy alone is still an observable degraded state.
@@ -733,8 +732,7 @@ func (s *Service) drainRuntimeSessionCleanups(ctx context.Context, now time.Time
 type ResolveByIDArgs struct {
 	UserID    int64
 	RuntimeID string
-	// Role is the intended session role. Empty means executor for backward
-	// compatibility with existing strategy launch paths.
+	// Role is the intended session role. Empty selects executor.
 	Role string
 	// Environment is the requested portfolio/session environment when the caller has it.
 	// Debugger routes require backtest; executor routes support backtest/demo.
@@ -762,8 +760,10 @@ func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, u
 	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed:
 		_ = s.drainRuntimeSessionCleanups(ctx, s.now().UTC())
 		return ResolveResult{}, ErrEnded
-	case "unpaired":
-		return ResolveResult{}, ErrUnpaired
+	case domain.RuntimeStatusActive, domain.RuntimeStatusStarting, domain.RuntimeStatusUnhealthy:
+		// Current non-terminal lifecycle statuses are handled below.
+	default:
+		return ResolveResult{}, fmt.Errorf("%w: unsupported runtime status %q", ErrInvalidArgument, rt.Status)
 	}
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role == "" {
@@ -869,7 +869,7 @@ type EnsureHostedRuntimeResult struct {
 //  7. return runtime
 //
 // The wait in step 6 polls `s.repo.GetRuntime` until the row exists with
-// status='paired' or 'active'. A registration timeout deprovisions the
+// status='active'. A registration timeout deprovisions the
 // container and surfaces ErrRegistrationTimeout.
 func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRuntimeArgs) (EnsureHostedRuntimeResult, error) {
 	if args.UserID <= 0 {
@@ -965,7 +965,6 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 	}
 
 	runtimeID := auth.GenerateRuntimeID()
-	port := s.allocatePort(args.UserID)
 	var hostedCredential domain.IssuedCredential
 	if s.hostedCredentialIssuer != nil {
 		hostedCredential, err = s.hostedCredentialIssuer.IssueHostedInternalRuntimeCredential(ctx, args.UserID, runtimeID, name)
@@ -977,8 +976,6 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 		RuntimeID:           runtimeID,
 		UserID:              args.UserID,
 		Name:                name,
-		EndpointHost:        s.provisioning.AdvertiseHost,
-		GRPCPort:            port,
 		Image:               s.provisioning.Image,
 		Limits:              profileLimits,
 		ResourceProfileName: profileName,
@@ -1034,12 +1031,15 @@ func (s *Service) EnsureHostedRuntime(ctx context.Context, args EnsureHostedRunt
 // registered and haven't sent their first heartbeat yet, fall back to
 // `updated_at`. Without this fallback, two `EnsureHostedRuntime` calls
 // within the heartbeat-grace window would race: the first provisions a
-// fresh container; the second sees `paired` + nil heartbeat, decides
+// fresh container; the second sees `starting` + nil heartbeat, decides
 // "stale", and re-provisions, cancelling the first runtime that just
 // came up. The fallback covers that initial sub-grace window.
 func (s *Service) tryReuseExisting(rt domain.Runtime) (EnsureHostedRuntimeResult, bool) {
 	switch rt.Status {
-	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed, "unpaired", domain.RuntimeStatusUnhealthy:
+	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed, domain.RuntimeStatusUnhealthy:
+		return EnsureHostedRuntimeResult{}, false
+	case domain.RuntimeStatusActive, domain.RuntimeStatusStarting:
+	default:
 		return EnsureHostedRuntimeResult{}, false
 	}
 	now := s.now().UTC()
@@ -1060,22 +1060,6 @@ func (s *Service) tryReuseExisting(rt domain.Runtime) (EnsureHostedRuntimeResult
 		Runtime:     rt,
 		Provisioned: false,
 	}, true
-}
-
-// allocatePort picks a deterministic port from the configured pool so a
-// given (user_id, name) lands at a stable host:port. D1 is
-// single-host so collision avoidance via a pool index is enough; D2/D3
-// will replace this with a real allocator when multi-host comes in.
-func (s *Service) allocatePort(userID int64) int {
-	base := s.provisioning.PortRangeBase
-	size := s.provisioning.PortRangeSize
-	if base <= 0 {
-		base = 50100
-	}
-	if size <= 0 {
-		size = 200
-	}
-	return base + int(userID)%size
 }
 
 // waitForRegistration polls the repository for the runtime row to reach

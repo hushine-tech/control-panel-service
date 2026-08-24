@@ -60,8 +60,6 @@ func defaultPlan() Plan {
 		RuntimeID:           "rt_abc123",
 		UserID:              42,
 		Name:                "hosted-steady-river",
-		EndpointHost:        "127.0.0.1",
-		GRPCPort:            50142,
 		Image:               "hushine/strategy-runtime:executor-dev",
 		ResourceProfileName: "small",
 		Limits:              config.ResourceProfile{NanoCPUs: "0.5", MemoryMB: 512, PidsLimit: 256},
@@ -71,13 +69,11 @@ func defaultPlan() Plan {
 
 func defaultCfg() config.ProvisioningConfig {
 	return config.ProvisioningConfig{
-		Backend:       "docker",
-		Image:         "hushine/strategy-runtime:executor-dev",
-		AdvertiseHost: "127.0.0.1",
+		Backend: "docker",
+		Image:   "hushine/strategy-runtime:executor-dev",
 		Docker: config.DockerProvisioningConfig{
 			NetworkMode: "host",
 			LabelPrefix: "hushine.runtime",
-			RuntimeEnv:  map[string]string{},
 		},
 	}
 }
@@ -511,26 +507,6 @@ func TestDockerProvisioner_Provision_FailsWhenImageEmpty(t *testing.T) {
 	_, err := prov.Provision(context.Background(), defaultPlan())
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("err = %v, want ErrNotConfigured", err)
-	}
-}
-
-func TestDockerProvisioner_Provision_RejectsRuntimeEnvBeforeDocker(t *testing.T) {
-	cfg := defaultCfg()
-	cfg.Docker.RuntimeEnv = map[string]string{
-		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-		"KAFKA_BROKERS":          "127.0.0.1:19092",
-		"DATABASE_PASSWORD":      "secret",
-		"MY_CUSTOM_VAR":          "also-not-an-explicit-runtime-field",
-	}
-	runner := &fakeRunner{output: []byte("container_xyz\n")}
-	prov := NewDockerProvisioner(runner, cfg, "127.0.0.1:50055")
-
-	_, err := prov.Provision(context.Background(), defaultPlan())
-	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
-		t.Fatalf("Provision error = %v, want Runtime isolation error", err)
-	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("docker was called despite invalid runtime_env: %+v", runner.calls)
 	}
 }
 

@@ -61,10 +61,8 @@ type EffectiveLimits struct {
 //  2. The runtime_plans config tier matching that plan_code.
 //  3. The platform-wide caps in runtime_platform.
 //
-// The configured default plan is used ONLY when core-service returns
-// the user successfully but the user's plan_code field is empty (legacy
-// row with incomplete plan metadata). It is NOT a fallback for
-// missing users or transient failures.
+// The configured default plan is used only for an unknown non-empty plan code.
+// Empty plan metadata, missing users, and transient failures all fail closed.
 type Resolver struct {
 	lookup   PlanLookup
 	plans    map[string]config.RuntimePlan
@@ -82,13 +80,10 @@ func NewResolver(lookup PlanLookup, plans map[string]config.RuntimePlan, platfor
 //   - userID <= 0                          → ErrUserNotFound
 //   - lookup returns gRPC NotFound         → ErrUserNotFound
 //   - lookup returns any other gRPC error  → ErrPlanLookupUnavailable
-//   - lookup returns OK with empty code    → use platform default plan
+//   - lookup returns OK with empty code    → ErrPlanLookupUnavailable
 //   - lookup returns OK with unknown code  → use platform default plan
 //   - default plan missing from config     → wrapped fmt error (config bug)
 //
-// The "OK + empty code" branch exists only for the migration window:
-// Current bootstrap guarantees a non-empty plan_code. This branch SHOULD be tightened to also
-// fail closed once that backfill is verified.
 func (r *Resolver) Resolve(ctx context.Context, userID int64) (EffectiveLimits, error) {
 	if userID <= 0 {
 		return EffectiveLimits{}, fmt.Errorf("%w: user_id must be > 0 (got %d)", ErrUserNotFound, userID)
@@ -108,8 +103,7 @@ func (r *Resolver) Resolve(ctx context.Context, userID int64) (EffectiveLimits, 
 
 	planCode := code
 	if planCode == "" {
-		// Defensive compatibility: row missing plan_code → use platform default.
-		planCode = r.platform.DefaultPlanCode
+		return EffectiveLimits{}, fmt.Errorf("%w: user_id=%d returned empty plan_code", ErrPlanLookupUnavailable, userID)
 	}
 
 	plan, ok := r.plans[planCode]

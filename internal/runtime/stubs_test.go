@@ -115,15 +115,15 @@ func (f *fakeProvisioner) Provision(_ context.Context, p provision.Plan) (string
 	default:
 		// Default: simulate the runtime booting + self-registering
 		// before the service layer's wait loop polls again. We insert
-		// the row in 'paired' state here so waitForRegistration sees
+		// the row in active state here so waitForRegistration sees
 		// it on the very first iteration.
 		now := time.Now().UTC()
 		if f.now != nil {
 			now = f.now()
 		}
 		f.repo.mu.Lock()
-		// Mimic the production sequence: register stamps paired,
-		// first heartbeat flips to active, control-panel only
+		// Mimic the production sequence: register stamps starting,
+		// first heartbeat flips to active; control-panel only
 		// considers `active` as ready. The fake collapses both
 		// steps so waitForRegistration short-circuits.
 		f.repo.runtimes[p.RuntimeID] = domain.Runtime{
@@ -386,7 +386,7 @@ func (s *stubRepo) MarkStaleRuntimesUnhealthy(_ context.Context, cutoff time.Tim
 	defer s.mu.Unlock()
 	var result []domain.Runtime
 	for id, rt := range s.runtimes {
-		if rt.Status != domain.RuntimeStatusActive && rt.Status != domain.RuntimeStatusStarting && rt.Status != domain.RuntimeStatusPaired {
+		if rt.Status != domain.RuntimeStatusActive && rt.Status != domain.RuntimeStatusStarting {
 			continue
 		}
 		lastSeen := rt.UpdatedAt
@@ -416,7 +416,7 @@ func (s *stubRepo) UpdateRuntimeHeartbeat(_ context.Context, runtimeID string, a
 	}
 	t := at
 	rt.HeartbeatAt = &t
-	if rt.Status == domain.RuntimeStatusStarting || rt.Status == domain.RuntimeStatusPaired || rt.Status == domain.RuntimeStatusUnhealthy {
+	if rt.Status == domain.RuntimeStatusStarting || rt.Status == domain.RuntimeStatusUnhealthy {
 		rt.Status = domain.RuntimeStatusActive
 	}
 	if rt.Status == domain.RuntimeStatusActive && rt.StartedAt == nil {
@@ -756,9 +756,6 @@ func makeServiceWithProvisioner(repo *stubRepo, planCode string, prov provision.
 	}
 	provCfg := config.ProvisioningConfig{
 		Image:                      "hushine/strategy-runtime:test",
-		AdvertiseHost:              "127.0.0.1",
-		PortRangeBase:              50100,
-		PortRangeSize:              200,
 		RegistrationTimeoutSeconds: regTimeoutSec,
 		Profiles: map[string]config.ResourceProfile{
 			"small":  {NanoCPUs: "0.5", MemoryMB: 512},

@@ -139,6 +139,11 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 			t.Fatalf("ck_runtime_registry_status missing %q in %s", status, statusConstraint)
 		}
 	}
+	for _, removedStatus := range []string{"paired", "unpaired"} {
+		if strings.Contains(statusConstraint, removedStatus) {
+			t.Fatalf("ck_runtime_registry_status still permits removed status %q in %s", removedStatus, statusConstraint)
+		}
+	}
 
 	requiredCredentialColumns := []string{
 		"role",

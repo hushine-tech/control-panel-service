@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,15 +108,64 @@ runtime_channel_server:
 	}
 }
 
-func TestApplyEnvOverridesUsesCoreServiceGRPCAddr(t *testing.T) {
-	t.Setenv("CORE_SERVICE_GRPC_ADDR", "core.internal:50051")
+func TestApplyEnvOverridesUsesCanonicalServiceAddresses(t *testing.T) {
+	t.Setenv("SERVER_HTTP_ADDR", ":18082")
+	t.Setenv("SERVER_GRPC_ADDR", ":18054")
+	t.Setenv("DEPENDENCIES_CORE_SERVICE_GRPC", "core.internal:50051")
+	t.Setenv("DEPENDENCIES_ORDER_SERVICE_GRPC", "orders.internal:50051")
 
 	cfg := Default()
-	cfg.ApplyEnvOverrides()
+	if err := cfg.ApplyEnvOverrides(); err != nil {
+		t.Fatalf("ApplyEnvOverrides: %v", err)
+	}
 
 	if got := cfg.Dependencies.PortfolioServiceGRPC; got != "core.internal:50051" {
 		t.Fatalf("PortfolioServiceGRPC = %q, want core service addr", got)
 	}
+	if got := cfg.Dependencies.OrderServiceGRPC; got != "orders.internal:50051" {
+		t.Fatalf("OrderServiceGRPC = %q, want order service addr", got)
+	}
+	if cfg.Server.HTTPAddr != ":18082" || cfg.Server.GRPCAddr != ":18054" {
+		t.Fatalf("server = %+v", cfg.Server)
+	}
+}
+
+func TestRemovedEnvironmentAliasesDoNotOverrideCanonicalConfiguration(t *testing.T) {
+	t.Setenv("HTTP_ADDR", "legacy-http:1")
+	t.Setenv("GRPC_ADDR", "legacy-grpc:2")
+	t.Setenv("TIMESCALEDB_DSN", "host=legacy-db dbname=legacy")
+	t.Setenv("CORE_SERVICE_GRPC_ADDR", "legacy-core:3")
+	t.Setenv("ORDER_SERVICE_GRPC_ADDR", "legacy-order:4")
+	cfg := Default()
+	if err := cfg.ApplyEnvOverrides(); err != nil {
+		t.Fatalf("ApplyEnvOverrides: %v", err)
+	}
+	if cfg.Server.HTTPAddr != ":8082" || cfg.Server.GRPCAddr != ":50054" {
+		t.Fatalf("server = %+v, want canonical defaults", cfg.Server)
+	}
+	if cfg.Database.DBName != "control_panel" || cfg.Database.Host != "192.168.88.10" {
+		t.Fatalf("database = %+v, want canonical defaults", cfg.Database)
+	}
+	if cfg.Dependencies.PortfolioServiceGRPC != "127.0.0.1:50051" || cfg.Dependencies.OrderServiceGRPC != "127.0.0.1:50051" {
+		t.Fatalf("dependencies = %+v, want canonical defaults", cfg.Dependencies)
+	}
+}
+
+func TestProvisioningConfigOmitsRemovedRuntimePoolAndEnvironmentKeys(t *testing.T) {
+	assertNoYAMLTags := func(value any, removed ...string) {
+		t.Helper()
+		typ := reflect.TypeOf(value)
+		for i := 0; i < typ.NumField(); i++ {
+			tag := strings.Split(typ.Field(i).Tag.Get("yaml"), ",")[0]
+			for _, name := range removed {
+				if tag == name {
+					t.Errorf("%s still exposes removed YAML key %q", typ.Name(), name)
+				}
+			}
+		}
+	}
+	assertNoYAMLTags(ProvisioningConfig{}, "advertise_host", "port_range_base", "port_range_size")
+	assertNoYAMLTags(DockerProvisioningConfig{}, "runtime_env")
 }
 
 func TestRuntimeChannelServerDefaults(t *testing.T) {
@@ -364,58 +414,6 @@ func TestDockerCoverageValidationRejectsNonPositiveStopTimeout(t *testing.T) {
 			err := cfg.Provisioning.ValidateRuntimeIsolation()
 			if err == nil || !strings.Contains(err.Error(), "provisioning.docker.coverage.stop_timeout_seconds") {
 				t.Fatalf("ValidateRuntimeIsolation error = %v, want stop timeout error", err)
-			}
-		})
-	}
-}
-
-func TestValidateRuntimeIsolationStillRejectsRuntimeEnv(t *testing.T) {
-	cfg := Default()
-	cfg.Provisioning.Docker.RuntimeEnv = map[string]string{
-		"KAFKA_BROKERS":          "127.0.0.1:19092",
-		"CORE_SERVICE_GRPC_ADDR": "127.0.0.1:50051",
-	}
-
-	err := cfg.Provisioning.ValidateRuntimeIsolation()
-	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
-		t.Fatalf("ValidateRuntimeIsolation error = %v, want Runtime isolation error", err)
-	}
-}
-
-func TestLoadRejectsHostedRuntimeEnv(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(`
-provisioning:
-  docker:
-    runtime_env:
-      CORE_SERVICE_GRPC_ADDR: "127.0.0.1:50051"
-      KAFKA_BROKERS: "127.0.0.1:19092"
-`), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "provisioning.docker.runtime_env") {
-		t.Fatalf("Load error = %v, want Runtime isolation error", err)
-	}
-}
-
-func TestLoadAllowsUnsetHostedRuntimeEnv(t *testing.T) {
-	tests := []struct {
-		name string
-		yaml string
-	}{
-		{name: "absent", yaml: "provisioning:\n  docker:\n    runtime_channel_dial_addr: runtime-channel.internal:50055\n"},
-		{name: "null", yaml: "provisioning:\n  docker:\n    runtime_env: null\n"},
-		{name: "empty", yaml: "provisioning:\n  docker:\n    runtime_env: {}\n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(path, []byte(tt.yaml), 0o600); err != nil {
-				t.Fatalf("write config: %v", err)
-			}
-			if _, err := Load(path); err != nil {
-				t.Fatalf("Load: %v", err)
 			}
 		})
 	}

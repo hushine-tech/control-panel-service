@@ -428,11 +428,11 @@ CREATE TABLE IF NOT EXISTS runtime_registry (
     CONSTRAINT ck_runtime_registry_cleanup_status CHECK (((cleanup_status = ''::text) OR (cleanup_status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'user_owned'::text])))),
     CONSTRAINT ck_runtime_registry_connection_owner CHECK ((((connection_owner_instance_id = ''::text) AND (connection_owner_acquired_at IS NULL) AND (connection_owner_heartbeat_at IS NULL)) OR ((connection_owner_instance_id <> ''::text) AND (connection_owner_acquired_at IS NOT NULL) AND (connection_owner_heartbeat_at IS NOT NULL)))),
     CONSTRAINT ck_runtime_registry_ended_reason CHECK (((ended_reason = ''::text) OR (ended_reason = ANY (ARRAY['user_cancelled'::text, 'runtime_exited'::text, 'heartbeat_stale'::text, 'provision_failed'::text, 'auth_failed'::text, 'control_panel_shutdown'::text])))),
-    CONSTRAINT ck_runtime_registry_lifecycle CHECK ((((status = ANY (ARRAY['starting'::text, 'paired'::text, 'active'::text, 'unhealthy'::text])) AND (ended_at IS NULL) AND (ended_reason = ''::text) AND ((status <> 'active'::text) OR (started_at IS NOT NULL))) OR ((status = ANY (ARRAY['heartbeat_stale'::text, 'ended'::text, 'cancelled'::text, 'failed'::text])) AND (ended_at IS NOT NULL) AND (ended_reason <> ''::text)))),
+    CONSTRAINT ck_runtime_registry_lifecycle CHECK ((((status = ANY (ARRAY['starting'::text, 'active'::text, 'unhealthy'::text])) AND (ended_at IS NULL) AND (ended_reason = ''::text) AND ((status <> 'active'::text) OR (started_at IS NOT NULL))) OR ((status = ANY (ARRAY['heartbeat_stale'::text, 'ended'::text, 'cancelled'::text, 'failed'::text])) AND (ended_at IS NOT NULL) AND (ended_reason <> ''::text)))),
     CONSTRAINT ck_runtime_registry_name CHECK ((name ~ '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$'::text)),
     CONSTRAINT ck_runtime_registry_role CHECK ((role = ANY (ARRAY['executor'::text, 'debugger'::text]))),
     CONSTRAINT ck_runtime_registry_source CHECK ((source = ANY (ARRAY['hosted'::text, 'self_hosted'::text, 'bare'::text]))),
-    CONSTRAINT ck_runtime_registry_status CHECK ((status = ANY (ARRAY['starting'::text, 'paired'::text, 'active'::text, 'unhealthy'::text, 'heartbeat_stale'::text, 'ended'::text, 'cancelled'::text, 'failed'::text])))
+    CONSTRAINT ck_runtime_registry_status CHECK ((status = ANY (ARRAY['starting'::text, 'active'::text, 'unhealthy'::text, 'heartbeat_stale'::text, 'ended'::text, 'cancelled'::text, 'failed'::text])))
 );
 
 

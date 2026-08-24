@@ -37,7 +37,7 @@ service ControlPanelService {
   //
   // Fail-closed contract: returns a typed error (NOT_FOUND / FAILED_PRECONDITION /
   // PERMISSION_DENIED / RESOURCE_EXHAUSTED) when the runtime is missing,
-  // unpaired, unhealthy, owned by a different user, or over quota. Callers
+  // unhealthy, owned by a different user, or over quota. Callers
   // (notably quant-handler) MUST surface the error and MUST NOT silently fall
   // back to a shared strategy-service while user isolation is enabled.
   rpc ResolveRuntimeRouteByID(ResolveRuntimeRouteByIDRequest) returns (ResolveRuntimeRouteResponse);
@@ -82,7 +82,7 @@ service ControlPanelService {
   // ListRuntimeCredentials returns the active credentials owned by the
   // calling user. Consumed credentials are returned by default so users can
   // see which runtime consumed a bootstrap token. Revoked / expired inactive
-  // credentials are excluded unless include_inactive/include_revoked is set.
+  // credentials are excluded unless include_inactive is set.
   // Sensitive fields (private key) are never persisted and therefore
   // never returned. Each entry includes audit metadata: created_at,
   // last_used_at, revoked_at.
@@ -150,7 +150,7 @@ service ControlPanelService {
 // fields (token_hash, credential private keys) are never exposed.
 message Runtime {
   string runtime_id = 1;
-  // Authenticated owning user. 0 means unpaired.
+  // Authenticated owning user. 0 means not yet assigned.
   int64 user_id = 2;
   string name = 3;                    // user-visible label, e.g. "default"
   string source = 4;                  // "hosted" | "self_hosted"
@@ -160,7 +160,7 @@ message Runtime {
   repeated string capabilities = 8;
   string resource_profile = 9;        // "small" | "medium" | "large" | etc.
   string version = 10;
-  string status = 11;                 // "unpaired" | "paired" | "active" | "unhealthy" | "ended"
+  string status = 11;                 // "starting" | "active" | "unhealthy" | terminal status
   google.protobuf.Timestamp paired_at = 12;
   google.protobuf.Timestamp heartbeat_at = 13;
   google.protobuf.Timestamp created_at = 14;
@@ -410,9 +410,6 @@ message BootstrapBareRuntimeCertificateResponse {
 
 message ListRuntimeCredentialsRequest {
   int64 user_id = 1;
-  // Deprecated compatibility flag. Prefer include_inactive.
-  // If true, include revoked/expired inactive credentials (audit view).
-  bool include_revoked = 2;
   // If true, include inactive terminal credentials such as revoked/expired.
   // Consumed credentials are returned regardless of this flag.
   bool include_inactive = 3;

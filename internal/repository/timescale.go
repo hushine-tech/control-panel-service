@@ -620,7 +620,7 @@ func (r *TimescaleRepository) MarkStaleRuntimesUnhealthy(ctx context.Context, cu
 		WITH updated AS (
 			UPDATE runtime_registry
 			SET status = 'unhealthy', updated_at = NOW()
-			WHERE status IN ('active', 'starting', 'paired')
+			WHERE status IN ('active', 'starting')
 			  AND COALESCE(heartbeat_at, updated_at, created_at) < $1
 			RETURNING runtime_id
 		)
@@ -648,11 +648,11 @@ func (r *TimescaleRepository) UpdateRuntimeHeartbeat(ctx context.Context, runtim
 		UPDATE runtime_registry
 		SET heartbeat_at = $2,
 		    status = CASE
-		        WHEN status IN ('starting','paired','unhealthy') THEN 'active'
+		        WHEN status IN ('starting','unhealthy') THEN 'active'
 		        ELSE status
 		    END,
 		    started_at = CASE
-		        WHEN status IN ('active','starting','paired','unhealthy') THEN COALESCE(started_at, $2)
+		        WHEN status IN ('active','starting','unhealthy') THEN COALESCE(started_at, $2)
 		        ELSE started_at
 		    END,
 		    updated_at = NOW()

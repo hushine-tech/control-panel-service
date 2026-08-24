@@ -41,7 +41,6 @@ type PortfolioPlatformClient interface {
 	GetSession(ctx context.Context, in *portfoliov1.GetSessionRequest, opts ...grpc.CallOption) (*portfoliov1.GetSessionResponse, error)
 	ListSessions(ctx context.Context, in *portfoliov1.ListSessionsRequest, opts ...grpc.CallOption) (*portfoliov1.ListSessionsResponse, error)
 	GetPortfolioSnapshot(ctx context.Context, in *portfoliov1.GetPortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error)
-	UpdatePortfolioSnapshot(ctx context.Context, in *portfoliov1.UpdatePortfolioSnapshotRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error)
 	UpdatePortfolioWalletState(ctx context.Context, in *portfoliov1.UpdatePortfolioWalletStateRequest, opts ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error)
 	PreflightStrategySession(ctx context.Context, in *portfoliov1.PreflightStrategySessionRequest, opts ...grpc.CallOption) (*portfoliov1.PreflightStrategySessionResponse, error)
 	CommitStrategySessionStart(ctx context.Context, in *portfoliov1.CommitStrategySessionStartRequest, opts ...grpc.CallOption) (*portfoliov1.CommitStrategySessionStartResponse, error)
@@ -196,9 +195,6 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 			return nil, err
 		}
 		return p.requirePortfolio().GetPortfolioSnapshot(ctx, req)
-
-	case "portfolio.UpdatePortfolioSnapshot":
-		return nil, status.Error(codes.Unimplemented, "portfolio.UpdatePortfolioSnapshot is deprecated for runtime sessions; use portfolio.UpdatePortfolioWalletState")
 
 	case "portfolio.UpdatePortfolioWalletState":
 		req := &portfoliov1.UpdatePortfolioWalletStateRequest{}
@@ -703,8 +699,6 @@ func canonicalPlatformMethod(method string) string {
 	switch method {
 	case "GetPortfolioSnapshot", "portfolio.v1.PortfolioService/GetPortfolioSnapshot":
 		return "portfolio.GetPortfolioSnapshot"
-	case "UpdatePortfolioSnapshot", "portfolio.v1.PortfolioService/UpdatePortfolioSnapshot":
-		return "portfolio.UpdatePortfolioSnapshot"
 	case "UpdatePortfolioWalletState", "portfolio.v1.PortfolioService/UpdatePortfolioWalletState":
 		return "portfolio.UpdatePortfolioWalletState"
 	case "GetSession", "portfolio.v1.PortfolioService/GetSession":
@@ -1221,9 +1215,6 @@ func (unavailablePortfolioClient) ListSessions(context.Context, *portfoliov1.Lis
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) GetPortfolioSnapshot(context.Context, *portfoliov1.GetPortfolioSnapshotRequest, ...grpc.CallOption) (*portfoliov1.GetPortfolioSnapshotResponse, error) {
-	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
-}
-func (unavailablePortfolioClient) UpdatePortfolioSnapshot(context.Context, *portfoliov1.UpdatePortfolioSnapshotRequest, ...grpc.CallOption) (*portfoliov1.UpdatePortfolioSnapshotResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) UpdatePortfolioWalletState(context.Context, *portfoliov1.UpdatePortfolioWalletStateRequest, ...grpc.CallOption) (*portfoliov1.UpdatePortfolioWalletStateResponse, error) {

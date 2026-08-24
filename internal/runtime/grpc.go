@@ -252,8 +252,7 @@ func mapErrorToStatus(err error) error {
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ErrUnpaired),
-		errors.Is(err, ErrUnhealthy),
+	case errors.Is(err, ErrUnhealthy),
 		errors.Is(err, ErrEnded),
 		errors.Is(err, ErrTokenMismatch),
 		errors.Is(err, ErrProvisionerUnavailable),
@@ -352,7 +351,7 @@ func (g *ControlPanelGRPCService) ListRuntimeCredentials(ctx context.Context, re
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	includeInactive := req.GetIncludeRevoked() || req.GetIncludeInactive()
+	includeInactive := req.GetIncludeInactive()
 	if req.GetLimit() > 0 || req.GetOffset() > 0 {
 		creds, total, hasMore, err := g.credSvc.ListPage(ctx, req.GetUserId(), includeInactive, int(req.GetLimit()), int(req.GetOffset()))
 		if err != nil {

@@ -403,7 +403,7 @@ func TestList_ExcludesRevokedByDefault(t *testing.T) {
 
 	all, err := svc.List(context.Background(), 7, true)
 	if err != nil {
-		t.Fatalf("List include_revoked: %v", err)
+		t.Fatalf("List include inactive: %v", err)
 	}
 	if len(all) != 2 {
 		t.Errorf("all list len = %d, want 2", len(all))

@@ -110,23 +110,15 @@ func TestResolve_PlainErrorTreatedAsUnavailable(t *testing.T) {
 	}
 }
 
-// TestResolve_EmptyPlanCodeFallsBackToDefault: the migration window
-// scenario. Lookup returns OK but plan_code is empty (legacy row written
-// before migration 0011 backfill); resolver falls back to platform
-// default. NOT a fail-open path — the lookup itself succeeded, so the
-// user genuinely exists.
-func TestResolve_EmptyPlanCodeFallsBackToDefault(t *testing.T) {
+func TestResolve_EmptyPlanCodeFailsClosed(t *testing.T) {
 	plans := map[string]config.RuntimePlan{
 		"pro": {MaxHostedRuntimes: 5},
 	}
 	platform := config.RuntimePlatformConfig{DefaultPlanCode: "pro"}
 	r := makeResolver(plans, "", platform, stubLookup{planCode: ""})
-	got, err := r.Resolve(context.Background(), 42)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if got.PlanCode != "pro" {
-		t.Errorf("PlanCode = %q, want pro (fallback)", got.PlanCode)
+	_, err := r.Resolve(context.Background(), 42)
+	if !errors.Is(err, ErrPlanLookupUnavailable) {
+		t.Fatalf("Resolve error = %v, want ErrPlanLookupUnavailable", err)
 	}
 }
 

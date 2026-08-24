@@ -1029,30 +1029,24 @@ func TestResolve_NotFound(t *testing.T) {
 	}
 }
 
-func TestResolve_Unpaired(t *testing.T) {
-	repo := newStubRepo()
-	svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
-	// D3 self-hosted registration now happens through RuntimeChannel and lands
-	// active immediately. Inject an unpaired row directly so route resolution
-	// still covers defensive legacy data.
-	rt := domain.Runtime{
-		RuntimeID:       "rt-1",
-		UserID:          42,
-		Name:            "default",
-		Source:          domain.RuntimeSourceSelfHosted,
-		EndpointHost:    "h",
-		GRPCPort:        1,
-		ResourceProfile: "small",
-		Status:          "unpaired",
-		CreatedAt:       fixedNow,
-		UpdatedAt:       fixedNow,
-	}
-	if err := repo.CreateRuntime(context.Background(), rt); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt-1"})
-	if !errors.Is(err, ErrUnpaired) {
-		t.Fatalf("err = %v, want ErrUnpaired", err)
+func TestResolve_RemovedRuntimeStatusesFailClosed(t *testing.T) {
+	for _, removedStatus := range []string{"paired", "unpaired"} {
+		t.Run(removedStatus, func(t *testing.T) {
+			repo := newStubRepo()
+			svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
+			heartbeat := fixedNow
+			repo.runtimes["rt-removed-status"] = domain.Runtime{
+				RuntimeID: "rt-removed-status", UserID: 42, Name: "removed-status",
+				Source: domain.RuntimeSourceHosted, Role: domain.CredentialRoleExecutor,
+				ResourceProfile: "small", Status: removedStatus, HeartbeatAt: &heartbeat,
+				CreatedAt: fixedNow, UpdatedAt: fixedNow,
+			}
+			attachRuntimeOwner(t, repo, "rt-removed-status", fixedNow)
+			_, err := svc.ResolveRuntimeRouteByID(context.Background(), ResolveByIDArgs{UserID: 42, RuntimeID: "rt-removed-status"})
+			if !errors.Is(err, ErrInvalidArgument) {
+				t.Fatalf("Resolve error = %v, want ErrInvalidArgument", err)
+			}
+		})
 	}
 }
 
@@ -1685,8 +1679,7 @@ func TestEnsureHostedRuntime_UnknownProfile(t *testing.T) {
 	}
 	resolver := plan.NewResolver(constLookup{code: "pro"}, plans, platform)
 	provCfg := config.ProvisioningConfig{
-		Image: "x", AdvertiseHost: "127.0.0.1",
-		PortRangeBase: 50100, PortRangeSize: 100,
+		Image:                      "x",
 		RegistrationTimeoutSeconds: 5,
 		Profiles: map[string]config.ResourceProfile{
 			"small": {NanoCPUs: "0.5", MemoryMB: 512},
@@ -1847,7 +1840,7 @@ func TestEnsureHostedRuntime_BackendNotConfigured(t *testing.T) {
 }
 
 // TestEnsureHostedRuntime_ReusesFreshButNotYetHeartbeating: a runtime
-// that just registered (status=paired, HeartbeatAt=nil, UpdatedAt=now)
+// that just registered (status=starting, HeartbeatAt=nil, UpdatedAt=now)
 // must be reusable for the heartbeatGrace window. Pre-fix the second
 // EnsureHostedRuntime call inside that window would re-provision and
 // end the just-launched container — bug #11.
@@ -1856,13 +1849,13 @@ func TestEnsureHostedRuntime_ReusesFreshButNotYetHeartbeating(t *testing.T) {
 	prov := &fakeProvisioner{repo: repo, onProvision: "ok", now: func() time.Time { return fixedNow }}
 	svc := makeServiceWithProvisioner(repo, "pro", prov, fixedNow, 5)
 
-	// Plant a freshly-registered runtime: paired, no heartbeat yet,
+	// Plant a freshly-registered runtime: starting, no heartbeat yet,
 	// updated_at = now (just landed via section-4 self-register).
 	repo.runtimes["rt_fresh"] = domain.Runtime{
 		RuntimeID: "rt_fresh", UserID: 42, Name: "default",
 		Source:       domain.RuntimeSourceHosted,
 		EndpointHost: "127.0.0.1", GRPCPort: 50142, ResourceProfile: "small",
-		Status: domain.RuntimeStatusPaired, HeartbeatAt: nil,
+		Status: domain.RuntimeStatusStarting, HeartbeatAt: nil,
 		CreatedAt: fixedNow, UpdatedAt: fixedNow,
 	}
 	attachRuntimeOwner(t, repo, "rt_fresh", fixedNow)
@@ -1884,7 +1877,7 @@ func TestEnsureHostedRuntime_ReusesFreshButNotYetHeartbeating(t *testing.T) {
 	}
 }
 
-// TestEnsureHostedRuntime_StaleNoHeartbeatStillOccupiesSlot: a stale paired
+// TestEnsureHostedRuntime_StaleNoHeartbeatStillOccupiesSlot: a stale starting
 // runtime still owns the hosted slot until the user/operator explicitly
 // ends it.
 func TestEnsureHostedRuntime_StaleNoHeartbeatStillOccupiesSlot(t *testing.T) {
@@ -1892,13 +1885,13 @@ func TestEnsureHostedRuntime_StaleNoHeartbeatStillOccupiesSlot(t *testing.T) {
 	prov := &fakeProvisioner{repo: repo, onProvision: "ok", now: func() time.Time { return fixedNow }}
 	svc := makeServiceWithProvisioner(repo, "pro", prov, fixedNow, 5)
 
-	// Stale paired runtime: updated_at way before heartbeat grace window.
+	// Stale starting runtime: updated_at way before heartbeat grace window.
 	staleAt := fixedNow.Add(-10 * time.Minute)
 	repo.runtimes["rt_stale"] = domain.Runtime{
 		RuntimeID: "rt_stale", UserID: 42, Name: "default",
 		Source:       domain.RuntimeSourceHosted,
 		EndpointHost: "127.0.0.1", GRPCPort: 50142, ResourceProfile: "small",
-		Status: domain.RuntimeStatusPaired, HeartbeatAt: nil,
+		Status: domain.RuntimeStatusStarting, HeartbeatAt: nil,
 		CreatedAt: staleAt, UpdatedAt: staleAt,
 	}
 
