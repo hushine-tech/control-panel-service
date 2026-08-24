@@ -153,15 +153,13 @@ The `0 = forbid` convention is the post-2026-05-03 fix; the previous
 `minNonZero` definition silently turned `max_self_hosted_runtimes: 0`
 into "unlimited" by inheriting the platform fallback.
 
-## RuntimeChannel rollout sequence
+## RuntimeChannel start sequence
 
 For local smoke, create or update the ignored `config.local.yaml` locally
-to select the Docker backend and handler control-panel routing. Before
-restarting, remove any stale `provisioning.docker.runtime_env`; every
-non-empty map is rejected. Other environments should flip the cutover
-toggles in this order to avoid half-cutover states (handler routes via
-control-panel but provisioner is NoOp → fail-closed; or provisioner runs
-containers but handler is not pointed at control-panel):
+to select the Docker backend and handler control-panel routing. Runtime
+containers receive only the RuntimeChannel address and sealed runtime identity;
+database, Kafka, core/order, credential and notification endpoints are never
+part of hosted runtime configuration. Start components in this order:
 
 1. **Apply migrations**: `make ensure-dbs` at repo root (creates
    `control_panel` DB and applies `users.plan_code` to `portfolio` DB).
