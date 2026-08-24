@@ -46,6 +46,9 @@ func TestCurrentControlPanelBaselineContainsFinalContracts(t *testing.T) {
 		"create table if not exists stream_delivery_leases",
 		"create table if not exists stream_delivery_failures",
 		"create table if not exists runtime_debug_datasets",
+		"create table if not exists runtime_session_cleanup_outbox",
+		"references runtime_registry(runtime_id) on delete cascade",
+		"idx_runtime_session_cleanup_outbox_due",
 		"array['hosted'::text, 'self_hosted'::text, 'bare'::text]",
 		"array['executor'::text, 'debugger'::text]",
 		"client_cert_fingerprint",
@@ -59,26 +62,40 @@ func TestCurrentControlPanelBaselineContainsFinalContracts(t *testing.T) {
 	}
 }
 
-func TestRuntimeSessionCleanupMigrationIsDurableAndCredentialFree(t *testing.T) {
-	raw, err := os.ReadFile("migrations/0002_runtime_session_cleanup_outbox.sql")
+func TestCurrentBaselineCleanupOutboxIsDurableAndCredentialFree(t *testing.T) {
+	raw, err := os.ReadFile("migrations/0001_current_schema_baseline.sql")
 	if err != nil {
-		t.Fatalf("read runtime Session cleanup migration: %v", err)
+		t.Fatalf("read current schema baseline: %v", err)
 	}
 	sql := strings.ToLower(string(raw))
+	start := strings.Index(sql, "create table if not exists runtime_session_cleanup_outbox")
+	if start < 0 {
+		t.Fatal("current baseline cleanup outbox table is missing")
+	}
+	end := strings.Index(sql[start:], "\n);")
+	if end < 0 {
+		t.Fatal("current baseline cleanup outbox table definition is incomplete")
+	}
+	outboxSQL := sql[start : start+end+3]
 	for _, required := range []string{
 		"create table if not exists runtime_session_cleanup_outbox",
 		"references runtime_registry(runtime_id) on delete cascade",
 		"next_attempt_at",
 		"attempt_count",
-		"on conflict (runtime_id) do nothing",
 	} {
-		if !strings.Contains(sql, required) {
-			t.Fatalf("runtime Session cleanup migration missing %q", required)
+		if !strings.Contains(outboxSQL, required) {
+			t.Fatalf("current baseline cleanup outbox missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"api_key", "api_secret", "credential_json", "token_hash"} {
-		if strings.Contains(sql, forbidden) {
-			t.Fatalf("runtime Session cleanup migration contains secret-bearing field %q", forbidden)
+	for _, forbidden := range []string{
+		"api_key",
+		"api_secret",
+		"credential_json",
+		"token_hash",
+		"insert into runtime_session_cleanup_outbox",
+	} {
+		if strings.Contains(outboxSQL, forbidden) {
+			t.Fatalf("current baseline cleanup outbox contains obsolete or secret-bearing SQL %q", forbidden)
 		}
 	}
 }

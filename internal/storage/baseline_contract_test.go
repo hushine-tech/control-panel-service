@@ -23,7 +23,6 @@ func TestCurrentControlPanelMigrationSetIsExplicit(t *testing.T) {
 	want := []string{
 		"0000_create_schema_migrations.sql",
 		"0001_current_schema_baseline.sql",
-		"0002_runtime_session_cleanup_outbox.sql",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("control-panel migration set = %v, want %v", got, want)

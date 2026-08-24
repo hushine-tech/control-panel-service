@@ -110,6 +110,22 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 			t.Fatalf("runtime_session_cleanup_outbox.%s is missing after migrations", column)
 		}
 	}
+	cleanupIndexDef := indexDefinition(ctx, t, db, schema, "idx_runtime_session_cleanup_outbox_due")
+	if !strings.Contains(cleanupIndexDef, "runtime_session_cleanup_outbox USING btree (next_attempt_at, created_at, runtime_id)") {
+		t.Fatalf("cleanup outbox due index has unexpected definition: %s", cleanupIndexDef)
+	}
+	cleanupForeignKey := constraintDefinition(
+		ctx,
+		t,
+		db,
+		schema,
+		"runtime_session_cleanup_outbox",
+		"runtime_session_cleanup_outbox_runtime_id_fkey",
+	)
+	if !strings.Contains(cleanupForeignKey, "FOREIGN KEY (runtime_id) REFERENCES") ||
+		!strings.Contains(cleanupForeignKey, "runtime_registry(runtime_id) ON DELETE CASCADE") {
+		t.Fatalf("cleanup outbox runtime foreign key has unexpected definition: %s", cleanupForeignKey)
+	}
 
 	indexDef := indexDefinition(ctx, t, db, schema, "uq_runtime_registry_user_name")
 	if !strings.Contains(indexDef, "UNIQUE INDEX") ||
