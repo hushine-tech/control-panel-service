@@ -832,7 +832,7 @@ func TestPlatformProxyOrderPlacePreservesAdvancedOrderFields(t *testing.T) {
 		PortfolioId:  7,
 		Symbol:       "BTCUSDT",
 		Side:         "BUY",
-		Qty:          0.1,
+		QtyDecimal:   "0.1",
 		OrderType:    "LIMIT",
 		TimeInForce:  "GTD",
 		PostOnly:     false,
