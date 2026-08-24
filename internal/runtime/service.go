@@ -760,8 +760,8 @@ func (s *Service) resolveRuntimeRouteForRuntimeWithPolicy(ctx context.Context, u
 	case domain.RuntimeStatusHeartbeatStale, domain.RuntimeStatusEnded, domain.RuntimeStatusCancelled, domain.RuntimeStatusFailed:
 		_ = s.drainRuntimeSessionCleanups(ctx, s.now().UTC())
 		return ResolveResult{}, ErrEnded
-	case domain.RuntimeStatusActive, domain.RuntimeStatusStarting, domain.RuntimeStatusUnhealthy:
-		// Current non-terminal lifecycle statuses are handled below.
+	case domain.RuntimeStatusActive, domain.RuntimeStatusUnhealthy:
+		// Active routes continue below; unhealthy routes fail before routing.
 	default:
 		return ResolveResult{}, fmt.Errorf("%w: unsupported runtime status %q", ErrInvalidArgument, rt.Status)
 	}

@@ -1029,8 +1029,8 @@ func TestResolve_NotFound(t *testing.T) {
 	}
 }
 
-func TestResolve_RemovedRuntimeStatusesFailClosed(t *testing.T) {
-	for _, removedStatus := range []string{"paired", "unpaired"} {
+func TestResolve_NonActiveRuntimeStatusesFailClosed(t *testing.T) {
+	for _, removedStatus := range []string{"starting", "paired", "unpaired"} {
 		t.Run(removedStatus, func(t *testing.T) {
 			repo := newStubRepo()
 			svc := makeService(repo, "pro", nil, config.RuntimePlatformConfig{}, fixedNow)
