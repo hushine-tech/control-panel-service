@@ -281,7 +281,7 @@ func Default() *Config {
 			},
 		},
 		Database: DatabaseConfig{
-			Host:     "192.168.88.10",
+			Host:     "127.0.0.1",
 			Port:     5432,
 			User:     "postgres",
 			Password: "postgres",
@@ -289,14 +289,14 @@ func Default() *Config {
 			SSLMode:  "disable",
 		},
 		MarketData: MarketDataConfig{
-			Host:                "192.168.88.10",
+			Host:                "127.0.0.1",
 			Port:                5432,
 			User:                "postgres",
 			Password:            "postgres",
 			Database:            "{exchange}_{year}",
 			SSLMode:             "disable",
 			LiveDeliveryEnabled: false,
-			KafkaBrokers:        []string{"192.168.88.10:19092"},
+			KafkaBrokers:        []string{"127.0.0.1:9092"},
 		},
 		Dependencies: DependenciesConfig{
 			PortfolioServiceGRPC: "127.0.0.1:50051",
@@ -328,7 +328,7 @@ func Default() *Config {
 		Notification: NotificationConfig{
 			Enabled: false,
 			Kafka: NotificationKafkaConfig{
-				Brokers:  []string{"192.168.88.10:19092"},
+				Brokers:  []string{"127.0.0.1:9092"},
 				Topic:    "notification.events",
 				ClientID: "control-panel-service",
 			},

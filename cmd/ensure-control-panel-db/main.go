@@ -64,7 +64,7 @@ func ensureControlPanelDBSuccessMessage(database string) string {
 }
 
 func run() error {
-	host := getenv("PGHOST", "192.168.88.10")
+	host := getenv("PGHOST", "127.0.0.1")
 	port := getenv("PGPORT", "5432")
 	user := getenv("PGUSER", "postgres")
 	pass := getenv("PGPASSWORD", "postgres")

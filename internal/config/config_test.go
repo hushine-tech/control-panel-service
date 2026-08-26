@@ -156,11 +156,24 @@ func TestRemovedEnvironmentAliasesDoNotOverrideCanonicalConfiguration(t *testing
 	if cfg.Server.HTTPAddr != ":8082" || cfg.Server.GRPCAddr != ":50054" {
 		t.Fatalf("server = %+v, want canonical defaults", cfg.Server)
 	}
-	if cfg.Database.DBName != "control_panel" || cfg.Database.Host != "192.168.88.10" {
+	if cfg.Database.DBName != "control_panel" || cfg.Database.Host != "127.0.0.1" {
 		t.Fatalf("database = %+v, want canonical defaults", cfg.Database)
 	}
 	if cfg.Dependencies.PortfolioServiceGRPC != "127.0.0.1:50051" || cfg.Dependencies.OrderServiceGRPC != "127.0.0.1:50051" {
 		t.Fatalf("dependencies = %+v, want canonical defaults", cfg.Dependencies)
+	}
+}
+
+func TestDefaultInfrastructureUsesLoopback(t *testing.T) {
+	cfg := Default()
+	if cfg.Database.Host != "127.0.0.1" || cfg.MarketData.Host != "127.0.0.1" {
+		t.Fatalf("database defaults = control=%q market=%q, want loopback", cfg.Database.Host, cfg.MarketData.Host)
+	}
+	if got := cfg.MarketData.KafkaBrokers; len(got) != 1 || got[0] != "127.0.0.1:9092" {
+		t.Fatalf("market-data Kafka brokers = %#v, want loopback", got)
+	}
+	if got := cfg.Notification.Kafka.Brokers; len(got) != 1 || got[0] != "127.0.0.1:9092" {
+		t.Fatalf("notification Kafka brokers = %#v, want loopback", got)
 	}
 }
 
