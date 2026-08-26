@@ -2,10 +2,16 @@ package runtimechannel
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1425,6 +1431,173 @@ func TestPlatformProxyFetchBacktestPageFundingBoundaryIsNeitherDuplicatedNorSkip
 	if len(secondFacts) != 1 || int64(secondFacts[0].GetStructValue().GetFields()["funding_time_ms"].GetNumberValue()) != boundary {
 		t.Fatalf("second page Funding facts = %#v, want boundary exactly once", secondFacts)
 	}
+}
+
+func TestPlatformProxyProductionMarketDataQueryReturnsFull8192PageAndBoundsFunding(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Duration(backtestPageSize+1) * time.Second)
+	boundary := start.Add(time.Duration(backtestPageSize) * time.Second)
+	state := &backtestPageSQLState{
+		klines: makeBacktestSQLKlines(backtestPageSize+1, start, time.Second),
+		funding: []backtestSQLFundingRow{
+			{at: boundary.Add(-time.Millisecond), rate: "0.1", mark: "100"},
+			{at: boundary, rate: "0.2", mark: "101"},
+		},
+	}
+	driverName := registerBacktestPageSQLDriver(state)
+	query := NewMarketDataQuery(MarketDataQueryConfig{
+		Host: "market-data", Database: "{exchange}_{year}",
+		OpenDB: func(_, dsn string) (*sql.DB, error) { return sql.Open(driverName, dsn) },
+	})
+	coverage := &fakeMarketDataPlatformServer{fundingCoverageComplete: true}
+	proxy := NewPlatformProxy(nil, nil, coverage)
+	proxy.SetMarketDataQuery(query)
+
+	fetch := func(startAfter time.Time) *structpb.Struct {
+		t.Helper()
+		payload, err := anypb.New(mustStruct(t, map[string]any{
+			"exchange": "okx", "market": "futures", "kind": "kline", "symbol": "BTCUSDT", "interval": "1s",
+			"start_after_time_ms": float64(startAfter.UnixMilli()), "end_time_ms": float64(end.UnixMilli()),
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		message, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-1"}, "marketdata.FetchBacktestPage", payload)
+		if err != nil {
+			t.Fatalf("FetchBacktestPage: %v", err)
+		}
+		return message.(*structpb.Struct)
+	}
+
+	first := fetch(start.Add(-time.Second))
+	if got := int(first.GetFields()["count"].GetNumberValue()); got != 8192 {
+		t.Fatalf("first production page Klines = %d, want 8192", got)
+	}
+	if !first.GetFields()["has_more"].GetBoolValue() {
+		t.Fatal("first production page has_more = false, want true")
+	}
+	firstFacts := first.GetFields()["funding_facts"].GetListValue().GetValues()
+	if len(firstFacts) != 1 || int64(firstFacts[0].GetStructValue().GetFields()["funding_time_ms"].GetNumberValue()) != boundary.Add(-time.Millisecond).UnixMilli() {
+		t.Fatalf("first production page Funding facts = %#v, want only boundary-1ms", firstFacts)
+	}
+	if got := coverage.coverageCalls[0].GetEndAt().AsTime(); !got.Equal(boundary) {
+		t.Fatalf("first production Funding coverage end = %s, want page boundary %s", got, boundary)
+	}
+
+	second := fetch(boundary.Add(-time.Second))
+	if got := int(second.GetFields()["count"].GetNumberValue()); got != 1 {
+		t.Fatalf("second production page Klines = %d, want 1", got)
+	}
+	if second.GetFields()["has_more"].GetBoolValue() {
+		t.Fatal("second production page has_more = true, want false")
+	}
+	secondFacts := second.GetFields()["funding_facts"].GetListValue().GetValues()
+	if len(secondFacts) != 1 || int64(secondFacts[0].GetStructValue().GetFields()["funding_time_ms"].GetNumberValue()) != boundary.UnixMilli() {
+		t.Fatalf("second production page Funding facts = %#v, want boundary exactly once", secondFacts)
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	for _, dsn := range state.dsns {
+		if !strings.Contains(dsn, "dbname=okx_2026") {
+			t.Fatalf("non-Binance production query DSN = %q, want okx_2026", dsn)
+		}
+	}
+}
+
+type backtestSQLKlineRow struct {
+	open, close time.Time
+}
+
+type backtestSQLFundingRow struct {
+	at         time.Time
+	rate, mark string
+}
+
+type backtestPageSQLState struct {
+	mu      sync.Mutex
+	klines  []backtestSQLKlineRow
+	funding []backtestSQLFundingRow
+	dsns    []string
+}
+
+var backtestPageSQLDriverSequence atomic.Uint64
+
+func registerBacktestPageSQLDriver(state *backtestPageSQLState) string {
+	name := fmt.Sprintf("backtest_page_query_test_%d", backtestPageSQLDriverSequence.Add(1))
+	sql.Register(name, backtestPageSQLDriver{state: state})
+	return name
+}
+
+type backtestPageSQLDriver struct{ state *backtestPageSQLState }
+
+func (d backtestPageSQLDriver) Open(dsn string) (driver.Conn, error) {
+	return &backtestPageSQLConn{state: d.state, dsn: dsn}, nil
+}
+
+type backtestPageSQLConn struct {
+	state *backtestPageSQLState
+	dsn   string
+}
+
+func (*backtestPageSQLConn) Prepare(string) (driver.Stmt, error) {
+	return nil, fmt.Errorf("Prepare not supported")
+}
+func (*backtestPageSQLConn) Close() error              { return nil }
+func (*backtestPageSQLConn) Begin() (driver.Tx, error) { return nil, fmt.Errorf("Begin not supported") }
+func (c *backtestPageSQLConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	c.state.dsns = append(c.state.dsns, c.dsn)
+	startMS := args[1].Value.(int64)
+	endMS := args[2].Value.(int64)
+	if strings.Contains(query, "_klines_") {
+		limit := int(args[3].Value.(int64))
+		values := make([][]driver.Value, 0, limit)
+		for _, row := range c.state.klines {
+			if row.open.UnixMilli() < startMS || row.open.UnixMilli() >= endMS {
+				continue
+			}
+			values = append(values, []driver.Value{"BTCUSDT", row.open, row.close, 1.0, 2.0, 0.5, 1.5, 10.0})
+			if len(values) == limit {
+				break
+			}
+		}
+		return &backtestPageSQLRows{columns: []string{"symbol", "open_time", "close_time", "open", "high", "low", "close", "volume"}, rows: values}, nil
+	}
+	values := make([][]driver.Value, 0, len(c.state.funding))
+	for _, row := range c.state.funding {
+		if row.at.UnixMilli() >= startMS && row.at.UnixMilli() < endMS {
+			values = append(values, []driver.Value{"BTCUSDT", row.at, row.rate, row.mark})
+		}
+	}
+	return &backtestPageSQLRows{columns: []string{"symbol", "time", "funding_rate", "mark_price"}, rows: values}, nil
+}
+
+type backtestPageSQLRows struct {
+	columns []string
+	rows    [][]driver.Value
+	index   int
+}
+
+func (r *backtestPageSQLRows) Columns() []string { return r.columns }
+func (*backtestPageSQLRows) Close() error        { return nil }
+func (r *backtestPageSQLRows) Next(dest []driver.Value) error {
+	if r.index >= len(r.rows) {
+		return io.EOF
+	}
+	copy(dest, r.rows[r.index])
+	r.index++
+	return nil
+}
+
+func makeBacktestSQLKlines(count int, start time.Time, step time.Duration) []backtestSQLKlineRow {
+	rows := make([]backtestSQLKlineRow, 0, count)
+	for i := 0; i < count; i++ {
+		open := start.Add(time.Duration(i) * step)
+		rows = append(rows, backtestSQLKlineRow{open: open, close: open.Add(step)})
+	}
+	return rows
 }
 
 func TestPlatformProxyFetchBacktestPageEmptyFundingUsesCoverageFactAndSpotOmitsFields(t *testing.T) {

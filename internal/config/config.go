@@ -293,7 +293,7 @@ func Default() *Config {
 			Port:                5432,
 			User:                "postgres",
 			Password:            "postgres",
-			Database:            "binance_{year}",
+			Database:            "{exchange}_{year}",
 			SSLMode:             "disable",
 			LiveDeliveryEnabled: false,
 			KafkaBrokers:        []string{"192.168.88.10:19092"},

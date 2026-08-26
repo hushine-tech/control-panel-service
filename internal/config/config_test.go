@@ -22,6 +22,19 @@ func TestDefaultDependencyProfileAdmissionIsPinned(t *testing.T) {
 	}
 }
 
+func TestMarketDataProductionConfigRoutesEveryExchangeByYear(t *testing.T) {
+	if got := Default().MarketData.Database; got != "{exchange}_{year}" {
+		t.Fatalf("default market-data database = %q, want {exchange}_{year}", got)
+	}
+	cfg, err := Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load production config: %v", err)
+	}
+	if got := cfg.MarketData.Database; got != "{exchange}_{year}" {
+		t.Fatalf("production market-data database = %q, want {exchange}_{year}", got)
+	}
+}
+
 func TestDependencyProfileValidationRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name   string

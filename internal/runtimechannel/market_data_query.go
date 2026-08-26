@@ -15,7 +15,7 @@ import (
 )
 
 const defaultKlineFetchLimit = 1000
-const maxKlineFetchLimit = 5000
+const maxKlineFetchLimit = 8192
 const defaultKlineConnectTimeoutSeconds = 5
 const defaultKlineQueryAttempts = 3
 
@@ -362,14 +362,15 @@ func databaseNameForYear(template, exchange string, year int) (string, error) {
 	if dbName == exchange {
 		return "", fmt.Errorf("fixed exchange database %q is not a supported market-data read source", dbName)
 	}
-	if strings.Contains(dbName, "{exchange}") {
-		dbName = strings.ReplaceAll(dbName, "{exchange}", exchange)
+	if !strings.Contains(dbName, "{year}") {
+		return "", fmt.Errorf("market-data database template %q must include {year}", template)
 	}
-	if strings.Contains(dbName, "{year}") {
-		dbName = strings.ReplaceAll(dbName, "{year}", fmt.Sprintf("%d", year))
-		return dbName, nil
+	if !strings.Contains(dbName, "{exchange}") {
+		return "", fmt.Errorf("market-data database template %q must include {exchange}", template)
 	}
-	return "", fmt.Errorf("market-data database template %q must include {year}", template)
+	dbName = strings.ReplaceAll(dbName, "{exchange}", exchange)
+	dbName = strings.ReplaceAll(dbName, "{year}", fmt.Sprintf("%d", year))
+	return dbName, nil
 }
 
 func normalizeKlineQuery(req KlineQuery) KlineQuery {

@@ -26,7 +26,7 @@ import (
 const (
 	portfolioSnapshotReasonStrategyStart = 2
 	portfolioSnapshotReasonStrategyEnd   = 3
-	backtestPageSize                     = 8192
+	backtestPageSize                     = maxKlineFetchLimit
 )
 
 type sessionStatusPolicy uint8

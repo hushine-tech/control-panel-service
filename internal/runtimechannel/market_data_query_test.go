@@ -25,6 +25,9 @@ func TestDatabaseNameForYearRejectsFixedExchangeDatabase(t *testing.T) {
 	if _, err := databaseNameForYear("market_data", "binance", 2026); err == nil || !strings.Contains(err.Error(), "must include {year}") {
 		t.Fatalf("missing year err = %v, want template rejection", err)
 	}
+	if _, err := databaseNameForYear("binance_{year}", "okx", 2026); err == nil || !strings.Contains(err.Error(), "must include {exchange}") {
+		t.Fatalf("missing exchange err = %v, want exchange-neutral template rejection", err)
+	}
 }
 
 func TestIsMissingMarketDataStorageError(t *testing.T) {
