@@ -11,10 +11,13 @@ import (
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
 )
 
-func (s *Service) handleRuntimeDataBackpressure(ctx context.Context, rt AuthenticatedRuntime, frame *cpv1.RuntimeFrame) {
-	if s == nil || frame == nil || frame.GetDataBackpressure() == nil {
+func (s *Service) handleRuntimeDataBackpressure(parent context.Context, stream *runtimeStream, frame *cpv1.RuntimeFrame) {
+	if s == nil || stream == nil || frame == nil || frame.GetDataBackpressure() == nil || !s.registry.IsCurrent(stream) {
 		return
 	}
+	rt := stream.Runtime
+	ctx, cancel := stream.connectionContext(parent)
+	defer cancel()
 	bp := frame.GetDataBackpressure()
 	sessionID := strings.TrimSpace(bp.GetSessionId())
 	if sessionID == "" || rt.UserID <= 0 {
@@ -22,16 +25,30 @@ func (s *Service) handleRuntimeDataBackpressure(ctx context.Context, rt Authenti
 	}
 	streamKey := strings.TrimSpace(bp.GetStreamKey())
 	connection := incomeDeliveryConnection(rt)
-	if streamKey == incomeStreamKey(sessionID) && s.incomeDeliveryObserver != nil {
-		if !s.incomeDeliveryObserver.OwnsIncomeStream(connection, sessionID, streamKey) {
+	if streamKey == incomeStreamKey(sessionID) {
+		if s.incomeDeliveryObserver == nil {
 			return
 		}
-		s.incomeDeliveryObserver.HandleIncomeBackpressure(
-			connection,
-			sessionID,
-			streamKey,
-			time.UnixMilli(bp.GetResumeAfterUnixMs()).UTC(),
-		)
+		accepted := false
+		s.registry.withCurrent(stream, func() {
+			sequence, attemptToken, ok := s.incomeDeliveryObserver.IncomeBackpressureAttempt(connection, sessionID, streamKey)
+			if !ok || attemptToken == "" || s.incomeDataWindow == nil ||
+				!s.incomeDataWindow.CancelAttempt(sessionID, streamKey, sequence, attemptToken) {
+				return
+			}
+			s.incomeDeliveryObserver.HandleIncomeBackpressure(
+				connection,
+				sessionID,
+				streamKey,
+				sequence,
+				attemptToken,
+				time.UnixMilli(bp.GetResumeAfterUnixMs()).UTC(),
+			)
+			accepted = true
+		})
+		if !accepted {
+			return
+		}
 	}
 	reason := strings.TrimSpace(bp.GetReason())
 	eventType := cpnotify.EventRuntimeDataDelayed
@@ -54,6 +71,9 @@ func (s *Service) handleRuntimeDataBackpressure(ctx context.Context, rt Authenti
 	publisher := s.notifications
 	if publisher == nil {
 		publisher = cpnotify.NoopPublisher{}
+	}
+	if !s.registry.IsCurrent(stream) || ctx.Err() != nil {
+		return
 	}
 	if err := publisher.Publish(ctx, cpnotify.Event{
 		SchemaVersion: cpnotify.SchemaVersion,

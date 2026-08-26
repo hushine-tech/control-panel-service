@@ -120,3 +120,31 @@ func TestRuntimeDataWindowPreservesGlobalCapacityAcrossSessions(t *testing.T) {
 		t.Fatalf("second Session enqueue error = %v, want global ErrRuntimeDataBackpressure", err)
 	}
 }
+
+func TestRuntimeDataWindowLateOldAttemptCannotCancelReplacement(t *testing.T) {
+	window := NewSessionRuntimeDataWindow(1)
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	if _, err := window.TrackAttempt("sess-1", "income/sess-1", 10, "connection-old/attempt-1", nil, now); err != nil {
+		t.Fatalf("track old attempt: %v", err)
+	}
+	if !window.ForgetAttempt("sess-1", "income/sess-1", 10, "connection-old/attempt-1") {
+		t.Fatal("forget old attempt failed")
+	}
+	if _, err := window.TrackAttempt("sess-1", "income/sess-1", 10, "connection-new/attempt-2", nil, now); err != nil {
+		t.Fatalf("track replacement attempt: %v", err)
+	}
+
+	oldSendReturned := make(chan struct{})
+	lateCancelDone := make(chan bool, 1)
+	go func() {
+		<-oldSendReturned
+		lateCancelDone <- window.CancelAttempt("sess-1", "income/sess-1", 10, "connection-old/attempt-1")
+	}()
+	close(oldSendReturned)
+	if canceled := <-lateCancelDone; canceled {
+		t.Fatal("late old send failure canceled replacement attempt")
+	}
+	if !window.AckAttempt("sess-1", "income/sess-1", 10, "connection-new/attempt-2") {
+		t.Fatal("replacement attempt could not be acknowledged after late old failure")
+	}
+}

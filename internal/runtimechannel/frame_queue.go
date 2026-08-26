@@ -13,75 +13,158 @@ import (
 var ErrRuntimeDataBackpressure = errors.New("runtime data backpressure")
 
 type PriorityFrameQueue struct {
-	mu       sync.Mutex
-	capacity int
-	control  []*cpv1.RuntimeFrame
-	data     []*cpv1.RuntimeFrame
+	mu           sync.Mutex
+	capacity     int
+	control      []*outboundFrame
+	data         map[string][]*outboundFrame
+	dataSessions []string
+	dataCount    int
+}
+
+type outboundFrame struct {
+	frame    *cpv1.RuntimeFrame
+	done     chan error
+	onFailed func(error)
 }
 
 func NewPriorityFrameQueue(capacity int) *PriorityFrameQueue {
 	if capacity <= 0 {
 		capacity = 1
 	}
-	return &PriorityFrameQueue{capacity: capacity}
+	return &PriorityFrameQueue{capacity: capacity, data: map[string][]*outboundFrame{}}
 }
 
 func (q *PriorityFrameQueue) Enqueue(frame *cpv1.RuntimeFrame) error {
 	if frame == nil {
 		return nil
 	}
+	return q.enqueue(&outboundFrame{frame: frame})
+}
+
+func (q *PriorityFrameQueue) enqueue(item *outboundFrame) error {
+	if item == nil || item.frame == nil {
+		return nil
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.control)+len(q.data) >= q.capacity {
-		return ErrRuntimeDataBackpressure
-	}
-	if runtimeFrameIsControl(frame) {
-		q.control = append(q.control, frame)
+	if runtimeFrameIsControl(item.frame) {
+		if len(q.control) >= q.capacity {
+			return ErrRuntimeDataBackpressure
+		}
+		q.control = append(q.control, item)
 	} else {
-		q.data = append(q.data, frame)
+		if q.dataCount >= q.capacity {
+			return ErrRuntimeDataBackpressure
+		}
+		sessionID := runtimeFrameSessionID(item.frame)
+		if len(q.data[sessionID]) == 0 {
+			q.dataSessions = append(q.dataSessions, sessionID)
+		}
+		q.data[sessionID] = append(q.data[sessionID], item)
+		q.dataCount++
 	}
 	return nil
 }
 
 func (q *PriorityFrameQueue) Dequeue() (*cpv1.RuntimeFrame, bool) {
+	item, ok := q.dequeue()
+	if !ok {
+		return nil, false
+	}
+	return item.frame, true
+}
+
+func (q *PriorityFrameQueue) dequeue() (*outboundFrame, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.control) > 0 {
-		frame := q.control[0]
+		item := q.control[0]
 		q.control = q.control[1:]
-		return frame, true
+		return item, true
 	}
-	if len(q.data) > 0 {
-		frame := q.data[0]
-		q.data = q.data[1:]
-		return frame, true
+	if len(q.dataSessions) > 0 {
+		sessionID := q.dataSessions[0]
+		items := q.data[sessionID]
+		item := items[0]
+		q.dataCount--
+		if len(items) == 1 {
+			delete(q.data, sessionID)
+			q.dataSessions = q.dataSessions[1:]
+		} else {
+			q.data[sessionID] = items[1:]
+			q.dataSessions = append(q.dataSessions[1:], sessionID)
+		}
+		return item, true
 	}
 	return nil, false
 }
 
+func (q *PriorityFrameQueue) failAll(err error) {
+	q.mu.Lock()
+	items := append([]*outboundFrame(nil), q.control...)
+	q.control = nil
+	for _, sessionID := range q.dataSessions {
+		items = append(items, q.data[sessionID]...)
+	}
+	q.data = map[string][]*outboundFrame{}
+	q.dataSessions = nil
+	q.dataCount = 0
+	q.mu.Unlock()
+	for _, item := range items {
+		completeOutboundFrame(item, err)
+	}
+}
+
 func runtimeFrameIsControl(frame *cpv1.RuntimeFrame) bool {
 	switch frame.GetFrameType() {
-	case cpv1.FrameType_FRAME_TYPE_HELLO,
-		cpv1.FrameType_FRAME_TYPE_HEARTBEAT,
-		cpv1.FrameType_FRAME_TYPE_ABORT,
-		cpv1.FrameType_FRAME_TYPE_ERROR,
-		cpv1.FrameType_FRAME_TYPE_COMMAND,
-		cpv1.FrameType_FRAME_TYPE_COMMAND_ACK,
-		cpv1.FrameType_FRAME_TYPE_COMMAND_RESULT,
-		cpv1.FrameType_FRAME_TYPE_STATUS_PATCH,
-		cpv1.FrameType_FRAME_TYPE_SHUTDOWN:
-		return true
-	default:
+	case cpv1.FrameType_FRAME_TYPE_LIVE_KLINE_BATCH,
+		cpv1.FrameType_FRAME_TYPE_DATASET_CHUNK,
+		cpv1.FrameType_FRAME_TYPE_ORDER_UPDATE_BATCH,
+		cpv1.FrameType_FRAME_TYPE_INCOME_BATCH:
 		return false
+	default:
+		return true
+	}
+}
+
+func runtimeFrameSessionID(frame *cpv1.RuntimeFrame) string {
+	if frame == nil {
+		return ""
+	}
+	if batch := frame.GetIncomeBatch(); batch != nil {
+		return batch.GetSessionId()
+	}
+	if batch := frame.GetLiveKlineBatch(); batch != nil {
+		return batch.GetSessionId()
+	}
+	if batch := frame.GetOrderUpdateBatch(); batch != nil {
+		return batch.GetSessionId()
+	}
+	if chunk := frame.GetDatasetChunk(); chunk != nil {
+		return chunk.GetSessionId()
+	}
+	return ""
+}
+
+func completeOutboundFrame(item *outboundFrame, err error) {
+	if item == nil {
+		return
+	}
+	if err != nil && item.onFailed != nil {
+		item.onFailed(err)
+	}
+	if item.done != nil {
+		item.done <- err
 	}
 }
 
 type RuntimeDataChunk struct {
-	SessionID string
-	StreamKey string
-	Sequence  int64
-	Payload   []byte
-	SentAt    time.Time
+	SessionID    string
+	StreamKey    string
+	Sequence     int64
+	AttemptToken string
+	Payload      []byte
+	SentAt       time.Time
 }
 
 type RuntimeDataWindow struct {
@@ -124,15 +207,22 @@ func (w *RuntimeDataWindow) Enqueue(sessionID, streamKey string, payload []byte,
 	key := dataWindowStreamKey(sessionID, streamKey)
 	seq := w.nextSeq[key] + 1
 	w.nextSeq[key] = seq
-	return w.trackLocked(sessionID, streamKey, seq, payload, at), nil
+	return w.trackLocked(sessionID, streamKey, seq, "", payload, at), nil
 }
 
 func (w *RuntimeDataWindow) Track(sessionID, streamKey string, sequence int64, payload []byte, at time.Time) (RuntimeDataChunk, error) {
+	return w.TrackAttempt(sessionID, streamKey, sequence, "", payload, at)
+}
+
+func (w *RuntimeDataWindow) TrackAttempt(sessionID, streamKey string, sequence int64, attemptToken string, payload []byte, at time.Time) (RuntimeDataChunk, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	ackKey := dataWindowAckKey(sessionID, streamKey, sequence)
 	if existing, ok := w.unacked[ackKey]; ok {
-		return existing, nil
+		if existing.AttemptToken == attemptToken {
+			return existing, nil
+		}
+		return RuntimeDataChunk{}, ErrRuntimeDataBackpressure
 	}
 	if w.fullLocked(sessionID) {
 		return RuntimeDataChunk{}, ErrRuntimeDataBackpressure
@@ -141,7 +231,7 @@ func (w *RuntimeDataWindow) Track(sessionID, streamKey string, sequence int64, p
 	if sequence > w.nextSeq[key] {
 		w.nextSeq[key] = sequence
 	}
-	return w.trackLocked(sessionID, streamKey, sequence, payload, at), nil
+	return w.trackLocked(sessionID, streamKey, sequence, attemptToken, payload, at), nil
 }
 
 func (w *RuntimeDataWindow) fullLocked(sessionID string) bool {
@@ -151,13 +241,14 @@ func (w *RuntimeDataWindow) fullLocked(sessionID string) bool {
 	return len(w.unacked) >= w.capacity
 }
 
-func (w *RuntimeDataWindow) trackLocked(sessionID, streamKey string, sequence int64, payload []byte, at time.Time) RuntimeDataChunk {
+func (w *RuntimeDataWindow) trackLocked(sessionID, streamKey string, sequence int64, attemptToken string, payload []byte, at time.Time) RuntimeDataChunk {
 	chunk := RuntimeDataChunk{
-		SessionID: sessionID,
-		StreamKey: streamKey,
-		Sequence:  sequence,
-		Payload:   append([]byte(nil), payload...),
-		SentAt:    at.UTC(),
+		SessionID:    sessionID,
+		StreamKey:    streamKey,
+		Sequence:     sequence,
+		AttemptToken: attemptToken,
+		Payload:      append([]byte(nil), payload...),
+		SentAt:       at.UTC(),
 	}
 	ackKey := dataWindowAckKey(sessionID, streamKey, sequence)
 	w.unacked[ackKey] = chunk
@@ -167,10 +258,15 @@ func (w *RuntimeDataWindow) trackLocked(sessionID, streamKey string, sequence in
 }
 
 func (w *RuntimeDataWindow) Ack(sessionID, streamKey string, sequence int64) bool {
+	return w.AckAttempt(sessionID, streamKey, sequence, "")
+}
+
+func (w *RuntimeDataWindow) AckAttempt(sessionID, streamKey string, sequence int64, attemptToken string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	key := dataWindowAckKey(sessionID, streamKey, sequence)
-	if _, ok := w.unacked[key]; !ok {
+	chunk, ok := w.unacked[key]
+	if !ok || chunk.AttemptToken != attemptToken {
 		return false
 	}
 	w.removeLocked(key)
@@ -178,10 +274,27 @@ func (w *RuntimeDataWindow) Ack(sessionID, streamKey string, sequence int64) boo
 }
 
 func (w *RuntimeDataWindow) Cancel(sessionID, streamKey string, sequence int64) bool {
+	return w.CancelAttempt(sessionID, streamKey, sequence, "")
+}
+
+func (w *RuntimeDataWindow) CancelAttempt(sessionID, streamKey string, sequence int64, attemptToken string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	key := dataWindowAckKey(sessionID, streamKey, sequence)
-	if _, ok := w.unacked[key]; !ok {
+	chunk, ok := w.unacked[key]
+	if !ok || chunk.AttemptToken != attemptToken {
+		return false
+	}
+	w.removeLocked(key)
+	return true
+}
+
+func (w *RuntimeDataWindow) ForgetAttempt(sessionID, streamKey string, sequence int64, attemptToken string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	key := dataWindowAckKey(sessionID, streamKey, sequence)
+	chunk, ok := w.unacked[key]
+	if !ok || chunk.AttemptToken != attemptToken {
 		return false
 	}
 	w.removeLocked(key)

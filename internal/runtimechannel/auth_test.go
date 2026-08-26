@@ -52,6 +52,7 @@ type stubRepo struct {
 	lookupErr          error
 	ownerInstance      string
 	ownerCleared       bool
+	heartbeatUpdates   int
 	claimCommand       domain.RuntimeCommand
 	claimOK            bool
 	claimOwner         string
@@ -105,6 +106,7 @@ func (s *stubRepo) CreateOrReplaceBareRuntime(_ context.Context, rt domain.Runti
 }
 
 func (s *stubRepo) UpdateRuntimeHeartbeat(_ context.Context, _ string, _ time.Time) error {
+	s.heartbeatUpdates++
 	return nil
 }
 

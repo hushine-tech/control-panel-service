@@ -79,9 +79,9 @@ func TestIncomeDeliveryCursorAdvancesOnlyAfterMatchingAck(t *testing.T) {
 		t.Fatalf("SyncOnce: %v", err)
 	}
 	waitForIncomeAttempts(t, deliverer, 1)
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-other", "income/session-1", 10)
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-other", 10)
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 9)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-other", "income/session-1", 10)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-other", 10)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 9)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after stale ACKs: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestIncomeDeliveryCursorAdvancesOnlyAfterMatchingAck(t *testing.T) {
 		t.Fatalf("after_income_entry_id = %d after mismatched/stale ACKs, want 0", got)
 	}
 
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after matching ACK: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestIncomeDeliveryRejectsAckFromAnotherRuntimeConnection(t *testing.T) {
 	waitForIncomeAttempts(t, deliverer, 1)
 
 	foreign := IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-a", ConnectionID: "connection-a"}
-	worker.HandleIncomeAck(foreign, "session-b", "income/session-b", 10)
+	handleIncomeAck(worker, foreign, "session-b", "income/session-b", 10)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after foreign ACK: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestIncomeDeliveryRejectsAckFromAnotherRuntimeConnection(t *testing.T) {
 	}
 
 	owner := IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-b", ConnectionID: "connection-b"}
-	worker.HandleIncomeAck(owner, "session-b", "income/session-b", 10)
+	handleIncomeAck(worker, owner, "session-b", "income/session-b", 10)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after owner ACK: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestIncomeDeliveryIgnoresDuplicatePageAfterAck(t *testing.T) {
 		t.Fatalf("SyncOnce: %v", err)
 	}
 	waitForIncomeAttempts(t, deliverer, 1)
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce duplicate page: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestIncomeDeliveryReconnectWithoutWorkerCursorReplaysFromZero(t *testing.T)
 		t.Fatalf("SyncOnce: %v", err)
 	}
 	waitForIncomeAttempts(t, deliverer, 1)
-	worker.HandleIncomeAck(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
+	handleIncomeAck(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-1", "income/session-1", 10)
 	source.setSessions([]IncomeDeliverySession{{
 		UserID: 42, RuntimeID: "runtime-1", SessionID: "session-1", ConnectionID: "connection-2",
 	}})
@@ -265,31 +265,31 @@ func TestIncomeDeliveryBackpressurePausesOnlyMatchingSession(t *testing.T) {
 		{UserID: 42, RuntimeID: "runtime-1", SessionID: "session-a", ConnectionID: "connection-1"},
 		{UserID: 42, RuntimeID: "runtime-1", SessionID: "session-b", ConnectionID: "connection-1"},
 	}}
-	client := newIncomeClientStub(nil)
+	client := newIncomeClientStub(map[string][]*portfoliov1.VenueIncomeEntry{
+		"session-a": {{IncomeEntryId: 10, SessionId: "session-a", Status: "confirmed"}},
+		"session-b": {{IncomeEntryId: 20, SessionId: "session-b", Status: "confirmed"}},
+	})
 	deliverer := newIncomeDelivererStub()
 	worker := NewIncomeDeliveryWorker(source, client, deliverer, IncomeDeliveryConfig{Now: func() time.Time { return now }})
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("prime SyncOnce: %v", err)
 	}
-	waitForIncomeRequests(t, client, "session-a", 1)
-	waitForIncomeRequests(t, client, "session-b", 1)
-	client.setEntries(map[string][]*portfoliov1.VenueIncomeEntry{
-		"session-a": {{IncomeEntryId: 10, SessionId: "session-a", Status: "confirmed"}},
-		"session-b": {{IncomeEntryId: 20, SessionId: "session-b", Status: "confirmed"}},
-	})
-	worker.HandleIncomeBackpressure(IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-a", "income/session-a", now.Add(10*time.Minute))
+	waitForIncomeAttempts(t, deliverer, 2)
+	handleIncomeBackpressure(worker, IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}, "session-a", "income/session-a", now.Add(10*time.Minute))
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce under backpressure: %v", err)
 	}
-	waitForIncomeAttempts(t, deliverer, 1)
-	if got := deliverer.attemptsSnapshot()[0].SessionID; got != "session-b" {
-		t.Fatalf("delivered session = %q, want unblocked session-b", got)
+	if got := len(deliverer.attemptsSnapshot()); got != 2 {
+		t.Fatalf("delivery attempts under backpressure = %d, want existing two attempts", got)
 	}
-	now = now.Add(10 * time.Minute)
+	now = now.Add(maxIncomeBackpressureDelay)
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after resume time: %v", err)
 	}
-	waitForIncomeAttempts(t, deliverer, 2)
+	waitForIncomeAttempts(t, deliverer, 3)
+	if got := deliverer.attemptsSnapshot()[2].SessionID; got != "session-a" {
+		t.Fatalf("retried session = %q, want only backpressured session-a", got)
+	}
 }
 
 func TestIncomeDeliveryRejectsBackpressureFromAnotherRuntimeConnection(t *testing.T) {
@@ -297,22 +297,69 @@ func TestIncomeDeliveryRejectsBackpressureFromAnotherRuntimeConnection(t *testin
 	source := &incomeSessionSourceStub{sessions: []IncomeDeliverySession{{
 		UserID: 42, RuntimeID: "runtime-b", SessionID: "session-b", ConnectionID: "connection-b",
 	}}}
-	client := newIncomeClientStub(nil)
+	client := newIncomeClientStub(map[string][]*portfoliov1.VenueIncomeEntry{
+		"session-b": {{IncomeEntryId: 10, SessionId: "session-b", Status: "confirmed"}},
+	})
 	deliverer := newIncomeDelivererStub()
 	worker := NewIncomeDeliveryWorker(source, client, deliverer, IncomeDeliveryConfig{Now: func() time.Time { return now }})
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("prime SyncOnce: %v", err)
 	}
-	waitForIncomeRequests(t, client, "session-b", 1)
-	client.setEntries(map[string][]*portfoliov1.VenueIncomeEntry{
-		"session-b": {{IncomeEntryId: 10, SessionId: "session-b", Status: "confirmed"}},
-	})
+	waitForIncomeAttempts(t, deliverer, 1)
 	foreign := IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-a", ConnectionID: "connection-a"}
-	worker.HandleIncomeBackpressure(foreign, "session-b", "income/session-b", now.Add(10*time.Minute))
+	handleIncomeBackpressure(worker, foreign, "session-b", "income/session-b", now.Add(10*time.Minute))
 	if err := worker.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("SyncOnce after foreign backpressure: %v", err)
 	}
+	if got := len(deliverer.attemptsSnapshot()); got != 1 {
+		t.Fatalf("foreign backpressure changed delivery attempts to %d, want 1", got)
+	}
+}
+
+func TestIncomeDeliveryRejectsBackpressureWithoutExactInflightAttempt(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	source := &incomeSessionSourceStub{sessions: []IncomeDeliverySession{
+		{UserID: 42, RuntimeID: "runtime-1", SessionID: "session-active", ConnectionID: "connection-1"},
+		{UserID: 42, RuntimeID: "runtime-1", SessionID: "session-idle", ConnectionID: "connection-1"},
+	}}
+	client := newIncomeClientStub(map[string][]*portfoliov1.VenueIncomeEntry{
+		"session-active": {{IncomeEntryId: 10, SessionId: "session-active", Status: "confirmed"}},
+	})
+	deliverer := newIncomeDelivererStub()
+	worker := NewIncomeDeliveryWorker(source, client, deliverer, IncomeDeliveryConfig{Now: func() time.Time { return now }})
+	if err := worker.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
 	waitForIncomeAttempts(t, deliverer, 1)
+
+	connection := IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}
+	if _, _, ok := worker.IncomeBackpressureAttempt(connection, "session-idle", "income/session-idle"); ok {
+		t.Fatal("idle same-runtime Session accepted Income backpressure without an in-flight attempt")
+	}
+}
+
+func TestIncomeDeliveryClampsFarFutureBackpressure(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	source := &incomeSessionSourceStub{sessions: []IncomeDeliverySession{{
+		UserID: 42, RuntimeID: "runtime-1", SessionID: "session-1", ConnectionID: "connection-1",
+	}}}
+	client := newIncomeClientStub(map[string][]*portfoliov1.VenueIncomeEntry{
+		"session-1": {{IncomeEntryId: 10, SessionId: "session-1", Status: "confirmed"}},
+	})
+	deliverer := newIncomeDelivererStub()
+	worker := NewIncomeDeliveryWorker(source, client, deliverer, IncomeDeliveryConfig{Now: func() time.Time { return now }})
+	if err := worker.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("initial SyncOnce: %v", err)
+	}
+	waitForIncomeAttempts(t, deliverer, 1)
+
+	connection := IncomeDeliveryConnection{UserID: 42, RuntimeID: "runtime-1", ConnectionID: "connection-1"}
+	handleIncomeBackpressure(worker, connection, "session-1", "income/session-1", now.Add(24*time.Hour))
+	now = now.Add(5 * time.Second)
+	if err := worker.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce after bounded pause: %v", err)
+	}
+	waitForIncomeAttempts(t, deliverer, 2)
 }
 
 func TestIncomeDeliveryMissingWorkerTenMinutesDoesNotCallPlatformApplication(t *testing.T) {
@@ -575,10 +622,20 @@ func newIncomeDelivererStub() *incomeDelivererStub {
 	}
 }
 
-func (s *incomeDelivererStub) ResetIncomeDeliveryStream(sessionID, _ string) {
+func (s *incomeDelivererStub) ResetIncomeDeliveryAttempt(sessionID, _ string, _ int64, _ string) {
 	s.mu.Lock()
 	s.resets[sessionID]++
 	s.mu.Unlock()
+}
+
+func handleIncomeAck(worker *IncomeDeliveryWorker, connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) {
+	attemptToken, _ := worker.IncomeDeliveryAttempt(connection, sessionID, streamKey, sequence)
+	worker.HandleIncomeAck(connection, sessionID, streamKey, sequence, attemptToken)
+}
+
+func handleIncomeBackpressure(worker *IncomeDeliveryWorker, connection IncomeDeliveryConnection, sessionID, streamKey string, resumeAfter time.Time) {
+	sequence, attemptToken, _ := worker.IncomeBackpressureAttempt(connection, sessionID, streamKey)
+	worker.HandleIncomeBackpressure(connection, sessionID, streamKey, sequence, attemptToken, resumeAfter)
 }
 
 func (s *incomeDelivererStub) resetCount(sessionID string) int {

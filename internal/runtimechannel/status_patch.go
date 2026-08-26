@@ -17,10 +17,11 @@ import (
 
 const statusPatchPersistTimeout = 10 * time.Second
 
-func (s *Service) handleRuntimeStatusPatch(rt AuthenticatedRuntime, frame *cpv1.RuntimeFrame) {
-	if s.platform == nil {
+func (s *Service) handleRuntimeStatusPatch(parent context.Context, stream *runtimeStream, frame *cpv1.RuntimeFrame) {
+	if s == nil || stream == nil || s.platform == nil || !s.registry.IsCurrent(stream) {
 		return
 	}
+	rt := stream.Runtime
 	patch := frame.GetStatusPatch()
 	if patch == nil || strings.TrimSpace(patch.GetSessionId()) == "" {
 		return
@@ -58,8 +59,13 @@ func (s *Service) handleRuntimeStatusPatch(rt AuthenticatedRuntime, frame *cpv1.
 		logger.Warn(context.Background(), "system", fmt.Sprintf("runtime status patch pack failed: runtime_id=%s session_id=%s err=%v", rt.RuntimeID, req.GetSessionId(), err))
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), statusPatchPersistTimeout)
+	connectionCtx, connectionCancel := stream.connectionContext(parent)
+	defer connectionCancel()
+	ctx, cancel := context.WithTimeout(connectionCtx, statusPatchPersistTimeout)
 	defer cancel()
+	if !s.registry.IsCurrent(stream) || ctx.Err() != nil {
+		return
+	}
 	if _, err := s.platform.DispatchRuntimeRequest(ctx, rt, "portfolio.UpdateSession", payload); err != nil {
 		if status.Code(err) == codes.FailedPrecondition {
 			logger.Warn(context.Background(), "system", fmt.Sprintf(

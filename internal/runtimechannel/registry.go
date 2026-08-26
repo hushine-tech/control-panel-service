@@ -17,6 +17,17 @@ import (
 var ErrRuntimeCredentialConnected = errors.New("runtime credential already connected")
 var ErrRegistryClosed = errors.New("runtime channel registry is closed")
 
+const (
+	defaultOutboundQueueCapacity = 64
+	defaultPhysicalSendTimeout   = 5 * time.Second
+)
+
+type outboundPumpConfig struct {
+	queueCapacity int
+	sendTimeout   time.Duration
+	after         func(time.Duration) <-chan time.Time
+}
+
 type runtimeStream struct {
 	Runtime  AuthenticatedRuntime
 	openedAt time.Time
@@ -25,20 +36,44 @@ type runtimeStream struct {
 	lastFrameAt time.Time
 	closed      chan struct{}
 	closeOnce   sync.Once
-	sendMu      sync.Mutex
 	send        func(*cpv1.RuntimeFrame) error
 	inFlight    map[string]chan *cpv1.RuntimeFrame
 	dropped     int64
+
+	outboundMu          sync.Mutex
+	outboundQueue       *PriorityFrameQueue
+	outboundPumping     bool
+	physicalSendTimeout time.Duration
+	after               func(time.Duration) <-chan time.Time
 }
 
 func newRuntimeStream(rt AuthenticatedRuntime, now time.Time) *runtimeStream {
-	return &runtimeStream{
+	stream := &runtimeStream{
 		Runtime:     cloneAuthenticatedRuntime(rt),
 		openedAt:    now,
 		lastFrameAt: now,
 		closed:      make(chan struct{}),
 		inFlight:    map[string]chan *cpv1.RuntimeFrame{},
 	}
+	stream.configureOutbound(outboundPumpConfig{})
+	return stream
+}
+
+func (s *runtimeStream) configureOutbound(cfg outboundPumpConfig) {
+	if cfg.queueCapacity <= 0 {
+		cfg.queueCapacity = defaultOutboundQueueCapacity
+	}
+	if cfg.sendTimeout <= 0 {
+		cfg.sendTimeout = defaultPhysicalSendTimeout
+	}
+	if cfg.after == nil {
+		cfg.after = time.After
+	}
+	s.outboundMu.Lock()
+	s.outboundQueue = NewPriorityFrameQueue(cfg.queueCapacity)
+	s.physicalSendTimeout = cfg.sendTimeout
+	s.after = cfg.after
+	s.outboundMu.Unlock()
 }
 
 func (s *runtimeStream) touch(at time.Time) {
@@ -53,10 +88,28 @@ func (s *runtimeStream) lastFrame() time.Time {
 	return s.lastFrameAt
 }
 
+func (s *runtimeStream) connectionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	go func() {
+		select {
+		case <-s.closed:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
 func (s *runtimeStream) close() {
 	s.closeOnce.Do(func() {
 		close(s.closed)
 		s.failInFlight()
+		s.outboundMu.Lock()
+		queue := s.outboundQueue
+		s.outboundMu.Unlock()
+		if queue != nil {
+			queue.failAll(status.Error(codes.Unavailable, "runtime stream closed"))
+		}
 	})
 }
 
@@ -67,20 +120,118 @@ func (s *runtimeStream) setSender(send func(*cpv1.RuntimeFrame) error) {
 }
 
 func (s *runtimeStream) sendFrame(frame *cpv1.RuntimeFrame) error {
+	done := make(chan error, 1)
+	if err := s.enqueueOutbound(&outboundFrame{frame: frame, done: done}); err != nil {
+		return err
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-s.closed:
+		return status.Error(codes.Unavailable, "runtime stream closed")
+	}
+}
+
+func (s *runtimeStream) enqueueDataFrame(frame *cpv1.RuntimeFrame, onFailed func(error)) error {
+	if runtimeFrameIsControl(frame) {
+		return status.Error(codes.InvalidArgument, "outbound data enqueue requires a data frame")
+	}
+	return s.enqueueOutbound(&outboundFrame{frame: frame, onFailed: onFailed})
+}
+
+func (s *runtimeStream) enqueueOutbound(item *outboundFrame) error {
+	if item == nil || item.frame == nil {
+		return status.Error(codes.InvalidArgument, "outbound runtime frame is required")
+	}
+	select {
+	case <-s.closed:
+		return status.Error(codes.Unavailable, "runtime stream closed")
+	default:
+	}
+	s.mu.Lock()
+	senderReady := s.send != nil
+	s.mu.Unlock()
+	if !senderReady {
+		return status.Error(codes.Unavailable, "runtime stream sender is not ready")
+	}
+	s.outboundMu.Lock()
+	queue := s.outboundQueue
+	s.outboundMu.Unlock()
+	if queue == nil {
+		return status.Error(codes.Unavailable, "runtime stream outbound queue is not ready")
+	}
+	if err := queue.enqueue(item); err != nil {
+		return err
+	}
+	s.startOutboundPump()
+	return nil
+}
+
+func (s *runtimeStream) startOutboundPump() {
+	s.outboundMu.Lock()
+	if s.outboundPumping {
+		s.outboundMu.Unlock()
+		return
+	}
+	s.outboundPumping = true
+	s.outboundMu.Unlock()
+	go s.runOutboundPump()
+}
+
+func (s *runtimeStream) runOutboundPump() {
+	for {
+		s.outboundMu.Lock()
+		queue := s.outboundQueue
+		s.outboundMu.Unlock()
+		item, ok := queue.dequeue()
+		if !ok {
+			s.outboundMu.Lock()
+			item, ok = s.outboundQueue.dequeue()
+			if !ok {
+				s.outboundPumping = false
+				s.outboundMu.Unlock()
+				return
+			}
+			s.outboundMu.Unlock()
+		}
+		select {
+		case <-s.closed:
+			completeOutboundFrame(item, status.Error(codes.Unavailable, "runtime stream closed"))
+			return
+		default:
+		}
+		err := s.sendPhysicalFrame(item.frame)
+		completeOutboundFrame(item, err)
+		if err != nil {
+			s.close()
+			return
+		}
+	}
+}
+
+func (s *runtimeStream) sendPhysicalFrame(frame *cpv1.RuntimeFrame) error {
 	s.mu.Lock()
 	send := s.send
 	s.mu.Unlock()
 	if send == nil {
 		return status.Error(codes.Unavailable, "runtime stream sender is not ready")
 	}
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
+	result := make(chan error, 1)
+	go func() {
+		result <- send(frame)
+	}()
+	s.outboundMu.Lock()
+	timeout := s.physicalSendTimeout
+	after := s.after
+	s.outboundMu.Unlock()
 	select {
+	case err := <-result:
+		return err
 	case <-s.closed:
 		return status.Error(codes.Unavailable, "runtime stream closed")
-	default:
+	case <-after(timeout):
+		return status.Error(codes.DeadlineExceeded, "runtime stream physical send deadline exceeded")
 	}
-	return send(frame)
 }
 
 func (s *runtimeStream) registerCall(correlationID string) chan *cpv1.RuntimeFrame {
@@ -329,6 +480,30 @@ func (r *Registry) FindByRuntimeID(userID int64, runtimeID string) *runtimeStrea
 		return nil
 	}
 	return stream
+}
+
+func (r *Registry) IsCurrent(stream *runtimeStream) bool {
+	if stream == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.streamsByRuntime[stream.Runtime.RuntimeID] == stream
+}
+
+func (r *Registry) withCurrent(stream *runtimeStream, action func()) bool {
+	if stream == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.streamsByRuntime[stream.Runtime.RuntimeID] != stream {
+		return false
+	}
+	if action != nil {
+		action()
+	}
+	return true
 }
 
 func (r *Registry) removeLocked(s *runtimeStream) {

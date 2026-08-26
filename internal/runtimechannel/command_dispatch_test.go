@@ -69,8 +69,12 @@ func TestRuntimeCommandAckAndResultFramesPersistState(t *testing.T) {
 	repo, _, now := newAuthFixture(t, domain.CredentialStatusActive)
 	svc := NewWithInstanceID(repo, "cp-owner")
 	svc.SetClock(func() time.Time { return now })
+	stream, err := svc.registry.Register(AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"}, now)
+	if err != nil {
+		t.Fatalf("register runtime: %v", err)
+	}
 
-	if err := svc.handleRuntimeCommandFrame(context.Background(), &cpv1.RuntimeFrame{
+	if err := svc.handleRuntimeCommandFrame(context.Background(), stream, &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_COMMAND_ACK,
 		Payload: &cpv1.RuntimeFrame_CommandAck{CommandAck: &cpv1.RuntimeCommandAck{
 			CommandId: "cmd-ack",
@@ -83,7 +87,7 @@ func TestRuntimeCommandAckAndResultFramesPersistState(t *testing.T) {
 		t.Fatalf("acked command id = %q, want cmd-ack", repo.ackedCommandID)
 	}
 
-	if err := svc.handleRuntimeCommandFrame(context.Background(), &cpv1.RuntimeFrame{
+	if err := svc.handleRuntimeCommandFrame(context.Background(), stream, &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_COMMAND_RESULT,
 		Payload: &cpv1.RuntimeFrame_CommandResult{CommandResult: &cpv1.RuntimeCommandResult{
 			CommandId:     "cmd-result",
@@ -97,6 +101,49 @@ func TestRuntimeCommandAckAndResultFramesPersistState(t *testing.T) {
 		repo.completedStatus != domain.RuntimeCommandStatusFailed ||
 		repo.completedFailure != "worker exited" {
 		t.Fatalf("completed = id:%q status:%q failure:%q", repo.completedCommandID, repo.completedStatus, repo.completedFailure)
+	}
+}
+
+func TestReplacedRuntimeConnectionCannotPersistCommandOrHeartbeatMutation(t *testing.T) {
+	repo, _, now := newAuthFixture(t, domain.CredentialStatusActive)
+	svc := NewWithInstanceID(repo, "cp-owner")
+	old, err := svc.registry.Register(AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"}, now)
+	if err != nil {
+		t.Fatalf("register old runtime: %v", err)
+	}
+	current, err := svc.registry.Register(AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"}, now)
+	if err != nil {
+		t.Fatalf("register replacement runtime: %v", err)
+	}
+	ack := &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_COMMAND_ACK,
+		Payload: &cpv1.RuntimeFrame_CommandAck{CommandAck: &cpv1.RuntimeCommandAck{
+			CommandId: "cmd-stale", Status: domain.RuntimeCommandStatusAcked,
+		}},
+	}
+
+	if err := svc.handleRuntimeCommandFrame(context.Background(), old, ack); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("stale command ACK error = %v, want PermissionDenied", err)
+	}
+	if repo.ackedCommandID != "" {
+		t.Fatalf("stale connection persisted command ACK %q", repo.ackedCommandID)
+	}
+	if err := svc.recordCurrentRuntimeActivity(context.Background(), old, now); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("stale heartbeat activity error = %v, want PermissionDenied", err)
+	}
+	if repo.heartbeatUpdates != 0 || repo.ownerInstance != "" {
+		t.Fatalf("stale heartbeat mutations = heartbeat:%d owner:%q, want none", repo.heartbeatUpdates, repo.ownerInstance)
+	}
+
+	ack.GetCommandAck().CommandId = "cmd-current"
+	if err := svc.handleRuntimeCommandFrame(context.Background(), current, ack); err != nil {
+		t.Fatalf("current command ACK: %v", err)
+	}
+	if err := svc.recordCurrentRuntimeActivity(context.Background(), current, now); err != nil {
+		t.Fatalf("current heartbeat activity: %v", err)
+	}
+	if repo.ackedCommandID != "cmd-current" || repo.heartbeatUpdates != 1 || repo.ownerInstance != "cp-owner" {
+		t.Fatalf("current mutations = command:%q heartbeat:%d owner:%q", repo.ackedCommandID, repo.heartbeatUpdates, repo.ownerInstance)
 	}
 }
 

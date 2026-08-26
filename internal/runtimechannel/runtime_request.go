@@ -19,6 +19,9 @@ type PlatformDispatcher interface {
 
 func (s *Service) handleRuntimeRequest(parent context.Context, stream *runtimeStream, frame *cpv1.RuntimeFrame) {
 	req := frame.GetRequest()
+	if s == nil || stream == nil || req == nil || !s.registry.IsCurrent(stream) {
+		return
+	}
 	if s.platform == nil {
 		_ = stream.sendFrame(runtimeRequestErrorFrame(
 			frame.GetCorrelationId(),
@@ -27,14 +30,18 @@ func (s *Service) handleRuntimeRequest(parent context.Context, stream *runtimeSt
 		return
 	}
 
-	ctx := parent
+	ctx, connectionCancel := stream.connectionContext(parent)
+	defer connectionCancel()
 	cancel := func() {}
 	if deadlineMS := frame.GetDeadlineUnixMs(); deadlineMS > 0 {
 		deadline := time.UnixMilli(deadlineMS)
-		ctx, cancel = context.WithDeadline(parent, deadline)
+		ctx, cancel = context.WithDeadline(ctx, deadline)
 	}
 	defer cancel()
 	ctx = extractTraceContext(ctx, req.GetTraceContext())
+	if !s.registry.IsCurrent(stream) || ctx.Err() != nil {
+		return
+	}
 
 	resp, err := s.platform.DispatchRuntimeRequest(ctx, stream.Runtime, req.GetMethod(), req.GetRequest())
 	if err != nil {

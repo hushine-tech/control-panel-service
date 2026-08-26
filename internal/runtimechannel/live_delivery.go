@@ -61,6 +61,7 @@ type IncomeDeliveryBatch struct {
 	UserID       int64
 	RuntimeID    string
 	ConnectionID string
+	AttemptToken string
 	SessionID    string
 	StreamKey    string
 	Sequence     int64
@@ -78,10 +79,10 @@ type IncomeDeliveryConnection struct {
 }
 
 type IncomeDeliveryObserver interface {
-	OwnsIncomeDelivery(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) bool
-	OwnsIncomeStream(connection IncomeDeliveryConnection, sessionID, streamKey string) bool
-	HandleIncomeAck(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64)
-	HandleIncomeBackpressure(connection IncomeDeliveryConnection, sessionID, streamKey string, resumeAfter time.Time)
+	IncomeDeliveryAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) (string, bool)
+	IncomeBackpressureAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string) (int64, string, bool)
+	HandleIncomeAck(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64, attemptToken string)
+	HandleIncomeBackpressure(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64, attemptToken string, resumeAfter time.Time)
 }
 
 func (s *Service) SetIncomeDeliveryObserver(observer IncomeDeliveryObserver) {
@@ -90,9 +91,9 @@ func (s *Service) SetIncomeDeliveryObserver(observer IncomeDeliveryObserver) {
 	}
 }
 
-func (s *Service) ResetIncomeDeliveryStream(sessionID, streamKey string) {
-	if s != nil && s.incomeDataWindow != nil && streamKey == incomeStreamKey(sessionID) {
-		s.incomeDataWindow.ForgetStream(sessionID, streamKey)
+func (s *Service) ResetIncomeDeliveryAttempt(sessionID, streamKey string, sequence int64, attemptToken string) {
+	if s != nil && s.incomeDataWindow != nil && streamKey == incomeStreamKey(sessionID) && sequence > 0 && attemptToken != "" {
+		s.incomeDataWindow.ForgetAttempt(sessionID, streamKey, sequence, attemptToken)
 	}
 }
 
@@ -190,8 +191,8 @@ func (s *Service) DeliverIncomeBatch(ctx context.Context, batch IncomeDeliveryBa
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if batch.UserID <= 0 || batch.RuntimeID == "" || batch.ConnectionID == "" || batch.SessionID == "" {
-		return status.Error(codes.InvalidArgument, "user_id, runtime_id, connection_id, and session_id are required")
+	if batch.UserID <= 0 || batch.RuntimeID == "" || batch.ConnectionID == "" || batch.AttemptToken == "" || batch.SessionID == "" {
+		return status.Error(codes.InvalidArgument, "user_id, runtime_id, connection_id, attempt_token, and session_id are required")
 	}
 	canonicalStreamKey := incomeStreamKey(batch.SessionID)
 	if batch.StreamKey != canonicalStreamKey {
@@ -225,15 +226,9 @@ func (s *Service) DeliverIncomeBatch(ctx context.Context, batch IncomeDeliveryBa
 	if incomeDeliveryConnection(stream.Runtime).ConnectionID != batch.ConnectionID {
 		return status.Error(codes.Unavailable, "Income delivery route belongs to a stale runtime connection")
 	}
-	if _, err := s.incomeDataWindow.Track(batch.SessionID, batch.StreamKey, batch.Sequence, nil, s.now().UTC()); err != nil {
+	if _, err := s.incomeDataWindow.TrackAttempt(batch.SessionID, batch.StreamKey, batch.Sequence, batch.AttemptToken, nil, s.now().UTC()); err != nil {
 		return err
 	}
-	cancelTracked := true
-	defer func() {
-		if cancelTracked {
-			s.incomeDataWindow.Cancel(batch.SessionID, batch.StreamKey, batch.Sequence)
-		}
-	}()
 	frame := &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_INCOME_BATCH,
 		Payload: &cpv1.RuntimeFrame_IncomeBatch{IncomeBatch: &cpv1.RuntimeIncomeBatch{
@@ -243,10 +238,12 @@ func (s *Service) DeliverIncomeBatch(ctx context.Context, batch IncomeDeliveryBa
 			Entries:   batch.Entries,
 		}},
 	}
-	if err := stream.sendFrame(frame); err != nil {
+	if err := stream.enqueueDataFrame(frame, func(error) {
+		s.incomeDataWindow.CancelAttempt(batch.SessionID, batch.StreamKey, batch.Sequence, batch.AttemptToken)
+	}); err != nil {
+		s.incomeDataWindow.CancelAttempt(batch.SessionID, batch.StreamKey, batch.Sequence, batch.AttemptToken)
 		return err
 	}
-	cancelTracked = false
 	return nil
 }
 
@@ -301,28 +298,35 @@ func (s *Service) DeliverDatasetChunk(ctx context.Context, chunk DatasetChunkDel
 	return stream.sendFrame(frame)
 }
 
-func (s *Service) handleRuntimeDataAck(rt AuthenticatedRuntime, frame *cpv1.RuntimeFrame) {
+func (s *Service) handleRuntimeDataAck(stream *runtimeStream, frame *cpv1.RuntimeFrame) {
+	if s == nil || frame == nil || s.dataWindow == nil {
+		return
+	}
 	ack := frame.GetDataAck()
-	if ack == nil || s == nil || s.dataWindow == nil {
+	if ack == nil {
 		return
 	}
-	connection := incomeDeliveryConnection(rt)
-	if ack.GetStreamKey() == incomeStreamKey(ack.GetSessionId()) {
-		if s.incomeDeliveryObserver == nil || !s.incomeDeliveryObserver.OwnsIncomeDelivery(
-			connection,
-			ack.GetSessionId(),
-			ack.GetStreamKey(),
-			ack.GetSequence(),
-		) {
+	s.registry.withCurrent(stream, func() {
+		connection := incomeDeliveryConnection(stream.Runtime)
+		if ack.GetStreamKey() == incomeStreamKey(ack.GetSessionId()) {
+			if s.incomeDeliveryObserver == nil {
+				return
+			}
+			attemptToken, ok := s.incomeDeliveryObserver.IncomeDeliveryAttempt(
+				connection,
+				ack.GetSessionId(),
+				ack.GetStreamKey(),
+				ack.GetSequence(),
+			)
+			if !ok || attemptToken == "" {
+				return
+			}
+			if s.incomeDataWindow == nil || !s.incomeDataWindow.AckAttempt(ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence(), attemptToken) {
+				return
+			}
+			s.incomeDeliveryObserver.HandleIncomeAck(connection, ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence(), attemptToken)
 			return
 		}
-		if s.incomeDataWindow == nil || !s.incomeDataWindow.Ack(ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence()) {
-			return
-		}
-		s.incomeDeliveryObserver.HandleIncomeAck(connection, ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence())
-		return
-	}
-	if !s.dataWindow.Ack(ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence()) {
-		return
-	}
+		s.dataWindow.Ack(ack.GetSessionId(), ack.GetStreamKey(), ack.GetSequence())
+	})
 }

@@ -186,6 +186,8 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 	}
 	defer s.releaseRuntimeStream(rt.RuntimeID, rs)
 	rt = cloneAuthenticatedRuntime(rs.Runtime)
+	connectionCtx, connectionCancel := rs.connectionContext(stream.Context())
+	defer connectionCancel()
 	rs.setSender(stream.Send)
 	if err := rs.sendFrame(&cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO_ACK,
@@ -227,23 +229,28 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 				}
 				return status.Errorf(codes.Unavailable, "runtime channel receive failed: %v", res.err)
 			}
+			if !s.registry.IsCurrent(rs) {
+				return status.Error(codes.PermissionDenied, "runtime channel connection was replaced")
+			}
 			now := s.now().UTC()
 			if err := validatePostHelloFrame(res.frame); err != nil {
 				return err
 			}
 			if res.frame.GetFrameType() == cpv1.FrameType_FRAME_TYPE_HEARTBEAT {
-				nextFingerprint, nextExpiresAt, err := s.refreshRuntimeFingerprint(stream.Context(), rt.RuntimeID, res.frame.GetHeartbeat().GetFingerprint())
+				if err := s.currentRuntimeConnectionError(connectionCtx, rs); err != nil {
+					return err
+				}
+				nextFingerprint, nextExpiresAt, err := s.refreshRuntimeFingerprint(connectionCtx, rt.RuntimeID, res.frame.GetHeartbeat().GetFingerprint())
 				if err != nil {
 					return err
 				}
 				rs.touch(now)
-				if err := s.recordHeartbeat(stream.Context(), rt.RuntimeID, now); err != nil {
+				if err := s.recordCurrentRuntimeActivity(connectionCtx, rs, now); err != nil {
 					if errors.Is(err, ErrRuntimeAlreadyEnded) {
 						return status.Error(codes.FailedPrecondition, "runtime already ended")
 					}
 					return status.Errorf(codes.Unavailable, "record runtime heartbeat: %v", err)
 				}
-				_ = s.recordConnectionOwner(stream.Context(), rt.RuntimeID, now)
 				if err := rs.sendFrame(&cpv1.RuntimeFrame{
 					FrameType: cpv1.FrameType_FRAME_TYPE_HEARTBEAT_ACK,
 					Payload: &cpv1.RuntimeFrame_HeartbeatAck{
@@ -259,38 +266,37 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 				continue
 			}
 			rs.touch(now)
-			if err := s.recordHeartbeat(stream.Context(), rt.RuntimeID, now); err != nil {
+			if err := s.recordCurrentRuntimeActivity(connectionCtx, rs, now); err != nil {
 				if errors.Is(err, ErrRuntimeAlreadyEnded) {
 					return status.Error(codes.FailedPrecondition, "runtime already ended")
 				}
 				return status.Errorf(codes.Unavailable, "record runtime heartbeat: %v", err)
 			}
-			_ = s.recordConnectionOwner(stream.Context(), rt.RuntimeID, now)
 			switch res.frame.GetFrameType() {
 			case cpv1.FrameType_FRAME_TYPE_RESPONSE,
 				cpv1.FrameType_FRAME_TYPE_PROGRESS,
 				cpv1.FrameType_FRAME_TYPE_ERROR:
 				_ = rs.deliver(res.frame)
 			case cpv1.FrameType_FRAME_TYPE_REQUEST:
-				go s.handleRuntimeRequest(stream.Context(), rs, res.frame)
+				go s.handleRuntimeRequest(connectionCtx, rs, res.frame)
 			case cpv1.FrameType_FRAME_TYPE_COMMAND_ACK,
 				cpv1.FrameType_FRAME_TYPE_COMMAND_RESULT:
 				if rs.deliver(res.frame) {
 					continue
 				}
-				if err := s.handleRuntimeCommandFrame(stream.Context(), res.frame); err != nil {
+				if err := s.handleRuntimeCommandFrame(connectionCtx, rs, res.frame); err != nil {
 					return err
 				}
 			case cpv1.FrameType_FRAME_TYPE_STATUS_PATCH:
-				go s.handleRuntimeStatusPatch(rt, res.frame)
+				go s.handleRuntimeStatusPatch(connectionCtx, rs, res.frame)
 			case cpv1.FrameType_FRAME_TYPE_DATA_END:
 				// Accepted protocol frames. Section 6/7 wire these into
 				// worker-health and stream-delivery state; for section 5 the
 				// important guardrail is that they do not poison the stream.
 			case cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE:
-				s.handleRuntimeDataBackpressure(stream.Context(), rt, res.frame)
+				s.handleRuntimeDataBackpressure(connectionCtx, rs, res.frame)
 			case cpv1.FrameType_FRAME_TYPE_DATA_ACK:
-				s.handleRuntimeDataAck(rt, res.frame)
+				s.handleRuntimeDataAck(rs, res.frame)
 			}
 		case <-ticker.C:
 			if s.now().UTC().Sub(rs.lastFrame()) > s.streamIdleTimeout {
@@ -298,6 +304,29 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 			}
 		}
 	}
+}
+
+func (s *Service) currentRuntimeConnectionError(ctx context.Context, stream *runtimeStream) error {
+	if s == nil || s.registry == nil || !s.registry.IsCurrent(stream) {
+		return status.Error(codes.PermissionDenied, "runtime channel connection was replaced")
+	}
+	if err := ctx.Err(); err != nil {
+		return status.FromContextError(err).Err()
+	}
+	return nil
+}
+
+func (s *Service) recordCurrentRuntimeActivity(ctx context.Context, stream *runtimeStream, at time.Time) error {
+	if err := s.currentRuntimeConnectionError(ctx, stream); err != nil {
+		return err
+	}
+	if err := s.recordHeartbeat(ctx, stream.Runtime.RuntimeID, at); err != nil {
+		return err
+	}
+	if err := s.currentRuntimeConnectionError(ctx, stream); err != nil {
+		return err
+	}
+	return s.recordConnectionOwner(ctx, stream.Runtime.RuntimeID, at)
 }
 
 func (s *Service) authenticateFirstFrame(ctx context.Context, first *cpv1.RuntimeFrame, peerID runtimecert.RuntimeIdentity, hasPeerID bool) (AuthenticatedRuntime, string, time.Time, error) {

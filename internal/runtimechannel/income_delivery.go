@@ -20,6 +20,7 @@ const (
 	defaultIncomeDeliveryPageSize     = int32(100)
 	maxIncomeDeliveryPageSize         = int32(500)
 	incomeSessionListPageSize         = int32(200)
+	maxIncomeBackpressureDelay        = 5 * time.Second
 )
 
 type IncomeDeliverySession struct {
@@ -40,7 +41,7 @@ type IncomeDeliveryClient interface {
 }
 
 type IncomeDeliveryStreamResetter interface {
-	ResetIncomeDeliveryStream(sessionID, streamKey string)
+	ResetIncomeDeliveryAttempt(sessionID, streamKey string, sequence int64, attemptToken string)
 }
 
 type IncomeDeliveryConfig struct {
@@ -55,8 +56,9 @@ type IncomeDeliveryWorker struct {
 	deliverer IncomeBatchDeliverer
 	cfg       IncomeDeliveryConfig
 
-	mu     sync.Mutex
-	states map[string]*incomeDeliveryState
+	mu          sync.Mutex
+	states      map[string]*incomeDeliveryState
+	nextAttempt uint64
 }
 
 type incomeDeliveryState struct {
@@ -66,6 +68,7 @@ type incomeDeliveryState struct {
 	delivering        bool
 	inflightSequence  int64
 	inflightCursor    int64
+	inflightAttempt   string
 	backpressureUntil time.Time
 	cancel            context.CancelFunc
 }
@@ -160,6 +163,8 @@ func (w *IncomeDeliveryWorker) SyncOnce(ctx context.Context) error {
 func (w *IncomeDeliveryWorker) startSessionSync(ctx context.Context, route IncomeDeliverySession) {
 	w.mu.Lock()
 	var resetter IncomeDeliveryStreamResetter
+	var resetSequence int64
+	var resetAttempt string
 	state := w.states[route.SessionID]
 	if state == nil {
 		state = &incomeDeliveryState{
@@ -172,12 +177,15 @@ func (w *IncomeDeliveryWorker) startSessionSync(ctx context.Context, route Incom
 		if state.cancel != nil {
 			state.cancel()
 		}
+		resetSequence = state.inflightSequence
+		resetAttempt = state.inflightAttempt
 		state.route = route
 		state.generation++
 		state.cursor = initialIncomeCursor(route.WorkerCursor)
 		state.delivering = false
 		state.inflightSequence = 0
 		state.inflightCursor = 0
+		state.inflightAttempt = ""
 		state.backpressureUntil = time.Time{}
 		state.cancel = nil
 		resetter, _ = w.deliverer.(IncomeDeliveryStreamResetter)
@@ -195,8 +203,8 @@ func (w *IncomeDeliveryWorker) startSessionSync(ctx context.Context, route Incom
 	cursor := state.cursor
 	w.mu.Unlock()
 
-	if resetter != nil {
-		resetter.ResetIncomeDeliveryStream(route.SessionID, incomeStreamKey(route.SessionID))
+	if resetter != nil && resetSequence > 0 && resetAttempt != "" {
+		resetter.ResetIncomeDeliveryAttempt(route.SessionID, incomeStreamKey(route.SessionID), resetSequence, resetAttempt)
 	}
 	go w.syncSession(deliveryCtx, route, generation, cursor)
 }
@@ -209,16 +217,16 @@ func (w *IncomeDeliveryWorker) syncSession(ctx context.Context, route IncomeDeli
 		UserId:             route.UserID,
 	})
 	if err != nil {
-		w.finishSessionSync(route.SessionID, generation, 0, err)
+		w.finishSessionSync(route.SessionID, generation, 0, "", err)
 		return
 	}
 	entries, sequence, err := deliverableIncomePage(route.SessionID, cursor, resp.GetEntries())
 	if err != nil {
-		w.finishSessionSync(route.SessionID, generation, 0, err)
+		w.finishSessionSync(route.SessionID, generation, 0, "", err)
 		return
 	}
 	if len(entries) == 0 {
-		w.finishSessionSync(route.SessionID, generation, 0, nil)
+		w.finishSessionSync(route.SessionID, generation, 0, "", nil)
 		return
 	}
 
@@ -228,23 +236,27 @@ func (w *IncomeDeliveryWorker) syncSession(ctx context.Context, route IncomeDeli
 		w.mu.Unlock()
 		return
 	}
+	w.nextAttempt++
+	attemptToken := fmt.Sprintf("%s/%d/%d", route.ConnectionID, generation, w.nextAttempt)
 	state.inflightSequence = sequence
 	state.inflightCursor = sequence
+	state.inflightAttempt = attemptToken
 	w.mu.Unlock()
 
 	err = w.deliverer.DeliverIncomeBatch(ctx, IncomeDeliveryBatch{
 		UserID:       route.UserID,
 		RuntimeID:    route.RuntimeID,
 		ConnectionID: route.ConnectionID,
+		AttemptToken: attemptToken,
 		SessionID:    route.SessionID,
 		StreamKey:    incomeStreamKey(route.SessionID),
 		Sequence:     sequence,
 		Entries:      entries,
 	})
-	w.finishSessionSync(route.SessionID, generation, sequence, err)
+	w.finishSessionSync(route.SessionID, generation, sequence, attemptToken, err)
 }
 
-func (w *IncomeDeliveryWorker) finishSessionSync(sessionID string, generation uint64, sequence int64, err error) {
+func (w *IncomeDeliveryWorker) finishSessionSync(sessionID string, generation uint64, sequence int64, attemptToken string, err error) {
 	w.mu.Lock()
 	state := w.states[sessionID]
 	if state == nil || state.generation != generation {
@@ -256,9 +268,10 @@ func (w *IncomeDeliveryWorker) finishSessionSync(sessionID string, generation ui
 		state.cancel = nil
 	}
 	state.delivering = false
-	if err != nil && sequence != 0 && state.inflightSequence == sequence {
+	if err != nil && sequence != 0 && state.inflightSequence == sequence && state.inflightAttempt == attemptToken {
 		state.inflightSequence = 0
 		state.inflightCursor = 0
+		state.inflightAttempt = ""
 	}
 	w.mu.Unlock()
 	if err != nil && ctxErrorCode(err) == "" {
@@ -266,58 +279,80 @@ func (w *IncomeDeliveryWorker) finishSessionSync(sessionID string, generation ui
 	}
 }
 
-func (w *IncomeDeliveryWorker) OwnsIncomeDelivery(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) bool {
+func (w *IncomeDeliveryWorker) IncomeDeliveryAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) (string, bool) {
 	if w == nil || streamKey != incomeStreamKey(sessionID) || sequence <= 0 {
-		return false
+		return "", false
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	state := w.states[sessionID]
-	return incomeConnectionOwnsState(connection, state) && state.inflightSequence == sequence && state.inflightCursor == sequence
+	if !incomeConnectionOwnsState(connection, state) || state.inflightSequence != sequence || state.inflightCursor != sequence || state.inflightAttempt == "" {
+		return "", false
+	}
+	return state.inflightAttempt, true
 }
 
-func (w *IncomeDeliveryWorker) OwnsIncomeStream(connection IncomeDeliveryConnection, sessionID, streamKey string) bool {
+func (w *IncomeDeliveryWorker) IncomeBackpressureAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string) (int64, string, bool) {
 	if w == nil || streamKey != incomeStreamKey(sessionID) {
-		return false
+		return 0, "", false
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return incomeConnectionOwnsState(connection, w.states[sessionID])
+	state := w.states[sessionID]
+	if !incomeConnectionOwnsState(connection, state) || state.inflightSequence <= 0 || state.inflightAttempt == "" {
+		return 0, "", false
+	}
+	return state.inflightSequence, state.inflightAttempt, true
 }
 
-func (w *IncomeDeliveryWorker) HandleIncomeAck(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) {
-	if w == nil || streamKey != incomeStreamKey(sessionID) || sequence <= 0 {
+func (w *IncomeDeliveryWorker) HandleIncomeAck(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64, attemptToken string) {
+	if w == nil || streamKey != incomeStreamKey(sessionID) || sequence <= 0 || attemptToken == "" {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	state := w.states[sessionID]
-	if !incomeConnectionOwnsState(connection, state) || state.inflightSequence != sequence || state.inflightCursor != sequence {
+	if !incomeConnectionOwnsState(connection, state) || state.inflightSequence != sequence || state.inflightCursor != sequence || state.inflightAttempt != attemptToken {
 		return
 	}
 	state.cursor = sequence
 	state.inflightSequence = 0
 	state.inflightCursor = 0
+	state.inflightAttempt = ""
 }
 
-func (w *IncomeDeliveryWorker) HandleIncomeBackpressure(connection IncomeDeliveryConnection, sessionID, streamKey string, resumeAfter time.Time) {
-	if w == nil || streamKey != incomeStreamKey(sessionID) {
+func (w *IncomeDeliveryWorker) HandleIncomeBackpressure(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64, attemptToken string, resumeAfter time.Time) {
+	if w == nil || streamKey != incomeStreamKey(sessionID) || sequence <= 0 || attemptToken == "" {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	state := w.states[sessionID]
-	if !incomeConnectionOwnsState(connection, state) {
+	if !incomeConnectionOwnsState(connection, state) || state.inflightSequence != sequence || state.inflightAttempt != attemptToken {
 		return
 	}
-	state.backpressureUntil = resumeAfter.UTC()
+	now := w.cfg.Now().UTC()
+	resumeAfter = resumeAfter.UTC()
+	if resumeAfter.Before(now) {
+		resumeAfter = now
+	}
+	if maximum := now.Add(maxIncomeBackpressureDelay); resumeAfter.After(maximum) {
+		resumeAfter = maximum
+	}
+	state.backpressureUntil = resumeAfter
 	state.inflightSequence = 0
 	state.inflightCursor = 0
+	state.inflightAttempt = ""
 }
 
 func (w *IncomeDeliveryWorker) removeAbsentSessions(seen map[string]struct{}) {
 	w.mu.Lock()
-	var removed []string
+	type removedAttempt struct {
+		sessionID string
+		sequence  int64
+		token     string
+	}
+	var removed []removedAttempt
 	for sessionID, state := range w.states {
 		if _, ok := seen[sessionID]; ok {
 			continue
@@ -326,12 +361,14 @@ func (w *IncomeDeliveryWorker) removeAbsentSessions(seen map[string]struct{}) {
 			state.cancel()
 		}
 		delete(w.states, sessionID)
-		removed = append(removed, sessionID)
+		if state.inflightSequence > 0 && state.inflightAttempt != "" {
+			removed = append(removed, removedAttempt{sessionID: sessionID, sequence: state.inflightSequence, token: state.inflightAttempt})
+		}
 	}
 	w.mu.Unlock()
 	if resetter, ok := w.deliverer.(IncomeDeliveryStreamResetter); ok {
-		for _, sessionID := range removed {
-			resetter.ResetIncomeDeliveryStream(sessionID, incomeStreamKey(sessionID))
+		for _, attempt := range removed {
+			resetter.ResetIncomeDeliveryAttempt(attempt.sessionID, incomeStreamKey(attempt.sessionID), attempt.sequence, attempt.token)
 		}
 	}
 }

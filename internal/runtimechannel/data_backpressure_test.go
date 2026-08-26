@@ -12,12 +12,13 @@ import (
 func TestRuntimeChannelDataBackpressurePublishesSlowConsumerNotification(t *testing.T) {
 	pub := &captureBackpressurePublisher{}
 	svc := NewWithConfig(nil, Config{NotificationPublisher: pub})
-
-	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+	stream := registerRuntimeStreamForTest(t, svc, AuthenticatedRuntime{
 		UserID:    42,
 		RuntimeID: "rt-1",
 		Name:      "debug-runtime",
-	}, &cpv1.RuntimeFrame{
+	})
+
+	svc.handleRuntimeDataBackpressure(context.Background(), stream, &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE,
 		Payload: &cpv1.RuntimeFrame_DataBackpressure{
 			DataBackpressure: &cpv1.RuntimeDataBackpressure{
@@ -49,8 +50,12 @@ func TestRuntimeChannelIncomeBackpressureRequiresOwningConnection(t *testing.T) 
 	owner := AuthenticatedRuntime{
 		UserID: 42, RuntimeID: "rt-owner", AuthenticatedAt: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC),
 	}
-	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(owner)}
+	ownerStream := registerRuntimeStreamForTest(t, svc, owner)
+	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(ownerStream.Runtime), attemptToken: "attempt-owner", sequence: 11}
 	svc.SetIncomeDeliveryObserver(observer)
+	if _, err := svc.incomeDataWindow.TrackAttempt("sess-1", "income/sess-1", 11, observer.attemptToken, nil, owner.AuthenticatedAt); err != nil {
+		t.Fatalf("track owner Income attempt: %v", err)
+	}
 	frame := &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE,
 		Payload: &cpv1.RuntimeFrame_DataBackpressure{DataBackpressure: &cpv1.RuntimeDataBackpressure{
@@ -58,24 +63,31 @@ func TestRuntimeChannelIncomeBackpressureRequiresOwningConnection(t *testing.T) 
 		}},
 	}
 
-	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+	foreign := registerRuntimeStreamForTest(t, svc, AuthenticatedRuntime{
 		UserID: 42, RuntimeID: "rt-foreign", AuthenticatedAt: owner.AuthenticatedAt,
-	}, frame)
+	})
+	svc.handleRuntimeDataBackpressure(context.Background(), foreign, frame)
 	if observer.backpressureCount != 0 || len(pub.events) != 0 {
 		t.Fatalf("foreign backpressure observer/events = %d/%d, want 0/0", observer.backpressureCount, len(pub.events))
 	}
 
-	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+	unregistered := newRuntimeStream(AuthenticatedRuntime{
 		UserID: 7, RuntimeID: owner.RuntimeID, AuthenticatedAt: owner.AuthenticatedAt,
-	}, frame)
-	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
-		UserID: owner.UserID, RuntimeID: owner.RuntimeID, AuthenticatedAt: owner.AuthenticatedAt.Add(-time.Second),
-	}, frame)
+	}, owner.AuthenticatedAt)
+	svc.handleRuntimeDataBackpressure(context.Background(), unregistered, frame)
+	replacement := registerRuntimeStreamForTest(t, svc, owner)
+	svc.handleRuntimeDataBackpressure(context.Background(), ownerStream, frame)
 	if observer.backpressureCount != 0 || len(pub.events) != 0 {
 		t.Fatalf("foreign-user/stale-connection backpressure observer/events = %d/%d, want 0/0", observer.backpressureCount, len(pub.events))
 	}
 
-	svc.handleRuntimeDataBackpressure(context.Background(), owner, frame)
+	observer.owner = incomeDeliveryConnection(replacement.Runtime)
+	observer.attemptToken = "attempt-replacement"
+	svc.incomeDataWindow.ForgetAttempt("sess-1", "income/sess-1", 11, "attempt-owner")
+	if _, err := svc.incomeDataWindow.TrackAttempt("sess-1", "income/sess-1", 11, observer.attemptToken, nil, owner.AuthenticatedAt); err != nil {
+		t.Fatalf("track replacement Income attempt: %v", err)
+	}
+	svc.handleRuntimeDataBackpressure(context.Background(), replacement, frame)
 	if observer.backpressureCount != 1 || len(pub.events) != 1 {
 		t.Fatalf("owner backpressure observer/events = %d/%d, want 1/1", observer.backpressureCount, len(pub.events))
 	}
@@ -84,12 +96,13 @@ func TestRuntimeChannelIncomeBackpressureRequiresOwningConnection(t *testing.T) 
 func TestRuntimeChannelDataBackpressurePublishesDroppedNotification(t *testing.T) {
 	pub := &captureBackpressurePublisher{}
 	svc := NewWithConfig(nil, Config{NotificationPublisher: pub})
-
-	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+	stream := registerRuntimeStreamForTest(t, svc, AuthenticatedRuntime{
 		UserID:    42,
 		RuntimeID: "rt-1",
 		Name:      "debug-runtime",
-	}, &cpv1.RuntimeFrame{
+	})
+
+	svc.handleRuntimeDataBackpressure(context.Background(), stream, &cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE,
 		Payload: &cpv1.RuntimeFrame_DataBackpressure{
 			DataBackpressure: &cpv1.RuntimeDataBackpressure{
@@ -110,6 +123,15 @@ func TestRuntimeChannelDataBackpressurePublishesDroppedNotification(t *testing.T
 	if event.Metadata["reason"] != "data_dropped: kind=order_update queue_depth=2048 dropped=1" {
 		t.Fatalf("reason metadata = %q", event.Metadata["reason"])
 	}
+}
+
+func registerRuntimeStreamForTest(t *testing.T, svc *Service, runtime AuthenticatedRuntime) *runtimeStream {
+	t.Helper()
+	stream, err := svc.registry.Register(runtime, runtime.AuthenticatedAt)
+	if err != nil {
+		t.Fatalf("register runtime %s: %v", runtime.RuntimeID, err)
+	}
+	return stream
 }
 
 type captureBackpressurePublisher struct {

@@ -146,10 +146,12 @@ func runtimeCommandToFrame(cmd domain.RuntimeCommand) *cpv1.RuntimeFrame {
 	}
 }
 
-func (s *Service) handleRuntimeCommandFrame(ctx context.Context, frame *cpv1.RuntimeFrame) error {
-	if s == nil || s.repo == nil {
+func (s *Service) handleRuntimeCommandFrame(parent context.Context, stream *runtimeStream, frame *cpv1.RuntimeFrame) error {
+	if s == nil || s.repo == nil || stream == nil {
 		return status.Error(codes.FailedPrecondition, "runtime command repository is not configured")
 	}
+	ctx, cancel := stream.connectionContext(parent)
+	defer cancel()
 	now := s.now().UTC()
 	switch frame.GetFrameType() {
 	case cpv1.FrameType_FRAME_TYPE_COMMAND_ACK:
@@ -158,7 +160,13 @@ func (s *Service) handleRuntimeCommandFrame(ctx context.Context, frame *cpv1.Run
 			return status.Error(codes.InvalidArgument, "COMMAND_ACK requires command_id")
 		}
 		if ack.GetStatus() == domain.RuntimeCommandStatusRunning {
+			if err := s.currentRuntimeConnectionError(ctx, stream); err != nil {
+				return err
+			}
 			_, err := s.repo.MarkRuntimeCommandRunning(ctx, ack.GetCommandId(), now)
+			return err
+		}
+		if err := s.currentRuntimeConnectionError(ctx, stream); err != nil {
 			return err
 		}
 		_, err := s.repo.AcknowledgeRuntimeCommand(ctx, ack.GetCommandId(), now)
@@ -178,6 +186,9 @@ func (s *Service) handleRuntimeCommandFrame(ctx context.Context, frame *cpv1.Run
 		raw, err := marshalAnyJSON(result.GetResult())
 		if err != nil {
 			return status.Errorf(codes.InvalidArgument, "marshal command result: %v", err)
+		}
+		if err := s.currentRuntimeConnectionError(ctx, stream); err != nil {
+			return err
 		}
 		_, err = s.repo.CompleteRuntimeCommand(ctx, result.GetCommandId(), st, raw, result.GetFailureReason(), now)
 		return err

@@ -174,18 +174,19 @@ func TestDeliverIncomeBatchSendsAckTrackedRuntimeChannelDataFrame(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	var sent []*cpv1.RuntimeFrame
+	sent := make(chan *cpv1.RuntimeFrame, 1)
 	stream.setSender(func(frame *cpv1.RuntimeFrame) error {
-		sent = append(sent, frame)
+		sent <- frame
 		return nil
 	})
-	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(stream.Runtime)}
+	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(stream.Runtime), attemptToken: "attempt-1", sequence: 11}
 	svc.SetIncomeDeliveryObserver(observer)
 
 	err = svc.DeliverIncomeBatch(context.Background(), IncomeDeliveryBatch{
 		UserID:       42,
 		RuntimeID:    "rt-1",
 		ConnectionID: incomeDeliveryConnection(stream.Runtime).ConnectionID,
+		AttemptToken: observer.attemptToken,
 		SessionID:    "sess-1",
 		StreamKey:    "income/sess-1",
 		Sequence:     11,
@@ -197,10 +198,12 @@ func TestDeliverIncomeBatchSendsAckTrackedRuntimeChannelDataFrame(t *testing.T) 
 	if err != nil {
 		t.Fatalf("DeliverIncomeBatch: %v", err)
 	}
-	if len(sent) != 1 {
-		t.Fatalf("sent frames = %d, want 1", len(sent))
+	var frame *cpv1.RuntimeFrame
+	select {
+	case frame = <-sent:
+	case <-time.After(time.Second):
+		t.Fatal("Income frame was not physically sent")
 	}
-	frame := sent[0]
 	if frame.GetFrameType() != cpv1.FrameType_FRAME_TYPE_INCOME_BATCH {
 		t.Fatalf("frame_type = %v, want INCOME_BATCH", frame.GetFrameType())
 	}
@@ -209,43 +212,43 @@ func TestDeliverIncomeBatchSendsAckTrackedRuntimeChannelDataFrame(t *testing.T) 
 		t.Fatalf("income batch = %+v", batch)
 	}
 
-	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+	svc.handleRuntimeDataAck(stream, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 10,
 	}}})
 	if observer.ackCount != 0 {
 		t.Fatalf("stale ACK notifications = %d, want 0", observer.ackCount)
 	}
-	foreignRuntime := stream.Runtime
-	foreignRuntime.RuntimeID = "rt-other"
+	foreignRuntime, err := svc.registry.Register(AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-other"}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("register foreign runtime: %v", err)
+	}
 	svc.handleRuntimeDataAck(foreignRuntime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
 	}}})
 	if observer.ackCount != 0 {
 		t.Fatalf("foreign-runtime ACK notifications = %d, want 0", observer.ackCount)
 	}
-	foreignUser := stream.Runtime
-	foreignUser.UserID = 7
+	foreignUser := newRuntimeStream(AuthenticatedRuntime{UserID: 7, RuntimeID: stream.Runtime.RuntimeID}, time.Now().UTC())
 	svc.handleRuntimeDataAck(foreignUser, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
 	}}})
 	if observer.ackCount != 0 {
 		t.Fatalf("foreign-user ACK notifications = %d, want 0", observer.ackCount)
 	}
-	staleRuntime := stream.Runtime
-	staleRuntime.ConnectionID = "rt-1/stale"
+	staleRuntime := newRuntimeStream(AuthenticatedRuntime{UserID: 42, RuntimeID: stream.Runtime.RuntimeID, ConnectionID: "rt-1/stale"}, time.Now().UTC())
 	svc.handleRuntimeDataAck(staleRuntime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
 	}}})
 	if observer.ackCount != 0 {
 		t.Fatalf("stale-connection ACK notifications = %d, want 0", observer.ackCount)
 	}
-	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+	svc.handleRuntimeDataAck(stream, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
 	}}})
 	if observer.ackCount != 1 || observer.sequence != 11 {
 		t.Fatalf("matching ACK observer = count %d sequence %d, want 1/11", observer.ackCount, observer.sequence)
 	}
-	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+	svc.handleRuntimeDataAck(stream, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
 		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
 	}}})
 	if observer.ackCount != 1 {
@@ -284,6 +287,7 @@ func TestDeliverIncomeBatchRejectsStaleRuntimeConnection(t *testing.T) {
 		UserID:       42,
 		RuntimeID:    "rt-1",
 		ConnectionID: oldConnectionID,
+		AttemptToken: "attempt-old",
 		SessionID:    "sess-1",
 		StreamKey:    "income/sess-1",
 		Sequence:     10,
@@ -303,23 +307,26 @@ type incomeDeliveryObserverStub struct {
 	ackCount          int
 	sequence          int64
 	owner             IncomeDeliveryConnection
+	attemptToken      string
 	backpressureCount int
 }
 
-func (s *incomeDeliveryObserverStub) OwnsIncomeDelivery(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) bool {
-	return connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1" && sequence == 11
+func (s *incomeDeliveryObserverStub) IncomeDeliveryAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) (string, bool) {
+	ok := connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1" && sequence == s.sequence && s.attemptToken != ""
+	return s.attemptToken, ok
 }
 
-func (s *incomeDeliveryObserverStub) OwnsIncomeStream(connection IncomeDeliveryConnection, sessionID, streamKey string) bool {
-	return connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1"
+func (s *incomeDeliveryObserverStub) IncomeBackpressureAttempt(connection IncomeDeliveryConnection, sessionID, streamKey string) (int64, string, bool) {
+	ok := connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1" && s.sequence > 0 && s.attemptToken != ""
+	return s.sequence, s.attemptToken, ok
 }
 
-func (s *incomeDeliveryObserverStub) HandleIncomeAck(_ IncomeDeliveryConnection, _ string, _ string, sequence int64) {
+func (s *incomeDeliveryObserverStub) HandleIncomeAck(_ IncomeDeliveryConnection, _ string, _ string, sequence int64, _ string) {
 	s.ackCount++
 	s.sequence = sequence
 }
 
-func (s *incomeDeliveryObserverStub) HandleIncomeBackpressure(IncomeDeliveryConnection, string, string, time.Time) {
+func (s *incomeDeliveryObserverStub) HandleIncomeBackpressure(IncomeDeliveryConnection, string, string, int64, string, time.Time) {
 	s.backpressureCount++
 }
 
