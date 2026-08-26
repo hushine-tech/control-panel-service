@@ -67,6 +67,7 @@ type AuthenticatedRuntime struct {
 	KeyID             string
 	UserID            int64
 	RuntimeID         string
+	ConnectionID      string
 	Name              string
 	Source            string
 	Role              domain.CredentialRole

@@ -78,6 +78,7 @@ func TestRuntimeChannelCommandAndDataFrameTypesExist(t *testing.T) {
 		cpv1.FrameType_FRAME_TYPE_DATA_END,
 		cpv1.FrameType_FRAME_TYPE_HELLO_ACK,
 		cpv1.FrameType_FRAME_TYPE_RESUME,
+		cpv1.FrameType_FRAME_TYPE_INCOME_BATCH,
 	}
 	for _, frameType := range required {
 		if frameType == cpv1.FrameType_FRAME_TYPE_UNSPECIFIED {
@@ -97,9 +98,37 @@ func TestRuntimeChannelCommandAndDataFrameTypesExist(t *testing.T) {
 	_ = &cpv1.RuntimeDataEnd{}
 	_ = &cpv1.RuntimeHelloAck{}
 	_ = &cpv1.RuntimeResume{}
+	_ = &cpv1.RuntimeIncomeBatch{}
 	_ = &cpv1.RuntimeAdmissionFailure{}
 	_ = &cpv1.ListRuntimeAdmissionFailuresRequest{}
 	_ = &cpv1.ListRuntimeAdmissionFailuresResponse{}
+}
+
+func TestRuntimeIncomeBatchFrameContract(t *testing.T) {
+	file := cpv1.File_control_panel_service_proto
+	incomeBatch := requireDependencyFrameMessage(t, file, "RuntimeIncomeBatch")
+	assertDependencyFrameFields(t, incomeBatch, map[protoreflect.Name]protoreflect.FieldNumber{
+		"session_id": 1,
+		"stream_key": 2,
+		"sequence":   3,
+		"entries":    4,
+	})
+	entries := incomeBatch.Fields().ByName("entries")
+	if entries == nil || !entries.IsList() || entries.Message() == nil || entries.Message().FullName() != "portfolio.v1.VenueIncomeEntry" {
+		t.Fatalf("RuntimeIncomeBatch.entries = %v, want repeated portfolio.v1.VenueIncomeEntry", entries)
+	}
+
+	frame := requireDependencyFrameMessage(t, file, "RuntimeFrame")
+	incomeField := frame.Fields().ByName("income_batch")
+	if incomeField == nil || incomeField.Number() != 31 || incomeField.Message() == nil || incomeField.Message().FullName() != "controlpanel.v1.RuntimeIncomeBatch" {
+		t.Fatalf("RuntimeFrame.income_batch = %v, want tag 31 RuntimeIncomeBatch", incomeField)
+	}
+	if incomeField.ContainingOneof() == nil || incomeField.ContainingOneof().Name() != "payload" {
+		t.Fatalf("RuntimeFrame.income_batch oneof = %v, want payload", incomeField.ContainingOneof())
+	}
+	if got := cpv1.FrameType_FRAME_TYPE_INCOME_BATCH.Number(); got != 22 {
+		t.Fatalf("FRAME_TYPE_INCOME_BATCH = %d, want 22", got)
+	}
 }
 
 func TestRuntimeDependencyFrameContract(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
@@ -20,6 +21,18 @@ func (s *Service) handleRuntimeDataBackpressure(ctx context.Context, rt Authenti
 		return
 	}
 	streamKey := strings.TrimSpace(bp.GetStreamKey())
+	connection := incomeDeliveryConnection(rt)
+	if streamKey == incomeStreamKey(sessionID) && s.incomeDeliveryObserver != nil {
+		if !s.incomeDeliveryObserver.OwnsIncomeStream(connection, sessionID, streamKey) {
+			return
+		}
+		s.incomeDeliveryObserver.HandleIncomeBackpressure(
+			connection,
+			sessionID,
+			streamKey,
+			time.UnixMilli(bp.GetResumeAfterUnixMs()).UTC(),
+		)
+	}
 	reason := strings.TrimSpace(bp.GetReason())
 	eventType := cpnotify.EventRuntimeDataDelayed
 	title := "Runtime data delayed"

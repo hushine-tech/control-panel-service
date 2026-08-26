@@ -36,6 +36,8 @@ type Service struct {
 	platform                  PlatformDispatcher
 	dataTransfer              RuntimeDataTransfer
 	dataWindow                *RuntimeDataWindow
+	incomeDataWindow          *RuntimeDataWindow
+	incomeDeliveryObserver    IncomeDeliveryObserver
 	notifications             cpnotify.Publisher
 	instanceID                string
 	now                       func() time.Time
@@ -78,6 +80,7 @@ func newWithConfigAndInstanceID(repo Repository, cfg Config, instanceID string) 
 		auth:                      cfg.Auth,
 		expectedDependencyProfile: cfg.ExpectedDependencyProfile,
 		dataWindow:                NewRuntimeDataWindow(1024),
+		incomeDataWindow:          NewSessionRuntimeDataWindow(1),
 		notifications:             cfg.NotificationPublisher,
 		instanceID:                instanceID,
 		now:                       time.Now,
@@ -182,6 +185,7 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 		return status.Errorf(codes.Unavailable, "register runtime channel: %v", err)
 	}
 	defer s.releaseRuntimeStream(rt.RuntimeID, rs)
+	rt = cloneAuthenticatedRuntime(rs.Runtime)
 	rs.setSender(stream.Send)
 	if err := rs.sendFrame(&cpv1.RuntimeFrame{
 		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO_ACK,
@@ -286,7 +290,7 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 			case cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE:
 				s.handleRuntimeDataBackpressure(stream.Context(), rt, res.frame)
 			case cpv1.FrameType_FRAME_TYPE_DATA_ACK:
-				s.handleRuntimeDataAck(res.frame)
+				s.handleRuntimeDataAck(rt, res.frame)
 			}
 		case <-ticker.C:
 			if s.now().UTC().Sub(rs.lastFrame()) > s.streamIdleTimeout {

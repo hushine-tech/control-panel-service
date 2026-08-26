@@ -3,6 +3,7 @@ package runtimechannel
 import (
 	"context"
 	"testing"
+	"time"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	cpnotify "github.com/hushine-tech/control-panel-service/internal/notification"
@@ -22,7 +23,7 @@ func TestRuntimeChannelDataBackpressurePublishesSlowConsumerNotification(t *test
 			DataBackpressure: &cpv1.RuntimeDataBackpressure{
 				SessionId: "sess-1",
 				StreamKey: "binance/futures/kline/ETHUSDT/1m",
-				Reason: "slow_consumer: kind=live_kline queue_depth=2 dropped=0",
+				Reason:    "slow_consumer: kind=live_kline queue_depth=2 dropped=0",
 			},
 		},
 	})
@@ -42,6 +43,44 @@ func TestRuntimeChannelDataBackpressurePublishesSlowConsumerNotification(t *test
 	}
 }
 
+func TestRuntimeChannelIncomeBackpressureRequiresOwningConnection(t *testing.T) {
+	pub := &captureBackpressurePublisher{}
+	svc := NewWithConfig(nil, Config{NotificationPublisher: pub})
+	owner := AuthenticatedRuntime{
+		UserID: 42, RuntimeID: "rt-owner", AuthenticatedAt: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC),
+	}
+	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(owner)}
+	svc.SetIncomeDeliveryObserver(observer)
+	frame := &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_DATA_BACKPRESSURE,
+		Payload: &cpv1.RuntimeFrame_DataBackpressure{DataBackpressure: &cpv1.RuntimeDataBackpressure{
+			SessionId: "sess-1", StreamKey: "income/sess-1", ResumeAfterUnixMs: 1,
+		}},
+	}
+
+	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+		UserID: 42, RuntimeID: "rt-foreign", AuthenticatedAt: owner.AuthenticatedAt,
+	}, frame)
+	if observer.backpressureCount != 0 || len(pub.events) != 0 {
+		t.Fatalf("foreign backpressure observer/events = %d/%d, want 0/0", observer.backpressureCount, len(pub.events))
+	}
+
+	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+		UserID: 7, RuntimeID: owner.RuntimeID, AuthenticatedAt: owner.AuthenticatedAt,
+	}, frame)
+	svc.handleRuntimeDataBackpressure(context.Background(), AuthenticatedRuntime{
+		UserID: owner.UserID, RuntimeID: owner.RuntimeID, AuthenticatedAt: owner.AuthenticatedAt.Add(-time.Second),
+	}, frame)
+	if observer.backpressureCount != 0 || len(pub.events) != 0 {
+		t.Fatalf("foreign-user/stale-connection backpressure observer/events = %d/%d, want 0/0", observer.backpressureCount, len(pub.events))
+	}
+
+	svc.handleRuntimeDataBackpressure(context.Background(), owner, frame)
+	if observer.backpressureCount != 1 || len(pub.events) != 1 {
+		t.Fatalf("owner backpressure observer/events = %d/%d, want 1/1", observer.backpressureCount, len(pub.events))
+	}
+}
+
 func TestRuntimeChannelDataBackpressurePublishesDroppedNotification(t *testing.T) {
 	pub := &captureBackpressurePublisher{}
 	svc := NewWithConfig(nil, Config{NotificationPublisher: pub})
@@ -56,7 +95,7 @@ func TestRuntimeChannelDataBackpressurePublishesDroppedNotification(t *testing.T
 			DataBackpressure: &cpv1.RuntimeDataBackpressure{
 				SessionId: "sess-1",
 				StreamKey: "order_lifecycle",
-				Reason: "data_dropped: kind=order_update queue_depth=2048 dropped=1",
+				Reason:    "data_dropped: kind=order_update queue_depth=2048 dropped=1",
 			},
 		},
 	})

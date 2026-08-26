@@ -85,44 +85,85 @@ type RuntimeDataChunk struct {
 }
 
 type RuntimeDataWindow struct {
-	mu        sync.Mutex
-	capacity  int
-	nextSeq   map[string]int64
-	unacked   map[string]RuntimeDataChunk
-	orderKeys []string
+	mu            sync.Mutex
+	capacity      int
+	sessionScoped bool
+	nextSeq       map[string]int64
+	unacked       map[string]RuntimeDataChunk
+	perSession    map[string]int
+	orderKeys     []string
 }
 
 func NewRuntimeDataWindow(capacity int) *RuntimeDataWindow {
+	return newRuntimeDataWindow(capacity, false)
+}
+
+func NewSessionRuntimeDataWindow(capacity int) *RuntimeDataWindow {
+	return newRuntimeDataWindow(capacity, true)
+}
+
+func newRuntimeDataWindow(capacity int, sessionScoped bool) *RuntimeDataWindow {
 	if capacity <= 0 {
 		capacity = 1
 	}
 	return &RuntimeDataWindow{
-		capacity: capacity,
-		nextSeq:  map[string]int64{},
-		unacked:  map[string]RuntimeDataChunk{},
+		capacity:      capacity,
+		sessionScoped: sessionScoped,
+		nextSeq:       map[string]int64{},
+		unacked:       map[string]RuntimeDataChunk{},
+		perSession:    map[string]int{},
 	}
 }
 
 func (w *RuntimeDataWindow) Enqueue(sessionID, streamKey string, payload []byte, at time.Time) (RuntimeDataChunk, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if len(w.unacked) >= w.capacity {
+	if w.fullLocked(sessionID) {
 		return RuntimeDataChunk{}, ErrRuntimeDataBackpressure
 	}
 	key := dataWindowStreamKey(sessionID, streamKey)
 	seq := w.nextSeq[key] + 1
 	w.nextSeq[key] = seq
+	return w.trackLocked(sessionID, streamKey, seq, payload, at), nil
+}
+
+func (w *RuntimeDataWindow) Track(sessionID, streamKey string, sequence int64, payload []byte, at time.Time) (RuntimeDataChunk, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	ackKey := dataWindowAckKey(sessionID, streamKey, sequence)
+	if existing, ok := w.unacked[ackKey]; ok {
+		return existing, nil
+	}
+	if w.fullLocked(sessionID) {
+		return RuntimeDataChunk{}, ErrRuntimeDataBackpressure
+	}
+	key := dataWindowStreamKey(sessionID, streamKey)
+	if sequence > w.nextSeq[key] {
+		w.nextSeq[key] = sequence
+	}
+	return w.trackLocked(sessionID, streamKey, sequence, payload, at), nil
+}
+
+func (w *RuntimeDataWindow) fullLocked(sessionID string) bool {
+	if w.sessionScoped {
+		return w.perSession[sessionID] >= w.capacity
+	}
+	return len(w.unacked) >= w.capacity
+}
+
+func (w *RuntimeDataWindow) trackLocked(sessionID, streamKey string, sequence int64, payload []byte, at time.Time) RuntimeDataChunk {
 	chunk := RuntimeDataChunk{
 		SessionID: sessionID,
 		StreamKey: streamKey,
-		Sequence:  seq,
+		Sequence:  sequence,
 		Payload:   append([]byte(nil), payload...),
 		SentAt:    at.UTC(),
 	}
-	ackKey := dataWindowAckKey(sessionID, streamKey, seq)
+	ackKey := dataWindowAckKey(sessionID, streamKey, sequence)
 	w.unacked[ackKey] = chunk
+	w.perSession[sessionID]++
 	w.orderKeys = append(w.orderKeys, ackKey)
-	return chunk, nil
+	return chunk
 }
 
 func (w *RuntimeDataWindow) Ack(sessionID, streamKey string, sequence int64) bool {
@@ -132,14 +173,50 @@ func (w *RuntimeDataWindow) Ack(sessionID, streamKey string, sequence int64) boo
 	if _, ok := w.unacked[key]; !ok {
 		return false
 	}
+	w.removeLocked(key)
+	return true
+}
+
+func (w *RuntimeDataWindow) Cancel(sessionID, streamKey string, sequence int64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	key := dataWindowAckKey(sessionID, streamKey, sequence)
+	if _, ok := w.unacked[key]; !ok {
+		return false
+	}
+	w.removeLocked(key)
+	return true
+}
+
+func (w *RuntimeDataWindow) ForgetStream(sessionID, streamKey string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	removed := 0
+	for _, key := range append([]string(nil), w.orderKeys...) {
+		chunk, ok := w.unacked[key]
+		if !ok || chunk.SessionID != sessionID || chunk.StreamKey != streamKey {
+			continue
+		}
+		w.removeLocked(key)
+		removed++
+	}
+	return removed
+}
+
+func (w *RuntimeDataWindow) removeLocked(key string) {
+	chunk := w.unacked[key]
 	delete(w.unacked, key)
+	if w.perSession[chunk.SessionID] <= 1 {
+		delete(w.perSession, chunk.SessionID)
+	} else {
+		w.perSession[chunk.SessionID]--
+	}
 	for i, existing := range w.orderKeys {
 		if existing == key {
 			w.orderKeys = append(w.orderKeys[:i], w.orderKeys[i+1:]...)
 			break
 		}
 	}
-	return true
 }
 
 func (w *RuntimeDataWindow) Expired(now time.Time, maxAge time.Duration) []RuntimeDataChunk {

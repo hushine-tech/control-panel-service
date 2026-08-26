@@ -355,6 +355,19 @@ func main() {
 	platformProxy.SetDatasetDeliverer(runtimeChannelSvc)
 	platformProxy.SetDebugReplayStarter(debuggerSvc)
 	runtimeChannelSvc.SetPlatformDispatcher(platformProxy)
+	incomeDeliveryWorker := runtimechannel.NewIncomeDeliveryWorker(
+		runtimechannel.NewPortfolioIncomeDeliverySessionSource(runtimeChannelSvc, accClient.ServiceClient()),
+		accClient.ServiceClient(),
+		runtimeChannelSvc,
+		runtimechannel.IncomeDeliveryConfig{},
+	)
+	runtimeChannelSvc.SetIncomeDeliveryObserver(incomeDeliveryWorker)
+	go func() {
+		if err := incomeDeliveryWorker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn(ctx, "system", fmt.Sprintf("Income RuntimeChannel delivery worker stopped: %v", err))
+		}
+	}()
+	logger.Info(ctx, "system", "Income RuntimeChannel delivery enabled")
 	if cfg.MarketData.LiveDeliveryEnabled {
 		liveDeliveryWorker := runtimechannel.NewKafkaLiveDeliveryWorker(
 			marketDataRepo,

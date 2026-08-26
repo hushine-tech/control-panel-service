@@ -6,12 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	"github.com/hushine-tech/control-panel-service/internal/domain"
+	orderv1 "github.com/hushine-tech/core-service/gen/orderv1"
+	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
 
 func TestDeliverLiveKlineBatchSendsRuntimeChannelDataFrame(t *testing.T) {
@@ -120,11 +123,11 @@ func TestDeliverOrderLifecycleBatchSendsRuntimeChannelDataFrame(t *testing.T) {
 		return nil
 	})
 	packed, err := anypb.New(&orderv1.OrderLifecycleEventEntry{
-		EventId:   100,
-		SessionId: "sess-1",
+		EventId:     100,
+		SessionId:   "sess-1",
 		PortfolioId: 7,
-		VenueId:   10,
-		EventType: "fill",
+		VenueId:     10,
+		EventType:   "fill",
 	})
 	if err != nil {
 		t.Fatalf("anypb.New: %v", err)
@@ -156,6 +159,168 @@ func TestDeliverOrderLifecycleBatchSendsRuntimeChannelDataFrame(t *testing.T) {
 	if len(frame.GetOrderUpdateBatch().GetEvents()) != 1 {
 		t.Fatalf("events = %d, want 1", len(frame.GetOrderUpdateBatch().GetEvents()))
 	}
+}
+
+func TestDeliverIncomeBatchSendsAckTrackedRuntimeChannelDataFrame(t *testing.T) {
+	svc := NewWithInstanceID(&stubRepo{}, "cp-1")
+	authenticated := AuthenticatedRuntime{
+		KeyID:           "key-1",
+		UserID:          42,
+		RuntimeID:       "rt-1",
+		Role:            domain.CredentialRoleExecutor,
+		AuthenticatedAt: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC),
+	}
+	stream, err := svc.registry.Register(authenticated, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	var sent []*cpv1.RuntimeFrame
+	stream.setSender(func(frame *cpv1.RuntimeFrame) error {
+		sent = append(sent, frame)
+		return nil
+	})
+	observer := &incomeDeliveryObserverStub{owner: incomeDeliveryConnection(stream.Runtime)}
+	svc.SetIncomeDeliveryObserver(observer)
+
+	err = svc.DeliverIncomeBatch(context.Background(), IncomeDeliveryBatch{
+		UserID:       42,
+		RuntimeID:    "rt-1",
+		ConnectionID: incomeDeliveryConnection(stream.Runtime).ConnectionID,
+		SessionID:    "sess-1",
+		StreamKey:    "income/sess-1",
+		Sequence:     11,
+		Entries: []*portfoliov1.VenueIncomeEntry{
+			{IncomeEntryId: 10, SessionId: "sess-1", Status: "confirmed"},
+			{IncomeEntryId: 11, SessionId: "sess-1", Status: "confirmed"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DeliverIncomeBatch: %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent frames = %d, want 1", len(sent))
+	}
+	frame := sent[0]
+	if frame.GetFrameType() != cpv1.FrameType_FRAME_TYPE_INCOME_BATCH {
+		t.Fatalf("frame_type = %v, want INCOME_BATCH", frame.GetFrameType())
+	}
+	batch := frame.GetIncomeBatch()
+	if batch.GetSessionId() != "sess-1" || batch.GetStreamKey() != "income/sess-1" || batch.GetSequence() != 11 || len(batch.GetEntries()) != 2 {
+		t.Fatalf("income batch = %+v", batch)
+	}
+
+	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 10,
+	}}})
+	if observer.ackCount != 0 {
+		t.Fatalf("stale ACK notifications = %d, want 0", observer.ackCount)
+	}
+	foreignRuntime := stream.Runtime
+	foreignRuntime.RuntimeID = "rt-other"
+	svc.handleRuntimeDataAck(foreignRuntime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
+	}}})
+	if observer.ackCount != 0 {
+		t.Fatalf("foreign-runtime ACK notifications = %d, want 0", observer.ackCount)
+	}
+	foreignUser := stream.Runtime
+	foreignUser.UserID = 7
+	svc.handleRuntimeDataAck(foreignUser, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
+	}}})
+	if observer.ackCount != 0 {
+		t.Fatalf("foreign-user ACK notifications = %d, want 0", observer.ackCount)
+	}
+	staleRuntime := stream.Runtime
+	staleRuntime.ConnectionID = "rt-1/stale"
+	svc.handleRuntimeDataAck(staleRuntime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
+	}}})
+	if observer.ackCount != 0 {
+		t.Fatalf("stale-connection ACK notifications = %d, want 0", observer.ackCount)
+	}
+	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
+	}}})
+	if observer.ackCount != 1 || observer.sequence != 11 {
+		t.Fatalf("matching ACK observer = count %d sequence %d, want 1/11", observer.ackCount, observer.sequence)
+	}
+	svc.handleRuntimeDataAck(stream.Runtime, &cpv1.RuntimeFrame{Payload: &cpv1.RuntimeFrame_DataAck{DataAck: &cpv1.RuntimeDataAck{
+		SessionId: "sess-1", StreamKey: "income/sess-1", Sequence: 11,
+	}}})
+	if observer.ackCount != 1 {
+		t.Fatalf("duplicate ACK notifications = %d, want 1", observer.ackCount)
+	}
+}
+
+func TestDeliverIncomeBatchRejectsStaleRuntimeConnection(t *testing.T) {
+	svc := NewWithInstanceID(&stubRepo{}, "cp-1")
+	oldRuntime := AuthenticatedRuntime{
+		KeyID: "key-1", UserID: 42, RuntimeID: "rt-1",
+		AuthenticatedAt: time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC),
+	}
+	newRuntime := oldRuntime
+	oldStream, err := svc.registry.Register(oldRuntime, oldRuntime.AuthenticatedAt)
+	if err != nil {
+		t.Fatalf("register old connection: %v", err)
+	}
+	newRuntime.AuthenticatedAt = oldRuntime.AuthenticatedAt
+	stream, err := svc.registry.Register(newRuntime, newRuntime.AuthenticatedAt)
+	if err != nil {
+		t.Fatalf("register replacement connection: %v", err)
+	}
+	oldConnectionID := incomeDeliveryConnection(oldStream.Runtime).ConnectionID
+	newConnectionID := incomeDeliveryConnection(stream.Runtime).ConnectionID
+	if oldConnectionID == newConnectionID {
+		t.Fatalf("replacement connection ID = old ID %q, want unique current-connection identity", oldConnectionID)
+	}
+	var sent int
+	stream.setSender(func(*cpv1.RuntimeFrame) error {
+		sent++
+		return nil
+	})
+
+	err = svc.DeliverIncomeBatch(context.Background(), IncomeDeliveryBatch{
+		UserID:       42,
+		RuntimeID:    "rt-1",
+		ConnectionID: oldConnectionID,
+		SessionID:    "sess-1",
+		StreamKey:    "income/sess-1",
+		Sequence:     10,
+		Entries: []*portfoliov1.VenueIncomeEntry{{
+			IncomeEntryId: 10, SessionId: "sess-1", Status: "confirmed",
+		}},
+	})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("stale-connection delivery error = %v, want Unavailable", err)
+	}
+	if sent != 0 {
+		t.Fatalf("replacement connection received %d stale frames, want 0", sent)
+	}
+}
+
+type incomeDeliveryObserverStub struct {
+	ackCount          int
+	sequence          int64
+	owner             IncomeDeliveryConnection
+	backpressureCount int
+}
+
+func (s *incomeDeliveryObserverStub) OwnsIncomeDelivery(connection IncomeDeliveryConnection, sessionID, streamKey string, sequence int64) bool {
+	return connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1" && sequence == 11
+}
+
+func (s *incomeDeliveryObserverStub) OwnsIncomeStream(connection IncomeDeliveryConnection, sessionID, streamKey string) bool {
+	return connection == s.owner && sessionID == "sess-1" && streamKey == "income/sess-1"
+}
+
+func (s *incomeDeliveryObserverStub) HandleIncomeAck(_ IncomeDeliveryConnection, _ string, _ string, sequence int64) {
+	s.ackCount++
+	s.sequence = sequence
+}
+
+func (s *incomeDeliveryObserverStub) HandleIncomeBackpressure(IncomeDeliveryConnection, string, string, time.Time) {
+	s.backpressureCount++
 }
 
 func TestDeliverLiveKlineBatchTransfersWhenConnectionOwnerDiffers(t *testing.T) {

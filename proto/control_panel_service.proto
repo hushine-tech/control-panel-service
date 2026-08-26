@@ -5,6 +5,7 @@ option go_package = "github.com/hushine-tech/control-panel-service/gen/controlpa
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/any.proto";
+import "portfolio_service.proto";
 import "strategy_service.proto";
 
 // ControlPanelService owns runtime registry, route resolution, heartbeat,
@@ -521,6 +522,7 @@ enum FrameType {
   FRAME_TYPE_RESUME = 19;
   FRAME_TYPE_HEARTBEAT_ACK = 20;
   FRAME_TYPE_ORDER_UPDATE_BATCH = 21;
+  FRAME_TYPE_INCOME_BATCH = 22;
 }
 
 message RuntimeFrame {
@@ -555,6 +557,7 @@ message RuntimeFrame {
     RuntimeResume resume = 28;
     RuntimeHeartbeatAck heartbeat_ack = 29;
     RuntimeOrderUpdateBatch order_update_batch = 30;
+    RuntimeIncomeBatch income_batch = 31;
   }
 }
 
@@ -705,6 +708,13 @@ message RuntimeOrderUpdateBatch {
   string stream_key = 2;
   int64 sequence = 3;
   repeated google.protobuf.Any events = 4;
+}
+
+message RuntimeIncomeBatch {
+  string session_id = 1;
+  string stream_key = 2;
+  int64 sequence = 3;
+  repeated portfolio.v1.VenueIncomeEntry entries = 4;
 }
 
 message RuntimeDataAck {

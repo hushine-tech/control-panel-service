@@ -10,7 +10,7 @@ MARKETDATA_PROTO_OUT=gen/marketdatav1
 
 proto:
 	mkdir -p $(PROTO_OUT) $(MARKETDATA_PROTO_OUT)
-	PATH="$(HOME)/go/bin:$$PATH" protoc -I proto -I ../strategy-service/proto \
+	PATH="$(HOME)/go/bin:$$PATH" protoc -I proto -I ../strategy-service/proto -I ../core-service/proto \
 		--go_out=$(PROTO_OUT) --go_opt=paths=source_relative \
 		--go-grpc_out=$(PROTO_OUT) --go-grpc_opt=paths=source_relative \
 		$(PROTO_FILE)

@@ -157,6 +157,7 @@ type Registry struct {
 	mu               sync.Mutex
 	streamsByRuntime map[string]*runtimeStream
 	runtimesByKeyID  map[string]map[string]struct{}
+	nextConnectionID uint64
 	closed           bool
 }
 
@@ -187,6 +188,8 @@ func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStr
 		old.close()
 		r.removeLocked(old)
 	}
+	r.nextConnectionID++
+	rt.ConnectionID = fmt.Sprintf("%s/%d", rt.RuntimeID, r.nextConnectionID)
 	stream := newRuntimeStream(rt, now)
 	r.streamsByRuntime[rt.RuntimeID] = stream
 	if rt.KeyID == "" {

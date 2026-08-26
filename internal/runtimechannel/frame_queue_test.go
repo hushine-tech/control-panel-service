@@ -1,6 +1,7 @@
 package runtimechannel
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -106,5 +107,16 @@ func TestRuntimeDataWindowSequenceAckAndBackpressure(t *testing.T) {
 	expired := window.Expired(now.Add(10*time.Second), 5*time.Second)
 	if len(expired) != 2 || expired[0].Sequence != 2 || expired[1].Sequence != 3 {
 		t.Fatalf("expired = %+v, want sequences 2 and 3", expired)
+	}
+}
+
+func TestRuntimeDataWindowPreservesGlobalCapacityAcrossSessions(t *testing.T) {
+	window := NewRuntimeDataWindow(1)
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	if _, err := window.Enqueue("sess-1", "stream-1", nil, now); err != nil {
+		t.Fatalf("first Session enqueue: %v", err)
+	}
+	if _, err := window.Enqueue("sess-2", "stream-2", nil, now); !errors.Is(err, ErrRuntimeDataBackpressure) {
+		t.Fatalf("second Session enqueue error = %v, want global ErrRuntimeDataBackpressure", err)
 	}
 }

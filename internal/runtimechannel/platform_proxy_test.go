@@ -246,6 +246,237 @@ func TestPlatformProxyListSessionsBindsUserAndRuntime(t *testing.T) {
 	}
 }
 
+func TestPlatformProxyListVenueIncomeEntriesAllowsTerminalReplay(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{
+		session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-finished", UserId: 42, RuntimeId: "runtime-1", Status: "finished",
+		},
+		incomeListResp: &portfoliov1.ListVenueIncomeEntriesResponse{
+			Entries:                []*portfoliov1.VenueIncomeEntry{{IncomeEntryId: 10, SessionId: "sess-finished", Status: "confirmed"}},
+			NextAfterIncomeEntryId: 10,
+		},
+	}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.ListVenueIncomeEntriesRequest{
+		SessionId: "sess-finished", AfterIncomeEntryId: 5, Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.ListVenueIncomeEntries",
+		payload,
+	)
+	if err != nil {
+		t.Fatalf("DispatchRuntimeRequest: %v", err)
+	}
+	list, ok := resp.(*portfoliov1.ListVenueIncomeEntriesResponse)
+	if !ok || list.GetNextAfterIncomeEntryId() != 10 {
+		t.Fatalf("response = %+v", resp)
+	}
+	if portfolio.incomeListReq == nil || portfolio.incomeListReq.GetUserId() != 42 || portfolio.incomeListReq.GetSessionId() != "sess-finished" || portfolio.incomeListReq.GetAfterIncomeEntryId() != 5 {
+		t.Fatalf("ListVenueIncomeEntries request = %+v", portfolio.incomeListReq)
+	}
+}
+
+func TestPlatformProxyListVenueIncomeEntriesRejectsOwnershipMismatch(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-1", UserId: 42, RuntimeId: "runtime-other", Status: "finished",
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.ListVenueIncomeEntriesRequest{SessionId: "sess-1", UserId: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.ListVenueIncomeEntries",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("error = %v, want PermissionDenied", err)
+	}
+	if portfolio.incomeListReq != nil {
+		t.Fatalf("unauthorized list reached core RPC: %+v", portfolio.incomeListReq)
+	}
+}
+
+func TestPlatformProxyListVenueIncomeEntriesRequiresExactSessionUser(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-1", UserId: 0, RuntimeId: "runtime-1", Status: "finished",
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.ListVenueIncomeEntriesRequest{SessionId: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.ListVenueIncomeEntries",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("error = %v, want PermissionDenied for missing exact Session user", err)
+	}
+	if portfolio.incomeListReq != nil {
+		t.Fatalf("unauthorized list reached core RPC: %+v", portfolio.incomeListReq)
+	}
+}
+
+func TestPlatformProxyListVenueIncomeEntriesRequiresExactSessionIdentity(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-other", UserId: 42, RuntimeId: "runtime-1", Status: "finished",
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.ListVenueIncomeEntriesRequest{SessionId: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.ListVenueIncomeEntries",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("error = %v, want PermissionDenied for mismatched Session identity", err)
+	}
+	if portfolio.incomeListReq != nil {
+		t.Fatalf("wrong-Session list reached core RPC: %+v", portfolio.incomeListReq)
+	}
+}
+
+func TestPlatformProxySettleBacktestFundingRequiresRunningBacktestOwner(t *testing.T) {
+	validRequest := func(t *testing.T) *anypb.Any {
+		t.Helper()
+		payload, err := anypb.New(&portfoliov1.SettleBacktestFundingRequest{
+			SessionId: "sess-1",
+			Fact: &portfoliov1.FundingFact{
+				VenueId: 20, Exchange: 1, Market: 2, Symbol: "BTCUSDT",
+				FundingTime:        timestamppb.New(time.Date(2024, 1, 1, 8, 0, 0, 0, time.UTC)),
+				FundingRateDecimal: "0.0001", MarkPriceDecimal: "42000", SettlementAsset: "USDT",
+			},
+			PositionMode: "ONE_WAY",
+			PositionLegs: []*portfoliov1.FundingPositionLegFact{{
+				Symbol: "BTCUSDT", PositionSide: "BOTH", MarginMode: "cross", SignedQtyDecimal: "1",
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return payload
+	}
+
+	t.Run("running Backtest", func(t *testing.T) {
+		portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+			SessionId: "sess-1", UserId: 42, RuntimeId: "runtime-1", Status: "running", Environment: 0,
+		}}
+		proxy := NewPlatformProxy(portfolio, nil, nil)
+		resp, err := proxy.DispatchRuntimeRequest(
+			context.Background(),
+			AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+			"portfolio.SettleBacktestFunding",
+			validRequest(t),
+		)
+		if err != nil {
+			t.Fatalf("DispatchRuntimeRequest: %v", err)
+		}
+		if _, ok := resp.(*portfoliov1.SettleBacktestFundingResponse); !ok {
+			t.Fatalf("response = %T, want SettleBacktestFundingResponse", resp)
+		}
+		if portfolio.settleFundingReq == nil || portfolio.settleFundingReq.GetUserId() != 42 {
+			t.Fatalf("SettleBacktestFunding request = %+v", portfolio.settleFundingReq)
+		}
+	})
+
+	for _, tc := range []struct {
+		name        string
+		status      string
+		environment int32
+		runtimeID   string
+		wantCode    codes.Code
+	}{
+		{name: "terminal", status: "finished", environment: 0, runtimeID: "runtime-1", wantCode: codes.FailedPrecondition},
+		{name: "Demo", status: "running", environment: 1, runtimeID: "runtime-1", wantCode: codes.FailedPrecondition},
+		{name: "wrong runtime", status: "running", environment: 0, runtimeID: "runtime-other", wantCode: codes.PermissionDenied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+				SessionId: "sess-1", UserId: 42, RuntimeId: tc.runtimeID, Status: tc.status, Environment: tc.environment,
+			}}
+			proxy := NewPlatformProxy(portfolio, nil, nil)
+			_, err := proxy.DispatchRuntimeRequest(
+				context.Background(),
+				AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+				"portfolio.SettleBacktestFunding",
+				validRequest(t),
+			)
+			if status.Code(err) != tc.wantCode {
+				t.Fatalf("error = %v, want %s", err, tc.wantCode)
+			}
+			if portfolio.settleFundingReq != nil {
+				t.Fatalf("ineligible settlement reached core RPC: %+v", portfolio.settleFundingReq)
+			}
+		})
+	}
+}
+
+func TestPlatformProxySettleBacktestFundingRequiresExactSessionUser(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-1", UserId: 0, RuntimeId: "runtime-1", Status: "running", Environment: 0,
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.SettleBacktestFundingRequest{SessionId: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.SettleBacktestFunding",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("error = %v, want PermissionDenied for missing exact Session user", err)
+	}
+	if portfolio.settleFundingReq != nil {
+		t.Fatalf("unauthorized settlement reached core RPC: %+v", portfolio.settleFundingReq)
+	}
+}
+
+func TestPlatformProxySettleBacktestFundingRequiresExactSessionIdentity(t *testing.T) {
+	portfolio := &fakePortfolioPlatformClient{session: &portfoliov1.StrategySessionEntry{
+		SessionId: "sess-other", UserId: 42, RuntimeId: "runtime-1", Status: "running", Environment: 0,
+	}}
+	proxy := NewPlatformProxy(portfolio, nil, nil)
+	payload, err := anypb.New(&portfoliov1.SettleBacktestFundingRequest{SessionId: "sess-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = proxy.DispatchRuntimeRequest(
+		context.Background(),
+		AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1"},
+		"portfolio.SettleBacktestFunding",
+		payload,
+	)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("error = %v, want PermissionDenied for mismatched Session identity", err)
+	}
+	if portfolio.settleFundingReq != nil {
+		t.Fatalf("wrong-Session settlement reached core RPC: %+v", portfolio.settleFundingReq)
+	}
+}
+
 func TestIndicatorProtoV1Removed(t *testing.T) {
 	service := portfoliov1.File_portfolio_service_proto.Services().
 		ByName("PortfolioService")
@@ -2047,6 +2278,9 @@ type fakePortfolioPlatformClient struct {
 	commitReq               *portfoliov1.CommitStrategySessionStartRequest
 	commitResp              *portfoliov1.CommitStrategySessionStartResponse
 	commitCtx               context.Context
+	incomeListReq           *portfoliov1.ListVenueIncomeEntriesRequest
+	incomeListResp          *portfoliov1.ListVenueIncomeEntriesResponse
+	settleFundingReq        *portfoliov1.SettleBacktestFundingRequest
 	session                 *portfoliov1.StrategySessionEntry
 	venue                   *portfoliov1.VenueEntry
 }
@@ -2160,6 +2394,21 @@ func (f *fakePortfolioPlatformClient) FinalizeStrategyIndicatorChunksV2(_ contex
 	return &portfoliov1.FinalizeStrategyIndicatorChunksV2Response{
 		ChunksFinalized: int32(len(req.GetChunks())),
 	}, nil
+}
+
+func (f *fakePortfolioPlatformClient) ListVenueIncomeEntries(_ context.Context, req *portfoliov1.ListVenueIncomeEntriesRequest, _ ...grpc.CallOption) (*portfoliov1.ListVenueIncomeEntriesResponse, error) {
+	f.incomeListReq = req
+	if f.incomeListResp != nil {
+		return f.incomeListResp, nil
+	}
+	return &portfoliov1.ListVenueIncomeEntriesResponse{NextAfterIncomeEntryId: req.GetAfterIncomeEntryId()}, nil
+}
+
+func (f *fakePortfolioPlatformClient) SettleBacktestFunding(_ context.Context, req *portfoliov1.SettleBacktestFundingRequest, _ ...grpc.CallOption) (*portfoliov1.SettleBacktestFundingResponse, error) {
+	f.settleFundingReq = req
+	return &portfoliov1.SettleBacktestFundingResponse{Entry: &portfoliov1.VenueIncomeEntry{
+		IncomeEntryId: 10, SessionId: req.GetSessionId(), Status: "calculated",
+	}}, nil
 }
 
 type fakeOrderPlatformClient struct {

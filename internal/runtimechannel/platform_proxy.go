@@ -27,6 +27,7 @@ const (
 	portfolioSnapshotReasonStrategyStart = 2
 	portfolioSnapshotReasonStrategyEnd   = 3
 	backtestPageSize                     = maxKlineFetchLimit
+	backtestEnvironment                  = int32(0)
 )
 
 type sessionStatusPolicy uint8
@@ -51,6 +52,8 @@ type PortfolioPlatformClient interface {
 	UpdateSession(ctx context.Context, in *portfoliov1.UpdateSessionRequest, opts ...grpc.CallOption) (*portfoliov1.UpdateSessionResponse, error)
 	SaveStrategyIndicatorsV2(ctx context.Context, in *portfoliov1.SaveStrategyIndicatorsV2Request, opts ...grpc.CallOption) (*portfoliov1.SaveStrategyIndicatorsV2Response, error)
 	FinalizeStrategyIndicatorChunksV2(ctx context.Context, in *portfoliov1.FinalizeStrategyIndicatorChunksV2Request, opts ...grpc.CallOption) (*portfoliov1.FinalizeStrategyIndicatorChunksV2Response, error)
+	ListVenueIncomeEntries(ctx context.Context, in *portfoliov1.ListVenueIncomeEntriesRequest, opts ...grpc.CallOption) (*portfoliov1.ListVenueIncomeEntriesResponse, error)
+	SettleBacktestFunding(ctx context.Context, in *portfoliov1.SettleBacktestFundingRequest, opts ...grpc.CallOption) (*portfoliov1.SettleBacktestFundingResponse, error)
 }
 
 type OrderPlatformClient interface {
@@ -352,6 +355,50 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		req.UserId = rt.UserID
 		return p.requirePortfolio().
 			FinalizeStrategyIndicatorChunksV2(ctx, req)
+
+	case "portfolio.ListVenueIncomeEntries":
+		req := &portfoliov1.ListVenueIncomeEntriesRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.SessionId = strings.TrimSpace(req.GetSessionId())
+		session, err := p.ownedSession(ctx, rt, req.GetSessionId(), sessionAllowAnyStatus)
+		if err != nil {
+			return nil, err
+		}
+		if session.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
+		}
+		req.UserId = rt.UserID
+		return p.requirePortfolio().ListVenueIncomeEntries(ctx, req)
+
+	case "portfolio.SettleBacktestFunding":
+		req := &portfoliov1.SettleBacktestFundingRequest{}
+		if err := unpackRuntimePayload(payload, req); err != nil {
+			return nil, err
+		}
+		if req.GetUserId() != 0 && req.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "user_id does not match authenticated runtime")
+		}
+		req.SessionId = strings.TrimSpace(req.GetSessionId())
+		session, err := p.ownedSession(ctx, rt, req.GetSessionId(), sessionActiveOnly)
+		if err != nil {
+			return nil, err
+		}
+		if session.GetUserId() != rt.UserID {
+			return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
+		}
+		if strings.ToLower(strings.TrimSpace(session.GetStatus())) != "running" {
+			return nil, status.Error(codes.FailedPrecondition, "Backtest Funding settlement requires a running Session")
+		}
+		if session.GetEnvironment() != backtestEnvironment {
+			return nil, status.Error(codes.FailedPrecondition, "Funding settlement is only available for Backtest Sessions")
+		}
+		req.UserId = rt.UserID
+		return p.requirePortfolio().SettleBacktestFunding(ctx, req)
 
 	case "order.PlaceOrder":
 		req := &orderv1.PlaceOrderRequest{}
@@ -702,6 +749,9 @@ func (p *PlatformProxy) ownedSession(ctx context.Context, rt AuthenticatedRuntim
 	if session == nil {
 		return nil, status.Error(codes.NotFound, "session not found")
 	}
+	if strings.TrimSpace(session.GetSessionId()) != sessionID {
+		return nil, status.Error(codes.PermissionDenied, "core session identity does not match requested Session")
+	}
 	if session.GetUserId() != 0 && session.GetUserId() != rt.UserID {
 		return nil, status.Error(codes.PermissionDenied, "session does not belong to authenticated runtime user")
 	}
@@ -769,6 +819,10 @@ func canonicalPlatformMethod(method string) string {
 		return "portfolio.SaveStrategyIndicatorsV2"
 	case "FinalizeStrategyIndicatorChunksV2", "portfolio.v1.PortfolioService/FinalizeStrategyIndicatorChunksV2":
 		return "portfolio.FinalizeStrategyIndicatorChunksV2"
+	case "ListVenueIncomeEntries", "portfolio.v1.PortfolioService/ListVenueIncomeEntries":
+		return "portfolio.ListVenueIncomeEntries"
+	case "SettleBacktestFunding", "portfolio.v1.PortfolioService/SettleBacktestFunding":
+		return "portfolio.SettleBacktestFunding"
 	case "PlaceOrder", "order.v1.OrderService/PlaceOrder":
 		return "order.PlaceOrder"
 	case "ResolveOrderAttempt", "order.v1.OrderService/ResolveOrderAttempt":
@@ -1315,6 +1369,12 @@ func (unavailablePortfolioClient) SaveStrategyIndicatorsV2(context.Context, *por
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 func (unavailablePortfolioClient) FinalizeStrategyIndicatorChunksV2(context.Context, *portfoliov1.FinalizeStrategyIndicatorChunksV2Request, ...grpc.CallOption) (*portfoliov1.FinalizeStrategyIndicatorChunksV2Response, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) ListVenueIncomeEntries(context.Context, *portfoliov1.ListVenueIncomeEntriesRequest, ...grpc.CallOption) (*portfoliov1.ListVenueIncomeEntriesResponse, error) {
+	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
+}
+func (unavailablePortfolioClient) SettleBacktestFunding(context.Context, *portfoliov1.SettleBacktestFundingRequest, ...grpc.CallOption) (*portfoliov1.SettleBacktestFundingResponse, error) {
 	return nil, status.Error(codes.Unavailable, "core-service platform client is not configured")
 }
 
