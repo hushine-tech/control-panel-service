@@ -121,6 +121,83 @@ func computeMissingSegments(
 	return missing, nil
 }
 
+func computeMissingFundingSegments(
+	startAt, endAt time.Time,
+	covered []domain.MarketDataCoverageSegment,
+) ([]domain.MarketDataTimeRange, error) {
+	startAt = startAt.UTC()
+	endAt = endAt.UTC()
+	if !endAt.After(startAt) {
+		return nil, fmt.Errorf("end_at must be after start_at")
+	}
+	var missing []domain.MarketDataTimeRange
+	cursor := startAt
+	for _, seg := range covered {
+		if seg.StartAt.After(cursor) {
+			missing = append(missing, domain.MarketDataTimeRange{StartAt: cursor, EndAt: seg.StartAt})
+		}
+		if seg.EndAt.After(cursor) {
+			cursor = seg.EndAt
+		}
+	}
+	if cursor.Before(endAt) {
+		missing = append(missing, domain.MarketDataTimeRange{StartAt: cursor, EndAt: endAt})
+	}
+	return missing, nil
+}
+
+func mergeFundingCoverageForQuery(
+	key domain.StreamKey,
+	startAt, endAt time.Time,
+	covered []domain.MarketDataCoverageSegment,
+) ([]domain.MarketDataCoverageSegment, error) {
+	startAt = startAt.UTC()
+	endAt = endAt.UTC()
+	if !endAt.After(startAt) {
+		return nil, fmt.Errorf("end_at must be after start_at")
+	}
+	segments := make([]domain.MarketDataCoverageSegment, 0, len(covered))
+	for _, seg := range covered {
+		if seg.Key != key || !seg.EndAt.After(startAt) || !seg.StartAt.Before(endAt) {
+			continue
+		}
+		seg.StartAt = maxTime(seg.StartAt.UTC(), startAt)
+		seg.EndAt = minTime(seg.EndAt.UTC(), endAt)
+		if seg.EndAt.After(seg.StartAt) {
+			segments = append(segments, splitCoverageSegmentByYear(seg)...)
+		}
+	}
+	sort.SliceStable(segments, func(i, j int) bool {
+		if segments[i].StartAt.Equal(segments[j].StartAt) {
+			return segments[i].EndAt.Before(segments[j].EndAt)
+		}
+		return segments[i].StartAt.Before(segments[j].StartAt)
+	})
+	out := make([]domain.MarketDataCoverageSegment, 0, len(segments))
+	for _, seg := range segments {
+		if len(out) == 0 {
+			out = append(out, seg)
+			continue
+		}
+		last := &out[len(out)-1]
+		if last.Year == seg.Year && !seg.StartAt.After(last.EndAt) {
+			if seg.EndAt.After(last.EndAt) {
+				last.EndAt = seg.EndAt
+			}
+			if seg.RowCount > last.RowCount {
+				last.RowCount = seg.RowCount
+			}
+			last.Source = mergeCoverageSource(last.Source, seg.Source)
+			if seg.UpdatedAt.After(last.UpdatedAt) {
+				last.UpdatedAt = seg.UpdatedAt
+			}
+			continue
+		}
+		out = append(out, seg)
+	}
+	return out, nil
+}
+
 func mergeCoverageForQuery(
 	key domain.StreamKey,
 	startAt, endAt time.Time,

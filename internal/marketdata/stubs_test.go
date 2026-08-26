@@ -173,7 +173,7 @@ func (s *stubRepo) UpsertMarketDataRequest(
 	r := domain.MarketDataRequest{
 		RequestID:         id,
 		UserID:            userID,
-		PortfolioID:         portfolioID,
+		PortfolioID:       portfolioID,
 		StreamID:          st.StreamID,
 		Key:               key,
 		NeedsLiveDelivery: needsLive,
@@ -306,7 +306,7 @@ func (s *stubRepo) CreateOrRenewLease(
 		LeaseID:         id,
 		SessionID:       sessionID,
 		StrategyID:      strategyID,
-		PortfolioID:       portfolioID,
+		PortfolioID:     portfolioID,
 		StreamID:        streamID,
 		ExpiresAt:       expires,
 		LastHeartbeatAt: now,
@@ -665,7 +665,7 @@ func (s *stubRepo) UpsertMarketDataHistoryRequest(
 	h := domain.MarketDataHistoryRequest{
 		RequestID:        id,
 		UserID:           userID,
-		PortfolioID:        portfolioID,
+		PortfolioID:      portfolioID,
 		Key:              key,
 		Status:           domain.HistoryRequestPending,
 		RequestedStartAt: startAt,
@@ -789,12 +789,22 @@ func (s *stubRepo) MergeMarketDataCoverageSegments(_ context.Context, segments [
 				break
 			}
 		}
+		rowCount := incoming.RowCount
+		if incoming.Key.Kind == "funding_rate" {
+			for id := range candidates {
+				if s.coverage[id].RowCount > rowCount {
+					rowCount = s.coverage[id].RowCount
+				}
+			}
+		} else {
+			var err error
+			rowCount, err = expectedCount(mergedStart, mergedEnd, incoming.Key.Interval)
+			if err != nil {
+				return nil, err
+			}
+		}
 		for id := range candidates {
 			delete(s.coverage, id)
-		}
-		rowCount, err := expectedCount(mergedStart, mergedEnd, incoming.Key.Interval)
-		if err != nil {
-			return nil, err
 		}
 		id := s.nextCoverageID
 		s.nextCoverageID++

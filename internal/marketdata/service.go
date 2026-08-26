@@ -131,6 +131,37 @@ func validateStreamKey(k *mdv1.StreamKey) (domain.StreamKey, error) {
 	}, nil
 }
 
+func validateCoverageKey(k *mdv1.StreamKey) (domain.StreamKey, error) {
+	if k == nil {
+		return domain.StreamKey{}, status.Error(codes.InvalidArgument, "key is required")
+	}
+	if strings.TrimSpace(strings.ToLower(k.GetKind())) == "kline" {
+		return validateStreamKey(k)
+	}
+
+	exchange := strings.TrimSpace(strings.ToLower(k.GetExchange()))
+	market := strings.TrimSpace(strings.ToLower(k.GetMarket()))
+	kind := strings.TrimSpace(strings.ToLower(k.GetKind()))
+	symbol := strings.TrimSpace(strings.ToUpper(k.GetSymbol()))
+	interval := strings.TrimSpace(k.GetInterval())
+	if !reValidExchange.MatchString(exchange) {
+		return domain.StreamKey{}, status.Errorf(codes.InvalidArgument, "key.exchange must be 'binance' or 'okx', got %q", exchange)
+	}
+	if market != "futures" {
+		return domain.StreamKey{}, status.Errorf(codes.InvalidArgument, "key.market must be 'futures' for funding_rate, got %q", market)
+	}
+	if kind != "funding_rate" {
+		return domain.StreamKey{}, status.Errorf(codes.InvalidArgument, "key.kind must be 'kline' or 'funding_rate', got %q", kind)
+	}
+	if !reValidSymbolStream.MatchString(symbol) {
+		return domain.StreamKey{}, status.Errorf(codes.InvalidArgument, "key.symbol must be 2-30 upper-case alphanum, got %q", symbol)
+	}
+	if interval != "" {
+		return domain.StreamKey{}, status.Error(codes.InvalidArgument, "key.interval must be empty for funding_rate")
+	}
+	return domain.StreamKey{Exchange: exchange, Market: market, Kind: kind, Symbol: symbol}, nil
+}
+
 func validateWriterKey(k *mdv1.StreamKey) (domain.StreamKey, error) {
 	if k == nil {
 		return domain.StreamKey{}, status.Error(codes.InvalidArgument, "key is required")
@@ -475,7 +506,7 @@ func validateCoverageSegment(raw *mdv1.MarketDataCoverageSegment) (domain.Market
 	if raw == nil {
 		return domain.MarketDataCoverageSegment{}, status.Error(codes.InvalidArgument, "coverage segment is required")
 	}
-	key, err := validateStreamKey(raw.GetKey())
+	key, err := validateCoverageKey(raw.GetKey())
 	if err != nil {
 		return domain.MarketDataCoverageSegment{}, err
 	}
@@ -501,19 +532,25 @@ func validateCoverageSegment(raw *mdv1.MarketDataCoverageSegment) (domain.Market
 	if endAt.After(nextYearStart) {
 		return domain.MarketDataCoverageSegment{}, status.Errorf(codes.InvalidArgument, "coverage segment end_at must not exceed %d-01-01 UTC", raw.GetYear()+1)
 	}
-	if raw.GetRowCount() <= 0 {
+	if key.Kind == "funding_rate" {
+		if raw.GetRowCount() < 0 {
+			return domain.MarketDataCoverageSegment{}, status.Error(codes.InvalidArgument, "funding coverage segment row_count must be non-negative")
+		}
+	} else if raw.GetRowCount() <= 0 {
 		return domain.MarketDataCoverageSegment{}, status.Error(codes.InvalidArgument, "coverage segment row_count must be positive")
 	}
 	source := strings.TrimSpace(raw.GetSource())
 	if source == "" {
 		return domain.MarketDataCoverageSegment{}, status.Error(codes.InvalidArgument, "coverage segment source is required")
 	}
-	n, err := expectedCount(startAt, endAt, key.Interval)
-	if err != nil {
-		return domain.MarketDataCoverageSegment{}, status.Errorf(codes.InvalidArgument, "coverage segment interval: %v", err)
-	}
-	if raw.GetRowCount() != n {
-		return domain.MarketDataCoverageSegment{}, status.Errorf(codes.InvalidArgument, "coverage segment row_count = %d, want %d for interval %s", raw.GetRowCount(), n, key.Interval)
+	if key.Kind == "kline" {
+		n, err := expectedCount(startAt, endAt, key.Interval)
+		if err != nil {
+			return domain.MarketDataCoverageSegment{}, status.Errorf(codes.InvalidArgument, "coverage segment interval: %v", err)
+		}
+		if raw.GetRowCount() != n {
+			return domain.MarketDataCoverageSegment{}, status.Errorf(codes.InvalidArgument, "coverage segment row_count = %d, want %d for interval %s", raw.GetRowCount(), n, key.Interval)
+		}
 	}
 	return domain.MarketDataCoverageSegment{
 		Key:      key,
@@ -554,6 +591,14 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 		r, err := s.repo.UpsertMarketDataHistoryRequest(ctx, req.GetUserId(), portfolioID, key, startAt, endAt)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "upsert historical market-data request: %v", err)
+		}
+		if key.Market == "futures" {
+			fundingKey := key
+			fundingKey.Kind = "funding_rate"
+			fundingKey.Interval = ""
+			if _, err := s.repo.UpsertMarketDataHistoryRequest(ctx, req.GetUserId(), portfolioID, fundingKey, startAt, endAt); err != nil {
+				return nil, status.Errorf(codes.Internal, "upsert historical funding request: %v", err)
+			}
 		}
 		return &mdv1.CreateMarketDataRequestResponse{
 			Request: toProtoHistoryRequest(r),
@@ -712,7 +757,7 @@ func (s *Service) ListMarketDataHistoryRequests(ctx context.Context, req *mdv1.L
 }
 
 func (s *Service) QueryMarketDataCoverage(ctx context.Context, req *mdv1.QueryMarketDataCoverageRequest) (*mdv1.QueryMarketDataCoverageResponse, error) {
-	key, err := validateStreamKey(req.GetKey())
+	key, err := validateCoverageKey(req.GetKey())
 	if err != nil {
 		return nil, err
 	}
@@ -727,13 +772,42 @@ func (s *Service) QueryMarketDataCoverage(ctx context.Context, req *mdv1.QueryMa
 	if !endAt.After(startAt) {
 		return nil, status.Error(codes.InvalidArgument, "end_at must be after start_at")
 	}
-	totalExpected, err := expectedCount(startAt, endAt, key.Interval)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "coverage interval: %v", err)
+	var totalExpected int64
+	if key.Kind == "kline" {
+		totalExpected, err = expectedCount(startAt, endAt, key.Interval)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "coverage interval: %v", err)
+		}
 	}
 	covered, err := s.repo.QueryMarketDataCoverage(ctx, key, startAt, endAt)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "query market-data coverage: %v", err)
+	}
+	if key.Kind == "funding_rate" {
+		covered, err = mergeFundingCoverageForQuery(key, startAt, endAt, covered)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "merge funding coverage: %v", err)
+		}
+		missing, err := computeMissingFundingSegments(startAt, endAt, covered)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "compute missing funding coverage: %v", err)
+		}
+		outCovered := make([]*mdv1.MarketDataCoverageSegment, 0, len(covered))
+		for _, seg := range covered {
+			outCovered = append(outCovered, toProtoMarketDataCoverageSegment(seg))
+		}
+		outMissing := make([]*mdv1.MarketDataTimeRange, 0, len(missing))
+		for _, item := range missing {
+			outMissing = append(outMissing, toProtoMarketDataTimeRange(item))
+		}
+		return &mdv1.QueryMarketDataCoverageResponse{
+			Key:              toProtoStreamKey(key),
+			RequestedStartAt: timestamppb.New(startAt),
+			RequestedEndAt:   timestamppb.New(endAt),
+			Complete:         len(missing) == 0,
+			CoveredSegments:  outCovered,
+			MissingSegments:  outMissing,
+		}, nil
 	}
 	covered, err = s.coverageWithRawFallback(ctx, key, startAt, endAt, covered)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,10 +29,12 @@ type MarketDataQueryConfig struct {
 	Database              string
 	SSLMode               string
 	ConnectTimeoutSeconds int
+	OpenDB                func(driverName, dataSourceName string) (*sql.DB, error)
 }
 
 type MarketDataQuery struct {
-	cfg MarketDataQueryConfig
+	cfg    MarketDataQueryConfig
+	openDB func(driverName, dataSourceName string) (*sql.DB, error)
 }
 
 type KlineQuery struct {
@@ -59,12 +62,30 @@ type KlineRow struct {
 	Timestamp int64
 }
 
+type FundingQuery struct {
+	Exchange    string
+	Market      string
+	Symbol      string
+	StartTimeMS int64
+	EndTimeMS   int64
+	Limit       int
+}
+
+type FundingRow struct {
+	Exchange           string
+	Market             string
+	Symbol             string
+	FundingTimeMS      int64
+	FundingRateDecimal string
+	MarkPriceDecimal   string
+}
+
 func NewMarketDataQuery(cfg MarketDataQueryConfig) *MarketDataQuery {
 	if cfg.Port == 0 {
 		cfg.Port = 5432
 	}
 	if cfg.Database == "" {
-		cfg.Database = "binance_{year}"
+		cfg.Database = "{exchange}_{year}"
 	}
 	if cfg.SSLMode == "" {
 		cfg.SSLMode = "disable"
@@ -72,7 +93,11 @@ func NewMarketDataQuery(cfg MarketDataQueryConfig) *MarketDataQuery {
 	if cfg.ConnectTimeoutSeconds <= 0 {
 		cfg.ConnectTimeoutSeconds = defaultKlineConnectTimeoutSeconds
 	}
-	return &MarketDataQuery{cfg: cfg}
+	openDB := cfg.OpenDB
+	if openDB == nil {
+		openDB = sql.Open
+	}
+	return &MarketDataQuery{cfg: cfg, openDB: openDB}
 }
 
 func (q *MarketDataQuery) FetchKlines(ctx context.Context, req KlineQuery) ([]KlineRow, error) {
@@ -101,7 +126,7 @@ func (q *MarketDataQuery) FetchKlines(ctx context.Context, req KlineQuery) ([]Kl
 		if err != nil {
 			return nil, err
 		}
-		db, err := sql.Open("postgres", dsn)
+		db, err := q.openDB("postgres", dsn)
 		if err != nil {
 			return nil, fmt.Errorf("open market-data db: %w", err)
 		}
@@ -156,6 +181,92 @@ func (q *MarketDataQuery) FetchKlines(ctx context.Context, req KlineQuery) ([]Kl
 		}
 		_ = rows.Close()
 		_ = db.Close()
+	}
+	return out, nil
+}
+
+func (q *MarketDataQuery) FetchFunding(ctx context.Context, req FundingQuery) ([]FundingRow, error) {
+	if q == nil {
+		return nil, fmt.Errorf("market-data query is not configured")
+	}
+	req.Exchange = strings.ToLower(strings.TrimSpace(req.Exchange))
+	req.Market = strings.ToLower(strings.TrimSpace(req.Market))
+	req.Symbol = strings.ToUpper(strings.TrimSpace(req.Symbol))
+	if req.Exchange == "" || !safeIdent.MatchString(req.Exchange) {
+		return nil, fmt.Errorf("invalid exchange %q", req.Exchange)
+	}
+	if req.Market != "futures" {
+		return nil, fmt.Errorf("Funding requires market=futures, got %q", req.Market)
+	}
+	if req.Symbol == "" || !safeIdent.MatchString(strings.ToLower(req.Symbol)) {
+		return nil, fmt.Errorf("invalid symbol %q", req.Symbol)
+	}
+	if req.StartTimeMS <= 0 || req.EndTimeMS <= req.StartTimeMS {
+		return nil, fmt.Errorf("invalid time range")
+	}
+
+	out := make([]FundingRow, 0)
+	table := fmt.Sprintf("futures_funding_rates_%s", strings.ToLower(req.Symbol))
+	for _, year := range yearsInRange(req.StartTimeMS, req.EndTimeMS) {
+		dsn, err := q.dsnForYear(req.Exchange, year)
+		if err != nil {
+			return nil, err
+		}
+		db, err := q.openDB("postgres", dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open market-data db: %w", err)
+		}
+		rows, err := queryRowsWithRetry(ctx, db, fmt.Sprintf(`
+			SELECT symbol, time, funding_rate::text, mark_price::text
+			FROM %s
+			WHERE UPPER(symbol) = UPPER($1)
+			  AND time >= to_timestamp($2/1000.0)
+			  AND time < to_timestamp($3/1000.0)
+			ORDER BY time ASC
+		`, quoteIdent(table)), req.Symbol, req.StartTimeMS, req.EndTimeMS)
+		if err != nil {
+			_ = db.Close()
+			if isMissingMarketDataStorageError(err) {
+				continue
+			}
+			return nil, fmt.Errorf("query Funding %s/%s: %w", req.Exchange, req.Symbol, err)
+		}
+		for rows.Next() {
+			var row FundingRow
+			var fundingTime time.Time
+			if err := rows.Scan(&row.Symbol, &fundingTime, &row.FundingRateDecimal, &row.MarkPriceDecimal); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("scan Funding: %w", err)
+			}
+			row.Exchange = req.Exchange
+			row.Market = req.Market
+			row.Symbol = strings.ToUpper(row.Symbol)
+			row.FundingTimeMS = fundingTime.UTC().UnixMilli()
+			out = append(out, row)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("iterate Funding: %w", err)
+		}
+		_ = rows.Close()
+		_ = db.Close()
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].FundingTimeMS != out[j].FundingTimeMS {
+			return out[i].FundingTimeMS < out[j].FundingTimeMS
+		}
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		if out[i].FundingRateDecimal != out[j].FundingRateDecimal {
+			return out[i].FundingRateDecimal < out[j].FundingRateDecimal
+		}
+		return out[i].MarkPriceDecimal < out[j].MarkPriceDecimal
+	})
+	if req.Limit > 0 && len(out) > req.Limit {
+		out = out[:req.Limit]
 	}
 	return out, nil
 }
@@ -273,8 +384,8 @@ func normalizeKlineQuery(req KlineQuery) KlineQuery {
 }
 
 func validateKlineQuery(req KlineQuery) error {
-	if req.Exchange != "binance" {
-		return fmt.Errorf("only exchange=binance is supported, got %q", req.Exchange)
+	if req.Exchange == "" || !safeIdent.MatchString(req.Exchange) {
+		return fmt.Errorf("invalid exchange %q", req.Exchange)
 	}
 	if req.Market != "spot" && req.Market != "futures" {
 		return fmt.Errorf("market must be spot or futures, got %q", req.Market)

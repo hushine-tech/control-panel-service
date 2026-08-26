@@ -34,6 +34,26 @@ func coverageSegment(start, end time.Time) *mdv1.MarketDataCoverageSegment {
 	}
 }
 
+func fundingCoverageKey() *mdv1.StreamKey {
+	return &mdv1.StreamKey{
+		Exchange: "binance",
+		Market:   "futures",
+		Kind:     "funding_rate",
+		Symbol:   "BTCUSDT",
+	}
+}
+
+func fundingCoverageSegment(start, end time.Time, rowCount int64) *mdv1.MarketDataCoverageSegment {
+	return &mdv1.MarketDataCoverageSegment{
+		Key:      fundingCoverageKey(),
+		Year:     int32(start.UTC().Year()),
+		StartAt:  timestamppb.New(start),
+		EndAt:    timestamppb.New(end),
+		RowCount: rowCount,
+		Source:   "funding_historical_backfill",
+	}
+}
+
 func mustReportCoverage(t *testing.T, svc *Service, segments ...*mdv1.MarketDataCoverageSegment) *mdv1.ReportMarketDataCoverageSegmentsResponse {
 	t.Helper()
 	resp, err := svc.ReportMarketDataCoverageSegments(context.Background(), &mdv1.ReportMarketDataCoverageSegmentsRequest{
@@ -310,5 +330,108 @@ func TestReportCoverageSegmentsExactRetryIsIdempotent(t *testing.T) {
 	}
 	if len(query.GetCoveredSegments()) != 1 {
 		t.Fatalf("covered segments = %d, want 1", len(query.GetCoveredSegments()))
+	}
+}
+
+func TestFundingCoverageExplicitZeroRowWindowIsComplete(t *testing.T) {
+	query := &stubKlineQuerier{}
+	svc := NewService(newStubRepo(), WithMarketDataQuery(query))
+	start := time.Date(2026, 5, 1, 1, 23, 45, 0, time.UTC)
+	end := time.Date(2026, 5, 2, 4, 56, 7, 0, time.UTC)
+
+	mustReportCoverage(t, svc, fundingCoverageSegment(start, end, 0))
+	resp, err := svc.QueryMarketDataCoverage(context.Background(), &mdv1.QueryMarketDataCoverageRequest{
+		Key:     fundingCoverageKey(),
+		StartAt: timestamppb.New(start),
+		EndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("QueryMarketDataCoverage: %v", err)
+	}
+	if !resp.GetComplete() {
+		t.Fatalf("complete = false, want true for explicit zero-row Funding coverage: %#v", resp.GetMissingSegments())
+	}
+	if resp.GetExpectedCount() != 0 || resp.GetCoveredCount() != 0 {
+		t.Fatalf("Funding counts = expected:%d covered:%d, want metadata-only 0/0", resp.GetExpectedCount(), resp.GetCoveredCount())
+	}
+	if len(query.calls) != 0 {
+		t.Fatalf("Funding coverage queried raw Klines %d times, want 0", len(query.calls))
+	}
+}
+
+func TestFundingCoverageExplicitSegmentUnionReportsGapWithoutInventingCadence(t *testing.T) {
+	svc := newSvc()
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	gapStart := start.Add(7*time.Hour + 13*time.Minute)
+	gapEnd := gapStart.Add(37 * time.Minute)
+	end := start.Add(19*time.Hour + 11*time.Minute)
+	mustReportCoverage(t, svc,
+		fundingCoverageSegment(start, gapStart, 1),
+		fundingCoverageSegment(gapEnd, end, 2),
+	)
+
+	resp, err := svc.QueryMarketDataCoverage(context.Background(), &mdv1.QueryMarketDataCoverageRequest{
+		Key:     fundingCoverageKey(),
+		StartAt: timestamppb.New(start),
+		EndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("QueryMarketDataCoverage: %v", err)
+	}
+	if resp.GetComplete() {
+		t.Fatal("complete = true, want false for explicit Funding coverage gap")
+	}
+	missing := resp.GetMissingSegments()
+	if len(missing) != 1 || !missing[0].GetStartAt().AsTime().Equal(gapStart) || !missing[0].GetEndAt().AsTime().Equal(gapEnd) {
+		t.Fatalf("missing Funding segments = %#v, want exact [%s,%s)", missing, gapStart, gapEnd)
+	}
+	if missing[0].GetExpectedCount() != 0 {
+		t.Fatalf("Funding missing expected_count = %d, want 0 without invented interval", missing[0].GetExpectedCount())
+	}
+}
+
+func TestFundingCoverageAdjacentSegmentsAndYearBoundaryFormOneCompleteUnion(t *testing.T) {
+	svc := newSvc()
+	start := time.Date(2026, 12, 31, 22, 0, 0, 0, time.UTC)
+	mid := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2027, 1, 1, 3, 0, 0, 0, time.UTC)
+	mustReportCoverage(t, svc,
+		fundingCoverageSegment(start, mid, 0),
+		fundingCoverageSegment(mid, end, 1),
+	)
+
+	resp, err := svc.QueryMarketDataCoverage(context.Background(), &mdv1.QueryMarketDataCoverageRequest{
+		Key:     fundingCoverageKey(),
+		StartAt: timestamppb.New(start),
+		EndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("QueryMarketDataCoverage: %v", err)
+	}
+	if !resp.GetComplete() {
+		t.Fatalf("complete = false across adjacent per-year Funding segments: %#v", resp.GetMissingSegments())
+	}
+	if got := len(resp.GetCoveredSegments()); got != 2 {
+		t.Fatalf("covered segments = %d, want two deterministic per-year segments", got)
+	}
+}
+
+func TestFundingCoverageValidationIsFuturesOnlyEmptyIntervalAndNonNegativeRows(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*mdv1.MarketDataCoverageSegment)
+	}{
+		{name: "spot", mutate: func(seg *mdv1.MarketDataCoverageSegment) { seg.Key.Market = "spot" }},
+		{name: "interval", mutate: func(seg *mdv1.MarketDataCoverageSegment) { seg.Key.Interval = "8h" }},
+		{name: "negative rows", mutate: func(seg *mdv1.MarketDataCoverageSegment) { seg.RowCount = -1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seg := fundingCoverageSegment(start, end, 0)
+			tc.mutate(seg)
+			_, err := newSvc().ReportMarketDataCoverageSegments(context.Background(), &mdv1.ReportMarketDataCoverageSegmentsRequest{Segments: []*mdv1.MarketDataCoverageSegment{seg}})
+			assertInvalidArgument(t, err)
+		})
 	}
 }

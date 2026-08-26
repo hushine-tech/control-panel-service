@@ -1264,9 +1264,18 @@ func (r *TimescaleRepository) mergeMarketDataCoverageSegment(ctx context.Context
 		}
 	}
 
-	rowCount, err := coverageExpectedCount(mergedStart, mergedEnd, incoming.Key.Interval)
-	if err != nil {
-		return domain.MarketDataCoverageSegment{}, err
+	rowCount := incoming.RowCount
+	if incoming.Key.Kind == "funding_rate" {
+		for _, candidate := range candidates {
+			if candidate.RowCount > rowCount {
+				rowCount = candidate.RowCount
+			}
+		}
+	} else {
+		rowCount, err = coverageExpectedCount(mergedStart, mergedEnd, incoming.Key.Interval)
+		if err != nil {
+			return domain.MarketDataCoverageSegment{}, err
+		}
 	}
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO market_data_coverage_segments

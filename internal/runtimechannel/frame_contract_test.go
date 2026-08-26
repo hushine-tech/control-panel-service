@@ -137,7 +137,7 @@ func TestStrategyLaunchFrameDependencyContract(t *testing.T) {
 	bootstrap := requireDependencyFrameMessage(t, file, "StrategySessionBootstrap")
 	assertDependencyFrameFields(t, bootstrap, map[protoreflect.Name]protoreflect.FieldNumber{
 		"session_id": 1, "launch_operation_id": 2, "strategy_source_sha256": 3,
-		"confirmed_target_facts": 4, "environment": 5,
+		"confirmed_target_facts": 4, "environment": 5, "spot_risk_snapshots": 6,
 	})
 	assertDependencyFrameMessageField(t, bootstrap, "confirmed_target_facts", 4, "strategy.v1.StrategySessionTargetLeverageFact")
 
@@ -146,6 +146,7 @@ func TestStrategyLaunchFrameDependencyContract(t *testing.T) {
 		"ok": 1, "session": 2, "launch_operation_id": 3, "strategy_source_sha256": 4,
 		"declared_inputs": 5, "declared_order_targets": 6, "required_routes": 7,
 		"required_symbols": 8, "preflight": 9, "risk_controls": 10, "failures": 11,
+		"spot_risk_snapshots": 12,
 	})
 
 	assertDependencyFrameServiceMethod(t, file, "StrategyService", "PrepareRunStrategyStart", "strategy.v1.PrepareRunStrategyStartRequest", "strategy.v1.PreparedRunStrategyStart")

@@ -22,10 +22,10 @@ CREATE TABLE IF NOT EXISTS market_data_coverage_segments (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT market_data_coverage_segments_check CHECK ((segment_end_at > segment_start_at)),
     CONSTRAINT market_data_coverage_segments_exchange_check CHECK ((exchange = ANY (ARRAY['binance'::text, 'okx'::text]))),
-    CONSTRAINT market_data_coverage_segments_interval_check CHECK (("interval" <> ''::text)),
-    CONSTRAINT market_data_coverage_segments_kind_check CHECK ((kind = 'kline'::text)),
+    CONSTRAINT market_data_coverage_segments_interval_check CHECK ((((kind = 'kline'::text) AND ("interval" <> ''::text)) OR ((kind = 'funding_rate'::text) AND ("interval" = ''::text)))),
+    CONSTRAINT market_data_coverage_segments_kind_check CHECK (((kind = 'kline'::text) OR ((kind = 'funding_rate'::text) AND (market = 'futures'::text)))),
     CONSTRAINT market_data_coverage_segments_market_check CHECK ((market = ANY (ARRAY['spot'::text, 'futures'::text]))),
-    CONSTRAINT market_data_coverage_segments_row_count_check CHECK ((row_count > 0)),
+    CONSTRAINT market_data_coverage_segments_row_count_check CHECK ((((kind = 'kline'::text) AND (row_count > 0)) OR ((kind = 'funding_rate'::text) AND (row_count >= 0)))),
     CONSTRAINT market_data_coverage_segments_source_check CHECK ((source <> ''::text)),
     CONSTRAINT market_data_coverage_segments_symbol_check CHECK ((symbol <> ''::text)),
     CONSTRAINT market_data_coverage_segments_year_check CHECK ((year >= 1970))

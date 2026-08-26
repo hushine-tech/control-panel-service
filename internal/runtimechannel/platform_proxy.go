@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	mdv1 "github.com/hushine-tech/control-panel-service/gen/marketdatav1"
@@ -64,10 +66,15 @@ type MarketDataPlatformServer interface {
 	ReleaseMarketDataLease(context.Context, *mdv1.ReleaseMarketDataLeaseRequest) (*mdv1.ReleaseMarketDataLeaseResponse, error)
 	CreateSessionMarketDataSubscriptions(context.Context, *mdv1.CreateSessionMarketDataSubscriptionsRequest) (*mdv1.CreateSessionMarketDataSubscriptionsResponse, error)
 	ReleaseSessionMarketDataSubscriptions(context.Context, *mdv1.ReleaseSessionMarketDataSubscriptionsRequest) (*mdv1.ReleaseSessionMarketDataSubscriptionsResponse, error)
+	QueryMarketDataCoverage(context.Context, *mdv1.QueryMarketDataCoverageRequest) (*mdv1.QueryMarketDataCoverageResponse, error)
 }
 
 type KlineQuerier interface {
 	FetchKlines(context.Context, KlineQuery) ([]KlineRow, error)
+}
+
+type FundingQuerier interface {
+	FetchFunding(context.Context, FundingQuery) ([]FundingRow, error)
 }
 
 type DatasetDeliverer interface {
@@ -460,7 +467,50 @@ func (p *PlatformProxy) DispatchRuntimeRequest(ctx context.Context, rt Authentic
 		if err != nil {
 			return nil, status.Errorf(codes.Unavailable, "fetch backtest page: %v", err)
 		}
-		return klineRowsToBacktestPageStruct(req, rows)
+		page, err := klineRowsToBacktestPageStruct(req, rows)
+		if err != nil {
+			return nil, err
+		}
+		if req.Market != "futures" {
+			return page, nil
+		}
+		fundingQuery, ok := query.(FundingQuerier)
+		if !ok {
+			return nil, status.Error(codes.FailedPrecondition, "Funding market-data query is not configured")
+		}
+		pageEndMS := req.EndTimeMS
+		if len(rows) == backtestPageSize {
+			stepMS, err := intervalStepMS(req.Interval)
+			if err != nil {
+				return nil, status.Errorf(codes.InvalidArgument, "backtest page interval: %v", err)
+			}
+			pageEndMS = rows[len(rows)-1].OpenTime + stepMS
+			if pageEndMS > req.EndTimeMS {
+				pageEndMS = req.EndTimeMS
+			}
+		}
+		fundingReq := FundingQuery{
+			Exchange: req.Exchange, Market: req.Market, Symbol: req.Symbol,
+			StartTimeMS: req.StartTimeMS, EndTimeMS: pageEndMS,
+		}
+		fundingRows, err := fundingQuery.FetchFunding(ctx, fundingReq)
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "fetch backtest Funding: %v", err)
+		}
+		coverage, err := p.requireMarketData().QueryMarketDataCoverage(ctx, &mdv1.QueryMarketDataCoverageRequest{
+			Key: &mdv1.StreamKey{
+				Exchange: req.Exchange, Market: req.Market, Kind: "funding_rate", Symbol: req.Symbol,
+			},
+			StartAt: timestamppb.New(timeFromUnixMilli(req.StartTimeMS)),
+			EndAt:   timestamppb.New(timeFromUnixMilli(pageEndMS)),
+		})
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "query backtest Funding coverage: %v", err)
+		}
+		if err := addFundingFactsToBacktestPage(page, fundingRows, coverage.GetComplete()); err != nil {
+			return nil, err
+		}
+		return page, nil
 
 	case "marketdata.DeliverDataset":
 		req, err := unpackDatasetDeliveryPayload(payload)
@@ -1027,6 +1077,32 @@ func klineRowsToBacktestPageStruct(req KlineQuery, rows []KlineRow) (*structpb.S
 	return page, nil
 }
 
+func addFundingFactsToBacktestPage(page *structpb.Struct, rows []FundingRow, coverageComplete bool) error {
+	values := make([]*structpb.Value, 0, len(rows))
+	for _, row := range rows {
+		fact, err := structpb.NewStruct(map[string]any{
+			"exchange":             row.Exchange,
+			"market":               row.Market,
+			"symbol":               row.Symbol,
+			"funding_time_ms":      float64(row.FundingTimeMS),
+			"funding_rate_decimal": row.FundingRateDecimal,
+			"mark_price_decimal":   row.MarkPriceDecimal,
+			"settlement_asset":     "USDT",
+		})
+		if err != nil {
+			return status.Errorf(codes.Internal, "encode Funding fact: %v", err)
+		}
+		values = append(values, structpb.NewStructValue(fact))
+	}
+	page.Fields["funding_facts"] = structpb.NewListValue(&structpb.ListValue{Values: values})
+	page.Fields["funding_coverage_complete"] = structpb.NewBoolValue(coverageComplete)
+	return nil
+}
+
+func timeFromUnixMilli(ms int64) time.Time {
+	return time.UnixMilli(ms).UTC()
+}
+
 func stringField(fields map[string]*structpb.Value, name string) string {
 	if fields == nil || fields[name] == nil {
 		return ""
@@ -1272,6 +1348,9 @@ func (unavailableMarketDataClient) CreateSessionMarketDataSubscriptions(context.
 	return nil, status.Error(codes.Unavailable, "market-data platform client is not configured")
 }
 func (unavailableMarketDataClient) ReleaseSessionMarketDataSubscriptions(context.Context, *mdv1.ReleaseSessionMarketDataSubscriptionsRequest) (*mdv1.ReleaseSessionMarketDataSubscriptionsResponse, error) {
+	return nil, status.Error(codes.Unavailable, "market-data platform client is not configured")
+}
+func (unavailableMarketDataClient) QueryMarketDataCoverage(context.Context, *mdv1.QueryMarketDataCoverageRequest) (*mdv1.QueryMarketDataCoverageResponse, error) {
 	return nil, status.Error(codes.Unavailable, "market-data platform client is not configured")
 }
 

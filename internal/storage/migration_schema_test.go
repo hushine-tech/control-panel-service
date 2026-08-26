@@ -241,6 +241,32 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 			t.Fatalf("market_data_writer_leases.%s is missing after migrations", column)
 		}
 	}
+
+	insertCoverage := func(market, kind, symbol, interval string, rowCount int64) error {
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO market_data_coverage_segments
+				(exchange, market, kind, symbol, interval, year, segment_start_at, segment_end_at, row_count, source)
+			VALUES ('binance', $1, $2, $3, $4, 2026, '2026-05-01T00:00:00Z', '2026-05-01T01:00:00Z', $5, 'migration_test')`,
+			market, kind, symbol, interval, rowCount)
+		return err
+	}
+	if err := insertCoverage("futures", "funding_rate", "BTCUSDT", "", 0); err != nil {
+		t.Fatalf("baseline schema rejected explicit zero-row Funding coverage: %v", err)
+	}
+	for _, tc := range []struct {
+		name           string
+		market, symbol string
+		interval       string
+		rowCount       int64
+	}{
+		{name: "Spot Funding", market: "spot", symbol: "ETHUSDT", rowCount: 0},
+		{name: "Funding interval", market: "futures", symbol: "SOLUSDT", interval: "8h", rowCount: 1},
+		{name: "negative Funding rows", market: "futures", symbol: "XRPUSDT", rowCount: -1},
+	} {
+		if err := insertCoverage(tc.market, "funding_rate", tc.symbol, tc.interval, tc.rowCount); err == nil {
+			t.Fatalf("baseline schema accepted invalid %s coverage", tc.name)
+		}
+	}
 }
 
 func repoRoot(t *testing.T) string {

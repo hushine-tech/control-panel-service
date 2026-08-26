@@ -1258,7 +1258,7 @@ func TestPlatformProxyFetchKlinesReturnsStructPayload(t *testing.T) {
 
 func TestPlatformProxyFetchBacktestPageUsesFixedPageSize(t *testing.T) {
 	query := &fakeKlineQuery{rows: makeKlineRows(9000, 1000, 1000)}
-	proxy := NewPlatformProxy(nil, nil, nil)
+	proxy := NewPlatformProxy(nil, nil, &fakeMarketDataPlatformServer{fundingCoverageComplete: true})
 	proxy.SetMarketDataQuery(query)
 
 	payload, err := anypb.New(mustStruct(t, map[string]any{
@@ -1303,7 +1303,7 @@ func TestPlatformProxyFetchBacktestPageUsesFixedPageSize(t *testing.T) {
 
 func TestPlatformProxyFetchBacktestPageAppliesCursor(t *testing.T) {
 	query := &fakeKlineQuery{rows: makeKlineRows(3, 1000, 1000)}
-	proxy := NewPlatformProxy(nil, nil, nil)
+	proxy := NewPlatformProxy(nil, nil, &fakeMarketDataPlatformServer{fundingCoverageComplete: true})
 	proxy.SetMarketDataQuery(query)
 
 	payload, err := anypb.New(mustStruct(t, map[string]any{
@@ -1335,6 +1335,139 @@ func TestPlatformProxyFetchBacktestPageAppliesCursor(t *testing.T) {
 	}
 	if call.EndTimeMS != 5000 {
 		t.Fatalf("EndTimeMS = %d, want 5000", call.EndTimeMS)
+	}
+}
+
+func TestPlatformProxyFetchBacktestPageReturnsExactFundingAndExplicitCoverage(t *testing.T) {
+	query := &fakeKlineQuery{
+		rows: makeKlineRows(2, 10_000, 1000),
+		fundingRows: []FundingRow{{
+			Exchange: "okx", Market: "futures", Symbol: "ETHUSDT", FundingTimeMS: 10_500,
+			FundingRateDecimal: "0.000100000000000001", MarkPriceDecimal: "20000.123456789012345678",
+		}},
+	}
+	coverage := &fakeMarketDataPlatformServer{fundingCoverageComplete: true}
+	proxy := NewPlatformProxy(nil, nil, coverage)
+	proxy.SetMarketDataQuery(query)
+	payload, err := anypb.New(mustStruct(t, map[string]any{
+		"exchange": "okx", "market": "futures", "kind": "kline", "symbol": "ETHUSDT", "interval": "1s",
+		"start_after_time_ms": float64(9_000), "end_time_ms": float64(12_000),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-1"}, "marketdata.FetchBacktestPage", payload)
+	if err != nil {
+		t.Fatalf("FetchBacktestPage: %v", err)
+	}
+	page := message.(*structpb.Struct)
+	if !page.GetFields()["funding_coverage_complete"].GetBoolValue() {
+		t.Fatal("funding_coverage_complete = false, want explicit true")
+	}
+	facts := page.GetFields()["funding_facts"].GetListValue().GetValues()
+	if len(facts) != 1 {
+		t.Fatalf("Funding facts = %d, want 1", len(facts))
+	}
+	fact := facts[0].GetStructValue().GetFields()
+	if fact["exchange"].GetStringValue() != "okx" || fact["market"].GetStringValue() != "futures" || fact["symbol"].GetStringValue() != "ETHUSDT" ||
+		int64(fact["funding_time_ms"].GetNumberValue()) != 10_500 || fact["funding_rate_decimal"].GetStringValue() != "0.000100000000000001" ||
+		fact["mark_price_decimal"].GetStringValue() != "20000.123456789012345678" || fact["settlement_asset"].GetStringValue() != "USDT" {
+		t.Fatalf("exact Funding fact = %#v", fact)
+	}
+	if len(query.fundingCalls) != 1 || query.fundingCalls[0].StartTimeMS != 10_000 || query.fundingCalls[0].EndTimeMS != 12_000 {
+		t.Fatalf("Funding page query = %#v, want [10000,12000)", query.fundingCalls)
+	}
+	if len(coverage.coverageCalls) != 1 {
+		t.Fatalf("Funding coverage calls = %d, want 1", len(coverage.coverageCalls))
+	}
+	coverageReq := coverage.coverageCalls[0]
+	if coverageReq.GetKey().GetExchange() != "okx" || coverageReq.GetKey().GetKind() != "funding_rate" || coverageReq.GetKey().GetInterval() != "" ||
+		coverageReq.GetStartAt().AsTime().UnixMilli() != 10_000 || coverageReq.GetEndAt().AsTime().UnixMilli() != 12_000 {
+		t.Fatalf("Funding coverage request = %#v", coverageReq)
+	}
+}
+
+func TestPlatformProxyFetchBacktestPageFundingBoundaryIsNeitherDuplicatedNorSkipped(t *testing.T) {
+	const startMS int64 = 10_000
+	rows := makeKlineRows(backtestPageSize+1, startMS, 1000)
+	boundary := startMS + int64(backtestPageSize)*1000
+	query := &fakeKlineQuery{
+		rows: rows,
+		fundingRows: []FundingRow{
+			{Exchange: "binance", Market: "futures", Symbol: "BTCUSDT", FundingTimeMS: boundary - 1, FundingRateDecimal: "0.1", MarkPriceDecimal: "100"},
+			{Exchange: "binance", Market: "futures", Symbol: "BTCUSDT", FundingTimeMS: boundary, FundingRateDecimal: "0.2", MarkPriceDecimal: "101"},
+		},
+	}
+	proxy := NewPlatformProxy(nil, nil, &fakeMarketDataPlatformServer{fundingCoverageComplete: true})
+	proxy.SetMarketDataQuery(query)
+	fetch := func(startAfter int64) *structpb.Struct {
+		t.Helper()
+		payload, err := anypb.New(mustStruct(t, map[string]any{
+			"exchange": "binance", "market": "futures", "kind": "kline", "symbol": "BTCUSDT", "interval": "1s",
+			"start_after_time_ms": float64(startAfter), "end_time_ms": float64(boundary + 1000),
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		message, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-1"}, "marketdata.FetchBacktestPage", payload)
+		if err != nil {
+			t.Fatalf("FetchBacktestPage: %v", err)
+		}
+		return message.(*structpb.Struct)
+	}
+	first := fetch(startMS - 1000)
+	second := fetch(startMS + int64(backtestPageSize-1)*1000)
+	firstFacts := first.GetFields()["funding_facts"].GetListValue().GetValues()
+	secondFacts := second.GetFields()["funding_facts"].GetListValue().GetValues()
+	if len(firstFacts) != 1 || int64(firstFacts[0].GetStructValue().GetFields()["funding_time_ms"].GetNumberValue()) != boundary-1 {
+		t.Fatalf("first page Funding facts = %#v, want only boundary-1", firstFacts)
+	}
+	if len(secondFacts) != 1 || int64(secondFacts[0].GetStructValue().GetFields()["funding_time_ms"].GetNumberValue()) != boundary {
+		t.Fatalf("second page Funding facts = %#v, want boundary exactly once", secondFacts)
+	}
+}
+
+func TestPlatformProxyFetchBacktestPageEmptyFundingUsesCoverageFactAndSpotOmitsFields(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		market           string
+		coverageComplete bool
+		wantCoverage     bool
+		wantFunding      bool
+	}{
+		{name: "Futures empty complete", market: "futures", coverageComplete: true, wantCoverage: true, wantFunding: true},
+		{name: "Futures empty gap", market: "futures", coverageComplete: false, wantCoverage: false, wantFunding: true},
+		{name: "Spot omits Funding", market: "spot", wantFunding: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query := &fakeKlineQuery{rows: makeKlineRows(1, 10_000, 1000)}
+			coverage := &fakeMarketDataPlatformServer{fundingCoverageComplete: tc.coverageComplete}
+			proxy := NewPlatformProxy(nil, nil, coverage)
+			proxy.SetMarketDataQuery(query)
+			payload, err := anypb.New(mustStruct(t, map[string]any{
+				"exchange": "binance", "market": tc.market, "kind": "kline", "symbol": "BTCUSDT", "interval": "1s",
+				"start_after_time_ms": float64(9_000), "end_time_ms": float64(11_000),
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			message, err := proxy.DispatchRuntimeRequest(context.Background(), AuthenticatedRuntime{UserID: 42, RuntimeID: "rt-1"}, "marketdata.FetchBacktestPage", payload)
+			if err != nil {
+				t.Fatalf("FetchBacktestPage: %v", err)
+			}
+			fields := message.(*structpb.Struct).GetFields()
+			_, hasFacts := fields["funding_facts"]
+			_, hasCoverage := fields["funding_coverage_complete"]
+			if hasFacts != tc.wantFunding || hasCoverage != tc.wantFunding {
+				t.Fatalf("Funding field presence = facts:%v coverage:%v, want %v", hasFacts, hasCoverage, tc.wantFunding)
+			}
+			if tc.wantFunding && fields["funding_coverage_complete"].GetBoolValue() != tc.wantCoverage {
+				t.Fatalf("funding_coverage_complete = %v, want %v", fields["funding_coverage_complete"].GetBoolValue(), tc.wantCoverage)
+			}
+			if tc.market == "spot" && (len(query.fundingCalls) != 0 || len(coverage.coverageCalls) != 0) {
+				t.Fatalf("Spot queried Funding rows/coverage: rows=%d coverage=%d", len(query.fundingCalls), len(coverage.coverageCalls))
+			}
+		})
 	}
 }
 
@@ -1884,6 +2017,8 @@ func (fakeOrderPlatformClient) ResolveOrderAttempt(context.Context, *orderv1.Res
 type fakeMarketDataPlatformServer struct {
 	releaseLeaseReq                *mdv1.ReleaseMarketDataLeaseRequest
 	releaseSessionSubscriptionsReq *mdv1.ReleaseSessionMarketDataSubscriptionsRequest
+	fundingCoverageComplete        bool
+	coverageCalls                  []*mdv1.QueryMarketDataCoverageRequest
 }
 
 func (fakeMarketDataPlatformServer) GetMarketDataStreamStatus(context.Context, *mdv1.GetMarketDataStreamStatusRequest) (*mdv1.GetMarketDataStreamStatusResponse, error) {
@@ -1903,14 +2038,21 @@ func (fakeMarketDataPlatformServer) CreateSessionMarketDataSubscriptions(context
 	return &mdv1.CreateSessionMarketDataSubscriptionsResponse{}, nil
 }
 
+func (f *fakeMarketDataPlatformServer) QueryMarketDataCoverage(_ context.Context, req *mdv1.QueryMarketDataCoverageRequest) (*mdv1.QueryMarketDataCoverageResponse, error) {
+	f.coverageCalls = append(f.coverageCalls, req)
+	return &mdv1.QueryMarketDataCoverageResponse{Complete: f.fundingCoverageComplete}, nil
+}
+
 func (f *fakeMarketDataPlatformServer) ReleaseSessionMarketDataSubscriptions(_ context.Context, req *mdv1.ReleaseSessionMarketDataSubscriptionsRequest) (*mdv1.ReleaseSessionMarketDataSubscriptionsResponse, error) {
 	f.releaseSessionSubscriptionsReq = req
 	return &mdv1.ReleaseSessionMarketDataSubscriptionsResponse{}, nil
 }
 
 type fakeKlineQuery struct {
-	rows  []KlineRow
-	calls []KlineQuery
+	rows         []KlineRow
+	calls        []KlineQuery
+	fundingRows  []FundingRow
+	fundingCalls []FundingQuery
 }
 
 func (f *fakeKlineQuery) FetchKlines(_ context.Context, req KlineQuery) ([]KlineRow, error) {
@@ -1918,6 +2060,20 @@ func (f *fakeKlineQuery) FetchKlines(_ context.Context, req KlineQuery) ([]Kline
 	out := make([]KlineRow, 0, len(f.rows))
 	for _, row := range f.rows {
 		if row.OpenTime >= req.StartTimeMS && row.OpenTime < req.EndTimeMS {
+			out = append(out, row)
+			if req.Limit > 0 && len(out) >= req.Limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeKlineQuery) FetchFunding(_ context.Context, req FundingQuery) ([]FundingRow, error) {
+	f.fundingCalls = append(f.fundingCalls, req)
+	out := make([]FundingRow, 0, len(f.fundingRows))
+	for _, row := range f.fundingRows {
+		if row.FundingTimeMS >= req.StartTimeMS && row.FundingTimeMS < req.EndTimeMS {
 			out = append(out, row)
 			if req.Limit > 0 && len(out) >= req.Limit {
 				break

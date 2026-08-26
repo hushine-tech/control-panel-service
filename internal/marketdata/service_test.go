@@ -119,6 +119,100 @@ func TestCreateMarketDataRequest_HistoricalScope(t *testing.T) {
 	}
 }
 
+func TestCreateMarketDataRequest_HistoricalFuturesEnsuresFundingCompanionIdempotently(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	req := &mdv1.CreateMarketDataRequestRequest{
+		UserId:           42,
+		PortfolioId:      77,
+		Key:              liveKey(),
+		Scope:            "historical",
+		RequestedStartAt: timestamppb.New(start),
+		RequestedEndAt:   timestamppb.New(end),
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.CreateMarketDataRequest(context.Background(), req); err != nil {
+			t.Fatalf("historical Create attempt %d: %v", i+1, err)
+		}
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if got := len(repo.historyByID); got != 2 {
+		t.Fatalf("history requests = %d, want Kline plus one idempotent Funding companion", got)
+	}
+	var funding domain.MarketDataHistoryRequest
+	for _, item := range repo.historyByID {
+		if item.Key.Kind == "funding_rate" {
+			funding = item
+		}
+	}
+	if funding.RequestID == 0 || funding.UserID != 42 || funding.PortfolioID == nil || *funding.PortfolioID != 77 ||
+		funding.Key.Exchange != "binance" || funding.Key.Market != "futures" || funding.Key.Symbol != "BTCUSDT" || funding.Key.Interval != "" ||
+		!funding.RequestedStartAt.Equal(start) || !funding.RequestedEndAt.Equal(end) {
+		t.Fatalf("Funding companion = %#v, want same owner/route/window with empty interval", funding)
+	}
+}
+
+func TestCreateMarketDataRequest_HistoricalFuturesResumesFailedFundingCompanion(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	req := &mdv1.CreateMarketDataRequestRequest{UserId: 42, Key: liveKey(), Scope: "historical", RequestedStartAt: timestamppb.New(start), RequestedEndAt: timestamppb.New(end)}
+	if _, err := svc.CreateMarketDataRequest(ctx, req); err != nil {
+		t.Fatalf("first historical Create: %v", err)
+	}
+	var fundingID int64
+	for id, item := range repo.historyByID {
+		if item.Key.Kind == "funding_rate" {
+			fundingID = id
+		}
+	}
+	if fundingID == 0 {
+		t.Fatal("Funding companion was not created")
+	}
+	if _, err := repo.UpdateMarketDataHistoryRequestState(ctx, fundingID, domain.HistoryRequestError, nil, nil, "temporary exchange failure"); err != nil {
+		t.Fatalf("mark Funding request error: %v", err)
+	}
+	if _, err := svc.CreateMarketDataRequest(ctx, req); err != nil {
+		t.Fatalf("retry historical Create: %v", err)
+	}
+	got := repo.historyByID[fundingID]
+	if got.Status != domain.HistoryRequestPending || got.LastError != "" {
+		t.Fatalf("resumed Funding companion = status %q error %q, want pending/empty", got.Status, got.LastError)
+	}
+}
+
+func TestCreateMarketDataRequest_HistoricalCompanionsRemainPerSymbolAndSpotHasNone(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	for _, key := range []*mdv1.StreamKey{
+		liveKey(),
+		{Exchange: "binance", Market: "futures", Kind: "kline", Symbol: "ETHUSDT", Interval: "1m"},
+		{Exchange: "binance", Market: "spot", Kind: "kline", Symbol: "SOLUSDT", Interval: "1m"},
+	} {
+		if _, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
+			UserId: 42, Key: key, Scope: "historical", RequestedStartAt: timestamppb.New(start), RequestedEndAt: timestamppb.New(end),
+		}); err != nil {
+			t.Fatalf("historical Create %s/%s: %v", key.GetMarket(), key.GetSymbol(), err)
+		}
+	}
+	if got := len(repo.historyByID); got != 5 {
+		t.Fatalf("history requests = %d, want three Klines plus two per-symbol Futures Funding companions", got)
+	}
+	for _, item := range repo.historyByID {
+		if item.Key.Kind == "funding_rate" && item.Key.Symbol == "SOLUSDT" {
+			t.Fatal("Spot historical request acquired a Funding companion")
+		}
+	}
+}
+
 func TestCreateMarketDataRequest_HistoricalRetriesErrorRequest(t *testing.T) {
 	repo := newStubRepo()
 	svc := NewService(repo)
@@ -249,8 +343,8 @@ func TestListMarketDataRequests_MergesLiveAndHistorical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(resp.GetEntries()) != 2 {
-		t.Errorf("entries = %d, want 2", len(resp.GetEntries()))
+	if len(resp.GetEntries()) != 3 {
+		t.Errorf("entries = %d, want live Kline plus historical Kline/Funding (3)", len(resp.GetEntries()))
 	}
 }
 
@@ -491,8 +585,8 @@ func TestListMarketDataHistoryRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(resp.GetRequests()) != 1 {
-		t.Errorf("requests = %d, want 1", len(resp.GetRequests()))
+	if len(resp.GetRequests()) != 2 {
+		t.Errorf("requests = %d, want Kline plus Funding companion (2)", len(resp.GetRequests()))
 	}
 }
 
