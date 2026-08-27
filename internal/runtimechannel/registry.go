@@ -36,6 +36,7 @@ type runtimeStream struct {
 	lastFrameAt time.Time
 	closed      chan struct{}
 	closeOnce   sync.Once
+	closeErr    error
 	send        func(*cpv1.RuntimeFrame) error
 	inFlight    map[string]chan *cpv1.RuntimeFrame
 	dropped     int64
@@ -101,7 +102,17 @@ func (s *runtimeStream) connectionContext(parent context.Context) (context.Conte
 }
 
 func (s *runtimeStream) close() {
+	s.closeWithError(status.Error(codes.Unavailable, "runtime stream closed"))
+}
+
+func (s *runtimeStream) closeWithError(err error) {
+	if err == nil {
+		err = status.Error(codes.Unavailable, "runtime stream closed")
+	}
 	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closeErr = err
+		s.mu.Unlock()
 		close(s.closed)
 		s.failInFlight()
 		s.outboundMu.Lock()
@@ -111,6 +122,15 @@ func (s *runtimeStream) close() {
 			queue.failAll(status.Error(codes.Unavailable, "runtime stream closed"))
 		}
 	})
+}
+
+func (s *runtimeStream) closeError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closeErr == nil {
+		return status.Error(codes.Unavailable, "runtime stream closed")
+	}
+	return s.closeErr
 }
 
 func (s *runtimeStream) setSender(send func(*cpv1.RuntimeFrame) error) {
@@ -336,7 +356,7 @@ func (r *Registry) Register(rt AuthenticatedRuntime, now time.Time) (*runtimeStr
 		}
 	}
 	if old := r.streamsByRuntime[rt.RuntimeID]; old != nil {
-		old.close()
+		old.closeWithError(status.Error(codes.PermissionDenied, "runtime channel connection was replaced"))
 		r.removeLocked(old)
 	}
 	r.nextConnectionID++
@@ -364,7 +384,7 @@ func (r *Registry) CloseAll() int {
 	r.closed = true
 	closed := 0
 	for _, stream := range r.streamsByRuntime {
-		stream.close()
+		stream.closeWithError(status.Error(codes.Unavailable, "runtime channel service is shutting down"))
 		r.removeLocked(stream)
 		closed++
 	}
@@ -386,7 +406,7 @@ func (r *Registry) Unregister(runtimeID string, expected *runtimeStream) bool {
 	if expected == nil || current != expected {
 		return false
 	}
-	current.close()
+	current.closeWithError(status.Error(codes.Unavailable, "runtime channel disconnected"))
 	r.removeLocked(current)
 	return true
 }
@@ -403,7 +423,7 @@ func (r *Registry) CloseByKeyID(keyID string) []*runtimeStream {
 	for runtimeID := range ids {
 		if s := r.streamsByRuntime[runtimeID]; s != nil {
 			streams = append(streams, s)
-			s.close()
+			s.closeWithError(status.Error(codes.PermissionDenied, "runtime credential was revoked"))
 			r.removeLocked(s)
 		}
 	}
@@ -418,7 +438,7 @@ func (r *Registry) CloseByRuntimeID(runtimeID string) *runtimeStream {
 	if s == nil {
 		return nil
 	}
-	s.close()
+	s.closeWithError(status.Error(codes.FailedPrecondition, "runtime was closed"))
 	r.removeLocked(s)
 	return s
 }

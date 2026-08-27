@@ -221,11 +221,11 @@ func (s *Service) Handle(stream cpv1.ControlPanelService_RuntimeChannelServer) e
 		case <-stream.Context().Done():
 			return status.Error(codes.Unavailable, "runtime channel disconnected")
 		case <-rs.closed:
-			return status.Error(codes.PermissionDenied, "runtime channel closed")
+			return rs.closeError()
 		case res := <-recvCh:
 			if res.err != nil {
 				if errors.Is(res.err, io.EOF) {
-					return nil
+					return status.Error(codes.Unavailable, "runtime channel disconnected")
 				}
 				return status.Errorf(codes.Unavailable, "runtime channel receive failed: %v", res.err)
 			}
@@ -498,11 +498,11 @@ func (s *Service) verifyResume(ctx context.Context, resume *cpv1.RuntimeResume) 
 	if err := validateDependencyAdmission(s.expectedDependencyProfile, authenticated.DependencyProfile); err != nil {
 		return AuthenticatedRuntime{}, "", time.Time{}, err
 	}
-	nextToken, expiresAt, err := s.rotateRuntimeFingerprintWithHash(ctx, runtimeID, leaseHash, now)
+	refreshedToken, expiresAt, err := s.refreshRuntimeFingerprint(ctx, runtimeID, token)
 	if err != nil {
 		return AuthenticatedRuntime{}, "", time.Time{}, err
 	}
-	return authenticated, nextToken, expiresAt, nil
+	return authenticated, refreshedToken, expiresAt, nil
 }
 
 func (s *Service) rotateRuntimeFingerprint(ctx context.Context, runtimeID, previousFingerprint string) (string, time.Time, error) {

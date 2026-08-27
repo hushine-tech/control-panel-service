@@ -6,12 +6,39 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	cpv1 "github.com/hushine-tech/control-panel-service/gen/controlpanelv1"
 	portfoliov1 "github.com/hushine-tech/core-service/gen/portfoliov1"
 )
+
+func TestRegistryDistinguishesReconnectableCloseFromCredentialRevocation(t *testing.T) {
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	runtime := AuthenticatedRuntime{UserID: 42, RuntimeID: "runtime-1", KeyID: "key-1"}
+
+	normal := NewRegistry()
+	normalStream, err := normal.Register(runtime, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal.CloseAll()
+	if code := status.Code(normalStream.closeError()); code != codes.Unavailable {
+		t.Fatalf("normal close code = %s, want Unavailable", code)
+	}
+
+	revoked := NewRegistry()
+	revokedStream, err := revoked.Register(runtime, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked.CloseByKeyID("key-1")
+	if code := status.Code(revokedStream.closeError()); code != codes.PermissionDenied {
+		t.Fatalf("credential revoke close code = %s, want PermissionDenied", code)
+	}
+}
 
 func TestReplacedRuntimeConnectionCannotDispatchQueuedPlatformRequest(t *testing.T) {
 	svc := NewWithInstanceID(&stubRepo{}, "cp-1")

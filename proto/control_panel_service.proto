@@ -602,6 +602,8 @@ message ReportRuntimeStartupFailureResponse {
 
 message RuntimeHelloAck {
   string runtime_id = 1;
+  // HELLO issues this in-memory reconnect credential. RESUME acknowledges the
+  // same value with a refreshed TTL; it does not rotate before this ACK.
   string resume_token = 2;
   google.protobuf.Timestamp resume_token_expires_at = 3;
   string fingerprint = 4;
@@ -610,6 +612,8 @@ message RuntimeHelloAck {
 
 message RuntimeResume {
   string runtime_id = 1;
+  // Reuses the latest acknowledged HELLO/RESUME credential. A rejected RESUME
+  // is terminal for this agent process and must not fall back to HELLO.
   string resume_token = 2;
   string fingerprint = 3;
   strategy.v1.RuntimeDependencyProfile dependency_profile = 4;

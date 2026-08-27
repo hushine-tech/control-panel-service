@@ -595,7 +595,7 @@ func TestRuntimeChannelRecordsAdmissionFailureForConsumedCredential(t *testing.T
 	}
 }
 
-func TestRuntimeChannelResumeUsesLeaseWithoutTouchingCredential(t *testing.T) {
+func TestRuntimeChannelResumeRefreshesSameLeaseWithoutTouchingCredential(t *testing.T) {
 	repo, _, now := newAuthFixture(t, domain.CredentialStatusConsumed)
 	repo.cred.ConsumedRuntimeID = "runtime-1"
 	token := "resume-token-1"
@@ -637,8 +637,11 @@ func TestRuntimeChannelResumeUsesLeaseWithoutTouchingCredential(t *testing.T) {
 	}
 	ack := waitForHelloAck(t, stream)
 	next := ack.GetHelloAck().GetFingerprint()
-	if ack.GetHelloAck().GetRuntimeId() != "runtime-1" || next == "" || next == token {
-		t.Fatalf("hello_ack = %+v, want runtime-1 and rotated fingerprint", ack.GetHelloAck())
+	if ack.GetHelloAck().GetRuntimeId() != "runtime-1" || next != token {
+		t.Fatalf("hello_ack = %+v, want runtime-1 and unchanged fingerprint", ack.GetHelloAck())
+	}
+	if repo.rotatedRuntimeID != "runtime-1" || repo.rotatedLeaseHash != hashRuntimeChannelToken(token) {
+		t.Fatalf("refreshed lease runtime/hash = %q/%q, want runtime-1 original hash", repo.rotatedRuntimeID, repo.rotatedLeaseHash)
 	}
 	if repo.touchedAt != nil {
 		t.Fatalf("credential was touched on resume: %v", repo.touchedAt)
@@ -650,7 +653,7 @@ func TestRuntimeChannelResumeUsesLeaseWithoutTouchingCredential(t *testing.T) {
 	_ = <-done
 }
 
-func TestRuntimeChannelResumeFromUnhealthyRotatesFingerprint(t *testing.T) {
+func TestRuntimeChannelResumeFromUnhealthyRefreshesSameFingerprint(t *testing.T) {
 	repo, _, now := newAuthFixture(t, domain.CredentialStatusConsumed)
 	repo.cred.ConsumedRuntimeID = "runtime-1"
 	fingerprint := "fingerprint-1"
@@ -692,11 +695,11 @@ func TestRuntimeChannelResumeFromUnhealthyRotatesFingerprint(t *testing.T) {
 	}
 	ack := waitForHelloAck(t, stream)
 	next := ack.GetHelloAck().GetFingerprint()
-	if next == "" || next == fingerprint {
-		t.Fatalf("hello_ack fingerprint = %q, want new non-empty fingerprint", next)
+	if next != fingerprint {
+		t.Fatalf("hello_ack fingerprint = %q, want unchanged fingerprint", next)
 	}
-	if repo.rotatedRuntimeID != "runtime-1" || repo.rotatedLeaseHash != hashRuntimeChannelToken(next) {
-		t.Fatalf("rotated lease runtime/hash = %q/%q, want runtime-1 hash(next)", repo.rotatedRuntimeID, repo.rotatedLeaseHash)
+	if repo.rotatedRuntimeID != "runtime-1" || repo.rotatedLeaseHash != hashRuntimeChannelToken(fingerprint) {
+		t.Fatalf("refreshed lease runtime/hash = %q/%q, want runtime-1 original hash", repo.rotatedRuntimeID, repo.rotatedLeaseHash)
 	}
 	if repo.touchedAt != nil {
 		t.Fatalf("credential was touched on resume: %v", repo.touchedAt)
@@ -867,6 +870,24 @@ func TestRuntimeChannelHelloAckFailureReleasesStreamAndOwner(t *testing.T) {
 	}
 }
 
+func TestRuntimeChannelAuthenticatedEOFReturnsUnavailable(t *testing.T) {
+	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
+	svc := NewWithInstanceID(repo, "cp-eof")
+	svc.SetClock(func() time.Time { return now })
+	stream := newFakeRuntimeChannelStream()
+	done := make(chan error, 1)
+	go func() { done <- svc.Handle(stream) }()
+	stream.recv <- &cpv1.RuntimeFrame{
+		FrameType: cpv1.FrameType_FRAME_TYPE_HELLO,
+		Payload:   &cpv1.RuntimeFrame_Hello{Hello: signedHello(t, priv, now)},
+	}
+	_ = waitForHelloAck(t, stream)
+	close(stream.recv)
+	if err := <-done; status.Code(err) != codes.Unavailable {
+		t.Fatalf("Handle authenticated EOF error = %v, want Unavailable", err)
+	}
+}
+
 func TestRuntimeChannelShutdownClosesAllActiveStreams(t *testing.T) {
 	repo, priv, now := newAuthFixture(t, domain.CredentialStatusDownloaded)
 	svc := NewWithInstanceID(repo, "cp-shutdown")
@@ -886,8 +907,8 @@ func TestRuntimeChannelShutdownClosesAllActiveStreams(t *testing.T) {
 	}
 	select {
 	case err := <-done:
-		if status.Code(err) != codes.PermissionDenied {
-			t.Fatalf("Handle error = %v, want PermissionDenied closed stream", err)
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("Handle error = %v, want Unavailable closed stream", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Handle did not exit after CloseAllStreams")
