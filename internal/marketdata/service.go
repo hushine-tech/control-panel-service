@@ -57,8 +57,8 @@ func NewService(repo repository.Repository, opts ...Option) *Service {
 
 // ── validation ──────────────────────────────────────────────────────────
 
-// v1 constrains the control plane to kline streams; broaden when
-// orderbook / funding / oi land in a later change.
+// Live control-plane streams remain kline-only in v1. Historical requests
+// additionally admit futures funding-rate coverage.
 var (
 	reValidExchange     = regexp.MustCompile(`^(binance|okx)$`)
 	reValidMarket       = regexp.MustCompile(`^(spot|futures)$`)
@@ -568,11 +568,16 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 	if err := requireUserID(req.GetUserId()); err != nil {
 		return nil, err
 	}
-	key, err := validateStreamKey(req.GetKey())
+	scope, err := normalizeRequestScope(req.GetScope())
 	if err != nil {
 		return nil, err
 	}
-	scope, err := normalizeRequestScope(req.GetScope())
+	var key domain.StreamKey
+	if scope == domain.RequestScopeHistorical {
+		key, err = validateCoverageKey(req.GetKey())
+	} else {
+		key, err = validateStreamKey(req.GetKey())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +597,7 @@ func (s *Service) CreateMarketDataRequest(ctx context.Context, req *mdv1.CreateM
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "upsert historical market-data request: %v", err)
 		}
-		if key.Market == "futures" {
+		if key.Kind == "kline" && key.Market == "futures" {
 			fundingKey := key
 			fundingKey.Kind = "funding_rate"
 			fundingKey.Interval = ""

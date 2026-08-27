@@ -242,6 +242,14 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 		}
 	}
 
+	var initialCoverageRows int64
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM market_data_coverage_segments`).Scan(&initialCoverageRows); err != nil {
+		t.Fatalf("count coverage rows after applying baseline: %v", err)
+	}
+	if initialCoverageRows != 0 {
+		t.Fatalf("baseline seeded %d coverage rows, want an empty coverage table", initialCoverageRows)
+	}
+
 	insertCoverage := func(market, kind, symbol, interval string, rowCount int64) error {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO market_data_coverage_segments
@@ -252,6 +260,12 @@ func assertRuntimeIdentitySchema(ctx context.Context, t *testing.T, db *sql.DB, 
 	}
 	if err := insertCoverage("futures", "funding_rate", "BTCUSDT", "", 0); err != nil {
 		t.Fatalf("baseline schema rejected explicit zero-row Funding coverage: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO market_data_history_requests
+			(user_id, exchange, market, kind, symbol, interval, requested_start_at, requested_end_at)
+		VALUES (42, 'binance', 'futures', 'funding_rate', 'BTCUSDT', '', '2026-05-01T00:00:00Z', '2026-05-01T01:00:00Z')`); err != nil {
+		t.Fatalf("baseline schema rejected historical Funding request: %v", err)
 	}
 	for _, tc := range []struct {
 		name           string

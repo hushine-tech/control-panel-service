@@ -51,6 +51,23 @@ func TestCreateMarketDataRequest_LiveHappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateMarketDataRequest_LiveFundingIsRejected(t *testing.T) {
+	svc := newSvc()
+	_, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
+		UserId: 42,
+		Key: &mdv1.StreamKey{
+			Exchange: "binance",
+			Market:   "futures",
+			Kind:     "funding_rate",
+			Symbol:   "BTCUSDT",
+		},
+		Scope: "live",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
 func TestCreateMarketDataRequest_RejectsEmptyScope(t *testing.T) {
 	svc := newSvc()
 	_, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
@@ -88,7 +105,7 @@ func TestCreateMarketDataRequest_ValidatesKey(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			svc := newSvc()
 			_, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
-				UserId: 42, Key: c.key,
+				UserId: 42, Key: c.key, Scope: "live",
 			})
 			if status.Code(err) != codes.InvalidArgument {
 				t.Errorf("code = %v, want InvalidArgument", status.Code(err))
@@ -153,6 +170,46 @@ func TestCreateMarketDataRequest_HistoricalFuturesEnsuresFundingCompanionIdempot
 		funding.Key.Exchange != "binance" || funding.Key.Market != "futures" || funding.Key.Symbol != "BTCUSDT" || funding.Key.Interval != "" ||
 		!funding.RequestedStartAt.Equal(start) || !funding.RequestedEndAt.Equal(end) {
 		t.Fatalf("Funding companion = %#v, want same owner/route/window with empty interval", funding)
+	}
+}
+
+func TestCreateMarketDataRequest_HistoricalFundingIsDirectAndDoesNotCreateCompanion(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	resp, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
+		UserId: 42,
+		Key: &mdv1.StreamKey{
+			Exchange: "binance",
+			Market:   "futures",
+			Kind:     "funding_rate",
+			Symbol:   "BTCUSDT",
+		},
+		Scope:            "historical",
+		RequestedStartAt: timestamppb.New(start),
+		RequestedEndAt:   timestamppb.New(end),
+	})
+	if err != nil {
+		t.Fatalf("historical Funding Create: %v", err)
+	}
+	if resp.GetRequest().GetKey().GetKind() != "funding_rate" {
+		t.Fatalf("request kind = %q, want funding_rate", resp.GetRequest().GetKey().GetKind())
+	}
+	if got := len(repo.historyByID); got != 1 {
+		t.Fatalf("history requests = %d, want one direct Funding request and no companion", got)
+	}
+}
+
+func TestCreateMarketDataRequest_RejectsUnknownScope(t *testing.T) {
+	svc := newSvc()
+	_, err := svc.CreateMarketDataRequest(context.Background(), &mdv1.CreateMarketDataRequestRequest{
+		UserId: 42,
+		Key:    liveKey(),
+		Scope:  "archive",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", status.Code(err))
 	}
 }
 
