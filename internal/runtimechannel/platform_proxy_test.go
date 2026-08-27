@@ -366,7 +366,7 @@ func TestPlatformProxySettleBacktestFundingRequiresRunningBacktestOwner(t *testi
 			},
 			PositionMode: "ONE_WAY",
 			PositionLegs: []*portfoliov1.FundingPositionLegFact{{
-				Symbol: "BTCUSDT", PositionSide: "BOTH", MarginMode: "cross", SignedQtyDecimal: "1",
+				Symbol: "BTCUSDT", PositionSide: portfoliov1.FuturesPositionSide_FUTURES_POSITION_SIDE_BOTH, MarginMode: "cross", SignedQtyDecimal: "1",
 			}},
 		})
 		if err != nil {
