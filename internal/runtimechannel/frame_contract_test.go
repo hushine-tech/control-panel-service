@@ -139,6 +139,10 @@ func TestRuntimeDependencyFrameContract(t *testing.T) {
 	assertDependencyFrameMessageField(t, resume, "dependency_profile", 4, "strategy.v1.RuntimeDependencyProfile")
 	streamError := requireDependencyFrameMessage(t, file, "StreamError")
 	assertDependencyFrameMessageField(t, streamError, "dependency_error", 3, "strategy.v1.RuntimeDependencyError")
+	errorDetailJSON := streamError.Fields().ByName("error_detail_json")
+	if errorDetailJSON == nil || errorDetailJSON.Number() != 4 || errorDetailJSON.Kind() != protoreflect.StringKind {
+		t.Fatalf("StreamError.error_detail_json = %v, want string tag 4", errorDetailJSON)
+	}
 
 	startupRequest := requireDependencyFrameMessage(t, file, "ReportRuntimeStartupFailureRequest")
 	assertDependencyFrameFields(t, startupRequest, map[protoreflect.Name]protoreflect.FieldNumber{

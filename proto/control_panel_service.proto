@@ -656,6 +656,7 @@ message StreamError {
   string code = 1;
   string message = 2;
   strategy.v1.RuntimeDependencyError dependency_error = 3;
+  string error_detail_json = 4;
 }
 
 message RuntimeCommandFrame {
