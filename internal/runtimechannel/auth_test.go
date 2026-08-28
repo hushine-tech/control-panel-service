@@ -1677,10 +1677,15 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 	waitForHelloAck(t, stream)
 
 	updateReq := &portfoliov1.UpdateSessionRequest{
-		SessionId:     "sess-finished",
-		Status:        "finished",
-		BarsProcessed: 2047,
-		Error:         "",
+		SessionId:                    "sess-finished",
+		Status:                       "finished",
+		BarsProcessed:                2047,
+		Error:                        "legacy display text",
+		ExpectedStatus:               "running",
+		IndicatorFinalizationPending: proto.Bool(true),
+		ErrorCode:                    "PLATFORM_ROUTE_UNAVAILABLE",
+		ErrorMessage:                 "portfolio route is unavailable",
+		ErrorDetailJson:              `{"runtime_id":"runtime-1"}`,
 	}
 	payload, err := anypb.New(updateReq)
 	if err != nil {
@@ -1710,7 +1715,13 @@ func TestRuntimeChannelStatusPatchPersistsSessionStatus(t *testing.T) {
 	if err := dispatcher.payload.UnmarshalTo(got); err != nil {
 		t.Fatalf("unpack dispatched update: %v", err)
 	}
-	if got.GetSessionId() != "sess-finished" || got.GetStatus() != "finished" || got.GetBarsProcessed() != 2047 || got.GetRuntimeId() != "runtime-1" {
+	if got.GetSessionId() != "sess-finished" || got.GetStatus() != "finished" ||
+		got.GetBarsProcessed() != 2047 || got.GetRuntimeId() != "runtime-1" ||
+		got.GetError() != "legacy display text" || got.GetExpectedStatus() != "running" ||
+		got.IndicatorFinalizationPending == nil || !got.GetIndicatorFinalizationPending() ||
+		got.GetErrorCode() != "PLATFORM_ROUTE_UNAVAILABLE" ||
+		got.GetErrorMessage() != "portfolio route is unavailable" ||
+		got.GetErrorDetailJson() != `{"runtime_id":"runtime-1"}` {
 		t.Fatalf("dispatched update = %+v", got)
 	}
 	stream.cancel()

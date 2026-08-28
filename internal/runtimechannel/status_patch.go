@@ -31,28 +31,7 @@ func (s *Service) handleRuntimeStatusPatch(parent context.Context, stream *runti
 		return
 	}
 
-	req := &portfoliov1.UpdateSessionRequest{
-		SessionId: patch.GetSessionId(),
-		Status:    statusText,
-		Error:     patch.GetReason(),
-		RuntimeId: rt.RuntimeID,
-	}
-	if payload := patch.GetPayload(); payload != nil {
-		embedded := &portfoliov1.UpdateSessionRequest{}
-		if err := payload.UnmarshalTo(embedded); err == nil {
-			if embedded.GetSessionId() != "" {
-				req.SessionId = embedded.GetSessionId()
-			}
-			if embedded.GetStatus() != "" {
-				req.Status = embedded.GetStatus()
-			}
-			req.BarsProcessed = embedded.GetBarsProcessed()
-			if embedded.GetError() != "" {
-				req.Error = embedded.GetError()
-			}
-		}
-	}
-	req.RuntimeId = rt.RuntimeID
+	req := statusPatchUpdateSessionRequest(rt.RuntimeID, patch, statusText)
 
 	payload, err := anypb.New(req)
 	if err != nil {
@@ -85,6 +64,32 @@ func (s *Service) handleRuntimeStatusPatch(parent context.Context, stream *runti
 			err,
 		))
 	}
+}
+
+func statusPatchUpdateSessionRequest(runtimeID string, patch *cpv1.RuntimeStatusPatch, statusText string) *portfoliov1.UpdateSessionRequest {
+	req := &portfoliov1.UpdateSessionRequest{
+		SessionId: patch.GetSessionId(),
+		Status:    statusText,
+		Error:     patch.GetReason(),
+		RuntimeId: runtimeID,
+	}
+	if payload := patch.GetPayload(); payload != nil {
+		embedded := &portfoliov1.UpdateSessionRequest{}
+		if err := payload.UnmarshalTo(embedded); err == nil {
+			req = embedded
+			if req.GetSessionId() == "" {
+				req.SessionId = patch.GetSessionId()
+			}
+			if req.GetStatus() == "" {
+				req.Status = statusText
+			}
+			if req.GetError() == "" {
+				req.Error = patch.GetReason()
+			}
+		}
+	}
+	req.RuntimeId = runtimeID
+	return req
 }
 
 func statusPatchSessionStatus(raw string) bool {
